@@ -1,0 +1,11 @@
+arkruntime==0.8.0
+fastapi==0.141.1
+discord.py==2.7.1
+httpx==0.28.1
+lark-oapi==1.7.3
+mcp==2.1.1
+pydantic==2.13.5
+psycopg[binary,pool]==3.3.5
+PyYAML==6.0.3
+python-dotenv==1.2.3
+uvicorn==0.52.4

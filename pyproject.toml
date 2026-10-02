@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "assistant-kernel"
+version = "0.24.6"
+description = "Durable control plane and MCP tools for the personal super assistant"
+requires-python = ">=3.10,<3.11"
+dependencies = [
+  "arkruntime==0.8.0",
+  "fastapi==0.141.1",
+  "httpx==0.28.1",
+  "mcp==2.1.1",
+  "pydantic==2.13.5",
+  "psycopg[binary,pool]==3.3.5",
+  "PyYAML==6.0.3",
+  "python-dotenv==1.2.3",
+  "uvicorn==0.52.4",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest==9.1.1",
+  "pytest-asyncio==1.4.0",
+]
+
+[project.scripts]
+assistant-kernel-api = "assistant_kernel.api.main:run"
+assistant-kernel-mcp = "assistant_kernel.mcp_server.server:run"
+assistant-kernel-worker = "assistant_kernel.worker.main:run"
+assistant-kernel-discord = "assistant_kernel.services.discord:run"
+assistant-kernel-run-worker = "assistant_kernel.worker.run_main:run"
+assistant-kernel-maintenance = "assistant_kernel.worker.maintenance_main:run"
+assistant-kernel-feishu = "assistant_kernel.worker.feishu_main:run"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+assistant_kernel = [
+  "prompts/roles/*.md",
+  "prompts/skills/*/SKILL.md",
+  "prompts/skills/*/references/*.md",
+  "prompts/skills/*/scripts/*.py",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

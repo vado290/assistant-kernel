@@ -1,0 +1,3 @@
+# Python task dependencies are pinned here. The MVP wrapper itself only uses
+# the Python 3.10 standard library.
+
