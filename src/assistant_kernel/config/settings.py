@@ -36,7 +36,6 @@ class ProviderCredential(BaseModel):
 class InternalCredentials(BaseModel):
     kernel_api_token: SecretStr = SecretStr("")
     mcp_bearer_token: SecretStr = SecretStr("")
-    n8n_callback_secret: SecretStr = SecretStr("")
 
 
 class ProviderSecrets(BaseModel):
@@ -72,7 +71,8 @@ class KernelSettings(BaseModel):
     python_timeout_seconds: int = 300
     worker_poll_seconds: float = 1.0
     worker_lease_seconds: int = 60
-    worker_claim_loops: int = 8
+    health_heartbeat_seconds: float = 30
+    health_stale_after_seconds: float = 90
     agent_timeout_seconds: int = 600
     default_codex_provider: str = "openai"
     default_codex_model: str | None = "gpt-5.6-sol"
@@ -132,9 +132,6 @@ class KernelSettings(BaseModel):
             python_timeout_seconds=int(os.getenv("ASSISTANT_PYTHON_TIMEOUT_SECONDS", "300")),
             worker_poll_seconds=float(os.getenv("ASSISTANT_WORKER_POLL_SECONDS", "1")),
             worker_lease_seconds=int(os.getenv("ASSISTANT_WORKER_LEASE_SECONDS", "60")),
-            worker_claim_loops=min(
-                max(int(os.getenv("ASSISTANT_WORKER_CLAIM_LOOPS", "8")), 1), 200
-            ),
             agent_timeout_seconds=int(os.getenv("ASSISTANT_AGENT_TIMEOUT_SECONDS", "600")),
             default_codex_provider=os.getenv("ASSISTANT_DEFAULT_CODEX_PROVIDER", "openai"),
             default_codex_model=(

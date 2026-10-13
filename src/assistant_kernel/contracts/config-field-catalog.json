@@ -1,0 +1,4892 @@
+[
+  {
+    "apply_mode": "schema_identity",
+    "consumer": "配置解析器",
+    "description": "配置身份：$schema",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/$schema",
+    "proposed_value": "./kernel-system.schema.json",
+    "schema": {
+      "const": "./kernel-system.schema.json",
+      "default": "./kernel-system.schema.json",
+      "description": "配置身份：$schema",
+      "x-apply-mode": "schema_identity",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/$schema",
+    "type": "constant",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "schema_identity",
+    "consumer": "配置解析器",
+    "description": "配置身份：schema_version",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/schema_version",
+    "proposed_value": "kernel-system-config.v1",
+    "schema": {
+      "const": "kernel-system-config.v1",
+      "default": "kernel-system-config.v1",
+      "description": "配置身份：schema_version",
+      "x-apply-mode": "schema_identity",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/schema_version",
+    "type": "constant",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "dynamic_admission",
+    "consumer": "系统时区和界面语言",
+    "description": "系统时区和界面语言：timezone",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/system/timezone",
+    "proposed_value": "Asia/Shanghai",
+    "schema": {
+      "default": "Asia/Shanghai",
+      "description": "系统时区和界面语言：timezone",
+      "minLength": 1,
+      "type": "string",
+      "x-apply-mode": "dynamic_admission",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/system/timezone",
+    "type": "string",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "dynamic_admission",
+    "consumer": "系统时区和界面语言",
+    "description": "系统时区和界面语言：language",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/system/language",
+    "proposed_value": "zh-CN",
+    "schema": {
+      "default": "zh-CN",
+      "description": "系统时区和界面语言：language",
+      "minLength": 1,
+      "type": "string",
+      "x-apply-mode": "dynamic_admission",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/system/language",
+    "type": "string",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "requires_migration",
+    "consumer": "Linux容器路径和相对数据目录",
+    "description": "Linux容器路径和相对数据目录：workspace_root",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/paths/workspace_root",
+    "proposed_value": "/home/v/AI",
+    "schema": {
+      "default": "/home/v/AI",
+      "description": "Linux容器路径和相对数据目录：workspace_root",
+      "minLength": 1,
+      "pattern": "^/",
+      "type": "string",
+      "x-apply-mode": "requires_migration",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/paths/workspace_root",
+    "type": "string",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "requires_migration",
+    "consumer": "Linux容器路径和相对数据目录",
+    "description": "Linux容器路径和相对数据目录：data_directory",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/paths/data_directory",
+    "proposed_value": "assistant-data",
+    "schema": {
+      "default": "assistant-data",
+      "description": "Linux容器路径和相对数据目录：data_directory",
+      "minLength": 1,
+      "type": "string",
+      "x-apply-mode": "requires_migration",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/paths/data_directory",
+    "type": "string",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "requires_migration",
+    "consumer": "Linux容器路径和相对数据目录",
+    "description": "Linux容器路径和相对数据目录：python_executable",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/paths/python_executable",
+    "proposed_value": "/home/v/miniconda3/bin/python",
+    "schema": {
+      "default": "/home/v/miniconda3/bin/python",
+      "description": "Linux容器路径和相对数据目录：python_executable",
+      "minLength": 1,
+      "pattern": "^/",
+      "type": "string",
+      "x-apply-mode": "requires_migration",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/paths/python_executable",
+    "type": "string",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "dynamic_admission",
+    "consumer": "单配置文件检测与稳定等待",
+    "description": "单配置文件检测与稳定等待：poll_seconds",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/config_updates/poll_seconds",
+    "proposed_value": 1,
+    "schema": {
+      "default": 1,
+      "description": "单配置文件检测与稳定等待：poll_seconds",
+      "exclusiveMinimum": 0,
+      "type": "number",
+      "x-apply-mode": "dynamic_admission",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/config_updates/poll_seconds",
+    "type": "number",
+    "unit": "seconds",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "dynamic_admission",
+    "consumer": "单配置文件检测与稳定等待",
+    "description": "单配置文件检测与稳定等待：settle_seconds",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/config_updates/settle_seconds",
+    "proposed_value": 2,
+    "schema": {
+      "default": 2,
+      "description": "单配置文件检测与稳定等待：settle_seconds",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "dynamic_admission",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/config_updates/settle_seconds",
+    "type": "integer",
+    "unit": "seconds",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "Kernel监听、Worker、队列和健康",
+    "description": "Kernel监听、Worker、队列和健康：listen_host",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/kernel/api/listen_host",
+    "proposed_value": "0.0.0.0",
+    "schema": {
+      "default": "0.0.0.0",
+      "description": "Kernel监听、Worker、队列和健康：listen_host",
+      "minLength": 1,
+      "type": "string",
+      "x-apply-mode": "pending_restart",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/kernel/api/listen_host",
+    "type": "string",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "Kernel监听、Worker、队列和健康",
+    "description": "Kernel监听、Worker、队列和健康：port",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/kernel/api/port",
+    "proposed_value": 8001,
+    "schema": {
+      "default": 8001,
+      "description": "Kernel监听、Worker、队列和健康：port",
+      "maximum": 65535,
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "pending_restart",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/kernel/api/port",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "Kernel监听、Worker、队列和健康",
+    "description": "Kernel监听、Worker、队列和健康：listen_host",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/kernel/mcp/listen_host",
+    "proposed_value": "0.0.0.0",
+    "schema": {
+      "default": "0.0.0.0",
+      "description": "Kernel监听、Worker、队列和健康：listen_host",
+      "minLength": 1,
+      "type": "string",
+      "x-apply-mode": "pending_restart",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/kernel/mcp/listen_host",
+    "type": "string",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "Kernel监听、Worker、队列和健康",
+    "description": "Kernel监听、Worker、队列和健康：port",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/kernel/mcp/port",
+    "proposed_value": 8002,
+    "schema": {
+      "default": 8002,
+      "description": "Kernel监听、Worker、队列和健康：port",
+      "maximum": 65535,
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "pending_restart",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/kernel/mcp/port",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "Kernel监听、Worker、队列和健康",
+    "description": "交互Worker进程数；调整需排空与进程配置回执",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/kernel/workers/interactive",
+    "proposed_value": 2,
+    "schema": {
+      "default": 2,
+      "description": "交互Worker进程数；调整需排空与进程配置回执",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "pending_restart",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/kernel/workers/interactive",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "Kernel监听、Worker、队列和健康",
+    "description": "有限运行Worker进程数；常驻不占此池",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/kernel/workers/runtime",
+    "proposed_value": 4,
+    "schema": {
+      "default": 4,
+      "description": "有限运行Worker进程数；常驻不占此池",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "pending_restart",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/kernel/workers/runtime",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "dynamic_admission",
+    "consumer": "Kernel监听、Worker、队列和健康",
+    "description": "Kernel监听、Worker、队列和健康：poll_seconds",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/kernel/queue/poll_seconds",
+    "proposed_value": 1,
+    "schema": {
+      "default": 1,
+      "description": "Kernel监听、Worker、队列和健康：poll_seconds",
+      "exclusiveMinimum": 0,
+      "type": "number",
+      "x-apply-mode": "dynamic_admission",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/kernel/queue/poll_seconds",
+    "type": "number",
+    "unit": "seconds",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "dynamic_admission",
+    "consumer": "Kernel监听、Worker、队列和健康",
+    "description": "Kernel监听、Worker、队列和健康：lease_seconds",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/kernel/queue/lease_seconds",
+    "proposed_value": 60,
+    "schema": {
+      "default": 60,
+      "description": "Kernel监听、Worker、队列和健康：lease_seconds",
+      "maximum": 600,
+      "minimum": 10,
+      "type": "integer",
+      "x-apply-mode": "dynamic_admission",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/kernel/queue/lease_seconds",
+    "type": "integer",
+    "unit": "seconds",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "dynamic_admission",
+    "consumer": "Kernel监听、Worker、队列和健康",
+    "description": "Kernel监听、Worker、队列和健康：heartbeat_seconds",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/kernel/health/heartbeat_seconds",
+    "proposed_value": 30,
+    "schema": {
+      "default": 30,
+      "description": "Kernel监听、Worker、队列和健康：heartbeat_seconds",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "dynamic_admission",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/kernel/health/heartbeat_seconds",
+    "type": "integer",
+    "unit": "seconds",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "dynamic_admission",
+    "consumer": "Kernel监听、Worker、队列和健康",
+    "description": "Kernel监听、Worker、队列和健康：stale_after_seconds",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/kernel/health/stale_after_seconds",
+    "proposed_value": 90,
+    "schema": {
+      "default": 90,
+      "description": "Kernel监听、Worker、队列和健康：stale_after_seconds",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "dynamic_admission",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/kernel/health/stale_after_seconds",
+    "type": "integer",
+    "unit": "seconds",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "dynamic_admission",
+    "consumer": "全体系受管执行准入上限",
+    "description": "全体系同时执行的有限Run上限，不等于Worker进程数",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/resource_limits/max_finite_runs",
+    "proposed_value": 4,
+    "schema": {
+      "default": 4,
+      "description": "全体系同时执行的有限Run上限，不等于Worker进程数",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "dynamic_admission",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/resource_limits/max_finite_runs",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "dynamic_admission",
+    "consumer": "全体系受管执行准入上限",
+    "description": "并行CPU工作项数量，含常驻中的计算工作项",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/resource_limits/max_cpu_work_items",
+    "proposed_value": 4,
+    "schema": {
+      "default": 4,
+      "description": "并行CPU工作项数量，含常驻中的计算工作项",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "dynamic_admission",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/resource_limits/max_cpu_work_items",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "dynamic_admission",
+    "consumer": "全体系受管执行准入上限",
+    "description": "受管工作项声明CPU计算占用合计；不是容器CPU硬限",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/resource_limits/max_cpu_slots",
+    "proposed_value": 8,
+    "schema": {
+      "default": 8,
+      "description": "受管工作项声明CPU计算占用合计；不是容器CPU硬限",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "dynamic_admission",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/resource_limits/max_cpu_slots",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "dynamic_admission",
+    "consumer": "全体系受管执行准入上限",
+    "description": "未清理常驻实例的准入上限，不能用失败状态提前释放",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/resource_limits/max_service_instances",
+    "proposed_value": 4,
+    "schema": {
+      "default": 4,
+      "description": "未清理常驻实例的准入上限，不能用失败状态提前释放",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "dynamic_admission",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/resource_limits/max_service_instances",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "dynamic_admission",
+    "consumer": "全体系受管执行准入上限",
+    "description": "受管adapter/CLI入口并发；不冒称覆盖CLI内部所有底层请求",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/resource_limits/max_managed_model_invocations",
+    "proposed_value": 8,
+    "schema": {
+      "default": 8,
+      "description": "受管adapter/CLI入口并发；不冒称覆盖CLI内部所有底层请求",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "dynamic_admission",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/resource_limits/max_managed_model_invocations",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "dynamic_admission",
+    "consumer": "全体系受管执行准入上限",
+    "description": "声明内存准入总额；未知占用不按0，null表示尚未设置此总额",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "没有设置此额外限制/保留期；不是0，不触发自动删除",
+    "path": "/resource_limits/max_declared_memory_mb",
+    "proposed_value": null,
+    "schema": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "声明内存准入总额；未知占用不按0，null表示尚未设置此总额",
+      "x-apply-mode": "dynamic_admission",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/resource_limits/max_declared_memory_mb",
+    "type": "nullable",
+    "unit": "MB",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "单有限脚本可继承运行默认",
+    "description": "单有限脚本可继承运行默认：timeout_seconds",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "不允许null",
+    "path": "/python_defaults/timeout_seconds",
+    "proposed_value": 300,
+    "schema": {
+      "default": 300,
+      "description": "单有限脚本可继承运行默认：timeout_seconds",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "next_invocation",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/python_defaults/timeout_seconds",
+    "type": "integer",
+    "unit": "seconds",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "单有限脚本可继承运行默认",
+    "description": "单有限脚本可继承运行默认：max_timeout_seconds",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "不允许null",
+    "path": "/python_defaults/max_timeout_seconds",
+    "proposed_value": 3600,
+    "schema": {
+      "default": 3600,
+      "description": "单有限脚本可继承运行默认：max_timeout_seconds",
+      "maximum": 3600,
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "next_invocation",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/python_defaults/max_timeout_seconds",
+    "type": "integer",
+    "unit": "seconds",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "单有限脚本可继承运行默认",
+    "description": "单脚本I/O并发默认上限，与CPU池分别约束",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "不允许null",
+    "path": "/python_defaults/io_workers",
+    "proposed_value": 8,
+    "schema": {
+      "default": 8,
+      "description": "单脚本I/O并发默认上限，与CPU池分别约束",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "next_invocation",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/python_defaults/io_workers",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "单有限脚本可继承运行默认",
+    "description": "每脚本CPU子进程池默认大小",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "不允许null",
+    "path": "/python_defaults/cpu_pool_size",
+    "proposed_value": 2,
+    "schema": {
+      "default": 2,
+      "description": "每脚本CPU子进程池默认大小",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "next_invocation",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/python_defaults/cpu_pool_size",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "单有限脚本可继承运行默认",
+    "description": "每数值计算进程库线程数，需实际传入环境并验证",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "不允许null",
+    "path": "/python_defaults/numeric_threads",
+    "proposed_value": 1,
+    "schema": {
+      "default": 1,
+      "description": "每数值计算进程库线程数，需实际传入环境并验证",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "next_invocation",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/python_defaults/numeric_threads",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "主Agent新调用可继承默认",
+    "description": "主Agent新调用可继承默认：provider",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "不允许null",
+    "path": "/agent_defaults/provider",
+    "proposed_value": "openai",
+    "schema": {
+      "default": "openai",
+      "description": "主Agent新调用可继承默认：provider",
+      "minLength": 1,
+      "type": "string",
+      "x-apply-mode": "next_invocation",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/agent_defaults/provider",
+    "type": "string",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "主Agent新调用可继承默认",
+    "description": "主Agent新调用可继承默认：model",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "不允许null",
+    "path": "/agent_defaults/model",
+    "proposed_value": "gpt-5.6-sol",
+    "schema": {
+      "default": "gpt-5.6-sol",
+      "description": "主Agent新调用可继承默认：model",
+      "minLength": 1,
+      "type": "string",
+      "x-apply-mode": "next_invocation",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/agent_defaults/model",
+    "type": "string",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "主Agent新调用可继承默认",
+    "description": "主Agent新调用可继承默认：reasoning_effort",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "不允许null",
+    "path": "/agent_defaults/reasoning_effort",
+    "proposed_value": "medium",
+    "schema": {
+      "default": "medium",
+      "description": "主Agent新调用可继承默认：reasoning_effort",
+      "enum": [
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ],
+      "x-apply-mode": "next_invocation",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/agent_defaults/reasoning_effort",
+    "type": "enum",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "主Agent新调用可继承默认",
+    "description": "主Agent新调用可继承默认：timeout_seconds",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "不允许null",
+    "path": "/agent_defaults/timeout_seconds",
+    "proposed_value": 600,
+    "schema": {
+      "default": 600,
+      "description": "主Agent新调用可继承默认：timeout_seconds",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "next_invocation",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/agent_defaults/timeout_seconds",
+    "type": "integer",
+    "unit": "seconds",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "主Agent新调用可继承默认",
+    "description": "保max/model_default/custom三种已支持策略；迁移不擅自改变",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "不允许null",
+    "path": "/agent_defaults/context_policy",
+    "proposed_value": "max",
+    "schema": {
+      "default": "max",
+      "description": "保max/model_default/custom三种已支持策略；迁移不擅自改变",
+      "enum": [
+        "model_default",
+        "max",
+        "custom"
+      ],
+      "x-apply-mode": "next_invocation",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/agent_defaults/context_policy",
+    "type": "enum",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "主Agent新调用可继承默认",
+    "description": "custom策略的具体窗口；max/model_default时为null，核实际模型目录",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "按已确认context policy解析",
+    "path": "/agent_defaults/custom_context_window_tokens",
+    "proposed_value": null,
+    "schema": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "custom策略的具体窗口；max/model_default时为null，核实际模型目录",
+      "x-apply-mode": "next_invocation",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/agent_defaults/custom_context_window_tokens",
+    "type": "nullable",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "主Agent新调用可继承默认",
+    "description": "原生CLI compact阈值；null按已确认context policy解析，不恢复Kernel摘要链",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "按已确认context policy解析",
+    "path": "/agent_defaults/native_auto_compact_token_limit",
+    "proposed_value": null,
+    "schema": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "原生CLI compact阈值；null按已确认context policy解析，不恢复Kernel摘要链",
+      "x-apply-mode": "next_invocation",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/agent_defaults/native_auto_compact_token_limit",
+    "type": "nullable",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "主Agent新调用可继承默认",
+    "description": "父任务有限原生子代理上限，范围0..3；不是Kernel child Run",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "不允许null",
+    "path": "/agent_defaults/max_native_subagents",
+    "proposed_value": 3,
+    "schema": {
+      "default": 3,
+      "description": "父任务有限原生子代理上限，范围0..3；不是Kernel child Run",
+      "maximum": 3,
+      "minimum": 0,
+      "type": "integer",
+      "x-apply-mode": "next_invocation",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/agent_defaults/max_native_subagents",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "主Agent新调用可继承默认",
+    "description": "主Agent新调用可继承默认：role_soft_limit_tokens",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "不允许null",
+    "path": "/agent_defaults/role_soft_limit_tokens",
+    "proposed_value": 16000,
+    "schema": {
+      "default": 16000,
+      "description": "主Agent新调用可继承默认：role_soft_limit_tokens",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "next_invocation",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/agent_defaults/role_soft_limit_tokens",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "主Agent新调用可继承默认",
+    "description": "主Agent新调用可继承默认：role_hard_limit_tokens",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "不允许null",
+    "path": "/agent_defaults/role_hard_limit_tokens",
+    "proposed_value": 20000,
+    "schema": {
+      "default": 20000,
+      "description": "主Agent新调用可继承默认：role_hard_limit_tokens",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "next_invocation",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/agent_defaults/role_hard_limit_tokens",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "主Agent新调用可继承默认",
+    "description": "主Agent新调用可继承默认：model_catalog_cache_seconds",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "不允许null",
+    "path": "/agent_defaults/model_catalog_cache_seconds",
+    "proposed_value": 300,
+    "schema": {
+      "default": 300,
+      "description": "主Agent新调用可继承默认：model_catalog_cache_seconds",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "next_invocation",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/agent_defaults/model_catalog_cache_seconds",
+    "type": "integer",
+    "unit": "seconds",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "Supervisor分级调用与预算默认",
+    "description": "Supervisor分级调用与预算默认：model",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "不允许null",
+    "path": "/supervisor_defaults/intent/model",
+    "proposed_value": "gpt-5.6-luna",
+    "schema": {
+      "default": "gpt-5.6-luna",
+      "description": "Supervisor分级调用与预算默认：model",
+      "minLength": 1,
+      "type": "string",
+      "x-apply-mode": "next_invocation",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/supervisor_defaults/intent/model",
+    "type": "string",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "Supervisor分级调用与预算默认",
+    "description": "Supervisor分级调用与预算默认：reasoning_effort",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "不允许null",
+    "path": "/supervisor_defaults/intent/reasoning_effort",
+    "proposed_value": "low",
+    "schema": {
+      "default": "low",
+      "description": "Supervisor分级调用与预算默认：reasoning_effort",
+      "enum": [
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ],
+      "x-apply-mode": "next_invocation",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/supervisor_defaults/intent/reasoning_effort",
+    "type": "enum",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "Supervisor分级调用与预算默认",
+    "description": "Supervisor分级调用与预算默认：timeout_seconds",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "不允许null",
+    "path": "/supervisor_defaults/intent/timeout_seconds",
+    "proposed_value": 90,
+    "schema": {
+      "default": 90,
+      "description": "Supervisor分级调用与预算默认：timeout_seconds",
+      "maximum": 900,
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "next_invocation",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/supervisor_defaults/intent/timeout_seconds",
+    "type": "integer",
+    "unit": "seconds",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "Supervisor分级调用与预算默认",
+    "description": "Supervisor分级调用与预算默认：model",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "不允许null",
+    "path": "/supervisor_defaults/normal/model",
+    "proposed_value": "gpt-5.6-sol",
+    "schema": {
+      "default": "gpt-5.6-sol",
+      "description": "Supervisor分级调用与预算默认：model",
+      "minLength": 1,
+      "type": "string",
+      "x-apply-mode": "next_invocation",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/supervisor_defaults/normal/model",
+    "type": "string",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "Supervisor分级调用与预算默认",
+    "description": "Supervisor分级调用与预算默认：reasoning_effort",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "不允许null",
+    "path": "/supervisor_defaults/normal/reasoning_effort",
+    "proposed_value": "medium",
+    "schema": {
+      "default": "medium",
+      "description": "Supervisor分级调用与预算默认：reasoning_effort",
+      "enum": [
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ],
+      "x-apply-mode": "next_invocation",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/supervisor_defaults/normal/reasoning_effort",
+    "type": "enum",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "Supervisor分级调用与预算默认",
+    "description": "Supervisor分级调用与预算默认：timeout_seconds",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "不允许null",
+    "path": "/supervisor_defaults/normal/timeout_seconds",
+    "proposed_value": 180,
+    "schema": {
+      "default": 180,
+      "description": "Supervisor分级调用与预算默认：timeout_seconds",
+      "maximum": 900,
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "next_invocation",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/supervisor_defaults/normal/timeout_seconds",
+    "type": "integer",
+    "unit": "seconds",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "Supervisor分级调用与预算默认",
+    "description": "Supervisor分级调用与预算默认：model",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "不允许null",
+    "path": "/supervisor_defaults/critical/model",
+    "proposed_value": "gpt-5.6-sol",
+    "schema": {
+      "default": "gpt-5.6-sol",
+      "description": "Supervisor分级调用与预算默认：model",
+      "minLength": 1,
+      "type": "string",
+      "x-apply-mode": "next_invocation",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/supervisor_defaults/critical/model",
+    "type": "string",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "Supervisor分级调用与预算默认",
+    "description": "Supervisor分级调用与预算默认：reasoning_effort",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "不允许null",
+    "path": "/supervisor_defaults/critical/reasoning_effort",
+    "proposed_value": "high",
+    "schema": {
+      "default": "high",
+      "description": "Supervisor分级调用与预算默认：reasoning_effort",
+      "enum": [
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ],
+      "x-apply-mode": "next_invocation",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/supervisor_defaults/critical/reasoning_effort",
+    "type": "enum",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "Supervisor分级调用与预算默认",
+    "description": "Supervisor分级调用与预算默认：timeout_seconds",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "不允许null",
+    "path": "/supervisor_defaults/critical/timeout_seconds",
+    "proposed_value": 240,
+    "schema": {
+      "default": 240,
+      "description": "Supervisor分级调用与预算默认：timeout_seconds",
+      "maximum": 900,
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "next_invocation",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/supervisor_defaults/critical/timeout_seconds",
+    "type": "integer",
+    "unit": "seconds",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "Supervisor分级调用与预算默认",
+    "description": "Supervisor分级调用与预算默认：max_task_turns",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "不允许null",
+    "path": "/supervisor_defaults/max_task_turns",
+    "proposed_value": 24,
+    "schema": {
+      "default": 24,
+      "description": "Supervisor分级调用与预算默认：max_task_turns",
+      "maximum": 200,
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "next_invocation",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/supervisor_defaults/max_task_turns",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "Supervisor分级调用与预算默认",
+    "description": "Supervisor分级调用与预算默认：daily_input_tokens",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "不允许null",
+    "path": "/supervisor_defaults/daily_input_tokens",
+    "proposed_value": 200000,
+    "schema": {
+      "default": 200000,
+      "description": "Supervisor分级调用与预算默认：daily_input_tokens",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "next_invocation",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/supervisor_defaults/daily_input_tokens",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "Supervisor分级调用与预算默认",
+    "description": "Supervisor分级调用与预算默认：daily_output_tokens",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "不允许null",
+    "path": "/supervisor_defaults/daily_output_tokens",
+    "proposed_value": 40000,
+    "schema": {
+      "default": 40000,
+      "description": "Supervisor分级调用与预算默认：daily_output_tokens",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "next_invocation",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/supervisor_defaults/daily_output_tokens",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "Supervisor分级调用与预算默认",
+    "description": "Supervisor分级调用与预算默认：retry_delays_seconds",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "不允许null",
+    "path": "/supervisor_defaults/retry_delays_seconds",
+    "proposed_value": [
+      30,
+      120,
+      600
+    ],
+    "schema": {
+      "default": [
+        30,
+        120,
+        600
+      ],
+      "description": "Supervisor分级调用与预算默认：retry_delays_seconds",
+      "items": {
+        "minimum": 1,
+        "type": "integer"
+      },
+      "maxItems": 3,
+      "minItems": 1,
+      "type": "array",
+      "x-apply-mode": "next_invocation",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/supervisor_defaults/retry_delays_seconds",
+    "type": "array",
+    "unit": "seconds",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "Supervisor分级调用与预算默认",
+    "description": "Supervisor分级调用与预算默认：format_correction_attempts",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "不允许null",
+    "path": "/supervisor_defaults/format_correction_attempts",
+    "proposed_value": 1,
+    "schema": {
+      "const": 1,
+      "default": 1,
+      "description": "Supervisor分级调用与预算默认：format_correction_attempts",
+      "x-apply-mode": "next_invocation",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/supervisor_defaults/format_correction_attempts",
+    "type": "constant",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_service_restart",
+    "consumer": "常驻程序生命周期和每周维护默认",
+    "description": "常驻程序生命周期和每周维护默认：startup_timeout_seconds",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "不允许null",
+    "path": "/service_defaults/startup_timeout_seconds",
+    "proposed_value": 60,
+    "schema": {
+      "default": 60,
+      "description": "常驻程序生命周期和每周维护默认：startup_timeout_seconds",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "next_service_restart",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/service_defaults/startup_timeout_seconds",
+    "type": "integer",
+    "unit": "seconds",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_service_restart",
+    "consumer": "常驻程序生命周期和每周维护默认",
+    "description": "常驻程序生命周期和每周维护默认：stop_grace_seconds",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "不允许null",
+    "path": "/service_defaults/stop_grace_seconds",
+    "proposed_value": 30,
+    "schema": {
+      "default": 30,
+      "description": "常驻程序生命周期和每周维护默认：stop_grace_seconds",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "next_service_restart",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/service_defaults/stop_grace_seconds",
+    "type": "integer",
+    "unit": "seconds",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_service_restart",
+    "consumer": "常驻程序生命周期和每周维护默认",
+    "description": "常驻程序生命周期和每周维护默认：heartbeat_seconds",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "不允许null",
+    "path": "/service_defaults/heartbeat_seconds",
+    "proposed_value": 30,
+    "schema": {
+      "default": 30,
+      "description": "常驻程序生命周期和每周维护默认：heartbeat_seconds",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "next_service_restart",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/service_defaults/heartbeat_seconds",
+    "type": "integer",
+    "unit": "seconds",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_service_restart",
+    "consumer": "常驻程序生命周期和每周维护默认",
+    "description": "常驻程序生命周期和每周维护默认：stale_after_seconds",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "不允许null",
+    "path": "/service_defaults/stale_after_seconds",
+    "proposed_value": 90,
+    "schema": {
+      "default": 90,
+      "description": "常驻程序生命周期和每周维护默认：stale_after_seconds",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "next_service_restart",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/service_defaults/stale_after_seconds",
+    "type": "integer",
+    "unit": "seconds",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_service_restart",
+    "consumer": "常驻程序生命周期和每周维护默认",
+    "description": "常驻程序生命周期和每周维护默认：max_restarts",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "不允许null",
+    "path": "/service_defaults/recovery/max_restarts",
+    "proposed_value": 3,
+    "schema": {
+      "default": 3,
+      "description": "常驻程序生命周期和每周维护默认：max_restarts",
+      "minimum": 0,
+      "type": "integer",
+      "x-apply-mode": "next_service_restart",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/service_defaults/recovery/max_restarts",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_service_restart",
+    "consumer": "常驻程序生命周期和每周维护默认",
+    "description": "常驻程序生命周期和每周维护默认：backoff_seconds",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "不允许null",
+    "path": "/service_defaults/recovery/backoff_seconds",
+    "proposed_value": [
+      30,
+      120,
+      600
+    ],
+    "schema": {
+      "default": [
+        30,
+        120,
+        600
+      ],
+      "description": "常驻程序生命周期和每周维护默认：backoff_seconds",
+      "items": {
+        "minimum": 1,
+        "type": "integer"
+      },
+      "type": "array",
+      "x-apply-mode": "next_service_restart",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/service_defaults/recovery/backoff_seconds",
+    "type": "array",
+    "unit": "seconds",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_service_restart",
+    "consumer": "常驻程序生命周期和每周维护默认",
+    "description": "常驻程序生命周期和每周维护默认：stable_window_seconds",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "不允许null",
+    "path": "/service_defaults/recovery/stable_window_seconds",
+    "proposed_value": 300,
+    "schema": {
+      "default": 300,
+      "description": "常驻程序生命周期和每周维护默认：stable_window_seconds",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "next_service_restart",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/service_defaults/recovery/stable_window_seconds",
+    "type": "integer",
+    "unit": "seconds",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_service_restart",
+    "consumer": "常驻程序生命周期和每周维护默认",
+    "description": "常驻程序生命周期和每周维护默认：max_restarts_per_window",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "不允许null",
+    "path": "/service_defaults/recovery/max_restarts_per_window",
+    "proposed_value": 5,
+    "schema": {
+      "default": 5,
+      "description": "常驻程序生命周期和每周维护默认：max_restarts_per_window",
+      "minimum": 0,
+      "type": "integer",
+      "x-apply-mode": "next_service_restart",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/service_defaults/recovery/max_restarts_per_window",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "next_service_restart",
+    "consumer": "常驻程序生命周期和每周维护默认",
+    "description": "常驻程序生命周期和每周维护默认：window_seconds",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "follow_if_not_explicit",
+    "null_meaning": "不允许null",
+    "path": "/service_defaults/recovery/window_seconds",
+    "proposed_value": 3600,
+    "schema": {
+      "default": 3600,
+      "description": "常驻程序生命周期和每周维护默认：window_seconds",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "next_service_restart",
+      "x-inheritable": true
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/service_defaults/recovery/window_seconds",
+    "type": "integer",
+    "unit": "seconds",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "PostgreSQL连接与原生参数",
+    "description": "PostgreSQL连接与原生参数：host",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/postgres/host",
+    "proposed_value": "rag-postgres",
+    "schema": {
+      "default": "rag-postgres",
+      "description": "PostgreSQL连接与原生参数：host",
+      "minLength": 1,
+      "type": "string",
+      "x-apply-mode": "pending_restart",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/postgres/host",
+    "type": "string",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "PostgreSQL连接与原生参数",
+    "description": "PostgreSQL连接与原生参数：port",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/postgres/port",
+    "proposed_value": 5432,
+    "schema": {
+      "default": 5432,
+      "description": "PostgreSQL连接与原生参数：port",
+      "maximum": 65535,
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "pending_restart",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/postgres/port",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "requires_migration",
+    "consumer": "PostgreSQL连接与原生参数",
+    "description": "PostgreSQL连接与原生参数：database",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/postgres/database",
+    "proposed_value": "rag",
+    "schema": {
+      "default": "rag",
+      "description": "PostgreSQL连接与原生参数：database",
+      "minLength": 1,
+      "type": "string",
+      "x-apply-mode": "requires_migration",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/postgres/database",
+    "type": "string",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "requires_migration",
+    "consumer": "PostgreSQL连接与原生参数",
+    "description": "PostgreSQL连接与原生参数：user",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/postgres/user",
+    "proposed_value": "rag_service",
+    "schema": {
+      "default": "rag_service",
+      "description": "PostgreSQL连接与原生参数：user",
+      "minLength": 1,
+      "type": "string",
+      "x-apply-mode": "requires_migration",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/postgres/user",
+    "type": "string",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "PostgreSQL连接与原生参数",
+    "description": "PostgreSQL连接与原生参数：password_ref",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/postgres/password_ref",
+    "proposed_value": "secret://infrastructure/postgres-password",
+    "schema": {
+      "default": "secret://infrastructure/postgres-password",
+      "description": "PostgreSQL连接与原生参数：password_ref",
+      "pattern": "^secret://[A-Za-z0-9_./-]+$",
+      "type": "string",
+      "x-apply-mode": "pending_restart",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/postgres/password_ref",
+    "type": "string",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "PostgreSQL连接与原生参数",
+    "description": "新数据库连接超时，不同于SQL statement_timeout",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/postgres/connect_timeout_seconds",
+    "proposed_value": 10,
+    "schema": {
+      "default": 10,
+      "description": "新数据库连接超时，不同于SQL statement_timeout",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "pending_restart",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/postgres/connect_timeout_seconds",
+    "type": "integer",
+    "unit": "seconds",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "PostgreSQL连接与原生参数",
+    "description": "PostgreSQL连接上限，按pg_settings.context核是否需重启",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/postgres/settings/max_connections",
+    "proposed_value": 100,
+    "schema": {
+      "default": 100,
+      "description": "PostgreSQL连接上限，按pg_settings.context核是否需重启",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "pending_restart",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/postgres/settings/max_connections",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "PostgreSQL连接与原生参数",
+    "description": "PostgreSQL共享缓冲区，初值128MB，需重启类型",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/postgres/settings/shared_buffers_mb",
+    "proposed_value": 128,
+    "schema": {
+      "default": 128,
+      "description": "PostgreSQL共享缓冲区，初值128MB，需重启类型",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "pending_restart",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/postgres/settings/shared_buffers_mb",
+    "type": "integer",
+    "unit": "MB",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "external_adapter",
+    "consumer": "PostgreSQL连接与原生参数",
+    "description": "每操作工作内存，不能简单当整库总内存",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/postgres/settings/work_mem_mb",
+    "proposed_value": 4,
+    "schema": {
+      "default": 4,
+      "description": "每操作工作内存，不能简单当整库总内存",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "external_adapter",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/postgres/settings/work_mem_mb",
+    "type": "integer",
+    "unit": "MB",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "external_adapter",
+    "consumer": "PostgreSQL连接与原生参数",
+    "description": "PostgreSQL连接与原生参数：maintenance_work_mem_mb",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/postgres/settings/maintenance_work_mem_mb",
+    "proposed_value": 64,
+    "schema": {
+      "default": 64,
+      "description": "PostgreSQL连接与原生参数：maintenance_work_mem_mb",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "external_adapter",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/postgres/settings/maintenance_work_mem_mb",
+    "type": "integer",
+    "unit": "MB",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "external_adapter",
+    "consumer": "PostgreSQL连接与原生参数",
+    "description": "PostgreSQL连接与原生参数：effective_cache_size_mb",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/postgres/settings/effective_cache_size_mb",
+    "proposed_value": 4096,
+    "schema": {
+      "default": 4096,
+      "description": "PostgreSQL连接与原生参数：effective_cache_size_mb",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "external_adapter",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/postgres/settings/effective_cache_size_mb",
+    "type": "integer",
+    "unit": "MB",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "PostgreSQL连接与原生参数",
+    "description": "PostgreSQL连接与原生参数：max_worker_processes",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/postgres/settings/max_worker_processes",
+    "proposed_value": 8,
+    "schema": {
+      "default": 8,
+      "description": "PostgreSQL连接与原生参数：max_worker_processes",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "pending_restart",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/postgres/settings/max_worker_processes",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "external_adapter",
+    "consumer": "PostgreSQL连接与原生参数",
+    "description": "PostgreSQL连接与原生参数：max_parallel_workers",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/postgres/settings/max_parallel_workers",
+    "proposed_value": 8,
+    "schema": {
+      "default": 8,
+      "description": "PostgreSQL连接与原生参数：max_parallel_workers",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "external_adapter",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/postgres/settings/max_parallel_workers",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "external_adapter",
+    "consumer": "PostgreSQL连接与原生参数",
+    "description": "PostgreSQL连接与原生参数：max_parallel_workers_per_gather",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/postgres/settings/max_parallel_workers_per_gather",
+    "proposed_value": 2,
+    "schema": {
+      "default": 2,
+      "description": "PostgreSQL连接与原生参数：max_parallel_workers_per_gather",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "external_adapter",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/postgres/settings/max_parallel_workers_per_gather",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "external_adapter",
+    "consumer": "PostgreSQL连接与原生参数",
+    "description": "PostgreSQL连接与原生参数：statement_timeout_ms",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/postgres/settings/statement_timeout_ms",
+    "proposed_value": 0,
+    "schema": {
+      "default": 0,
+      "description": "PostgreSQL连接与原生参数：statement_timeout_ms",
+      "minimum": 0,
+      "type": "integer",
+      "x-apply-mode": "external_adapter",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/postgres/settings/statement_timeout_ms",
+    "type": "integer",
+    "unit": "ms",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "external_adapter",
+    "consumer": "PostgreSQL连接与原生参数",
+    "description": "PostgreSQL连接与原生参数：lock_timeout_ms",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/postgres/settings/lock_timeout_ms",
+    "proposed_value": 0,
+    "schema": {
+      "default": 0,
+      "description": "PostgreSQL连接与原生参数：lock_timeout_ms",
+      "minimum": 0,
+      "type": "integer",
+      "x-apply-mode": "external_adapter",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/postgres/settings/lock_timeout_ms",
+    "type": "integer",
+    "unit": "ms",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "external_adapter",
+    "consumer": "PostgreSQL连接与原生参数",
+    "description": "PostgreSQL连接与原生参数：idle_in_transaction_session_timeout_ms",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/postgres/settings/idle_in_transaction_session_timeout_ms",
+    "proposed_value": 0,
+    "schema": {
+      "default": 0,
+      "description": "PostgreSQL连接与原生参数：idle_in_transaction_session_timeout_ms",
+      "minimum": 0,
+      "type": "integer",
+      "x-apply-mode": "external_adapter",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/postgres/settings/idle_in_transaction_session_timeout_ms",
+    "type": "integer",
+    "unit": "ms",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "Redis连接，不自动改变启用状态",
+    "description": "Redis连接，不自动改变启用状态：host",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/redis/host",
+    "proposed_value": "redis",
+    "schema": {
+      "default": "redis",
+      "description": "Redis连接，不自动改变启用状态：host",
+      "minLength": 1,
+      "type": "string",
+      "x-apply-mode": "pending_restart",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/redis/host",
+    "type": "string",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "Redis连接，不自动改变启用状态",
+    "description": "Redis连接，不自动改变启用状态：port",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/redis/port",
+    "proposed_value": 6379,
+    "schema": {
+      "default": 6379,
+      "description": "Redis连接，不自动改变启用状态：port",
+      "maximum": 65535,
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "pending_restart",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/redis/port",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "Redis连接，不自动改变启用状态",
+    "description": "Redis连接，不自动改变启用状态：database_index",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/redis/database_index",
+    "proposed_value": 0,
+    "schema": {
+      "default": 0,
+      "description": "Redis连接，不自动改变启用状态：database_index",
+      "minimum": 0,
+      "type": "integer",
+      "x-apply-mode": "pending_restart",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/redis/database_index",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "Redis连接，不自动改变启用状态",
+    "description": "Redis连接，不自动改变启用状态：credential_ref",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "未绑定凭据；相关能力不得假称已配置",
+    "path": "/redis/credential_ref",
+    "proposed_value": null,
+    "schema": {
+      "anyOf": [
+        {
+          "pattern": "^secret://[A-Za-z0-9_./-]+$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Redis连接，不自动改变启用状态：credential_ref",
+      "x-apply-mode": "pending_restart",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/redis/credential_ref",
+    "type": "nullable",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "既有渠道和账号引用",
+    "description": "本功能默认/渠道开关；不能代替每个业务程序的启用批准",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/channels/discord/enabled",
+    "proposed_value": true,
+    "schema": {
+      "default": true,
+      "description": "本功能默认/渠道开关；不能代替每个业务程序的启用批准",
+      "type": "boolean",
+      "x-apply-mode": "pending_restart",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/channels/discord/enabled",
+    "type": "boolean",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "既有渠道和账号引用",
+    "description": "既有渠道账号与身份资料引用，秘密值不进入本文件",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/channels/discord/account_ref",
+    "proposed_value": "secret://channels/discord",
+    "schema": {
+      "default": "secret://channels/discord",
+      "description": "既有渠道账号与身份资料引用，秘密值不进入本文件",
+      "pattern": "^secret://[A-Za-z0-9_./-]+$",
+      "type": "string",
+      "x-apply-mode": "pending_restart",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/channels/discord/account_ref",
+    "type": "string",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "既有渠道和账号引用",
+    "description": "本功能默认/渠道开关；不能代替每个业务程序的启用批准",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/channels/feishu/enabled",
+    "proposed_value": true,
+    "schema": {
+      "default": true,
+      "description": "本功能默认/渠道开关；不能代替每个业务程序的启用批准",
+      "type": "boolean",
+      "x-apply-mode": "pending_restart",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/channels/feishu/enabled",
+    "type": "boolean",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "既有渠道和账号引用",
+    "description": "既有渠道账号与身份资料引用，秘密值不进入本文件",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/channels/feishu/account_ref",
+    "proposed_value": "secret://channels/feishu",
+    "schema": {
+      "default": "secret://channels/feishu",
+      "description": "既有渠道账号与身份资料引用，秘密值不进入本文件",
+      "pattern": "^secret://[A-Za-z0-9_./-]+$",
+      "type": "string",
+      "x-apply-mode": "pending_restart",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/channels/feishu/account_ref",
+    "type": "string",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "dynamic_admission",
+    "consumer": "现有Outbox投递及错误摘录",
+    "description": "现有Outbox投递及错误摘录：delivery_max_attempts",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/notifications/delivery_max_attempts",
+    "proposed_value": 10,
+    "schema": {
+      "default": 10,
+      "description": "现有Outbox投递及错误摘录：delivery_max_attempts",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "dynamic_admission",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/notifications/delivery_max_attempts",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "dynamic_admission",
+    "consumer": "现有Outbox投递及错误摘录",
+    "description": "现有Outbox投递及错误摘录：retry_base_seconds",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/notifications/retry_base_seconds",
+    "proposed_value": 10,
+    "schema": {
+      "default": 10,
+      "description": "现有Outbox投递及错误摘录：retry_base_seconds",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "dynamic_admission",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/notifications/retry_base_seconds",
+    "type": "integer",
+    "unit": "seconds",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "dynamic_admission",
+    "consumer": "现有Outbox投递及错误摘录",
+    "description": "现有Outbox投递及错误摘录：retry_max_seconds",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/notifications/retry_max_seconds",
+    "proposed_value": 60,
+    "schema": {
+      "default": 60,
+      "description": "现有Outbox投递及错误摘录：retry_max_seconds",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "dynamic_admission",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/notifications/retry_max_seconds",
+    "type": "integer",
+    "unit": "seconds",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "dynamic_admission",
+    "consumer": "现有Outbox投递及错误摘录",
+    "description": "现有Outbox投递及错误摘录：error_excerpt_chars",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/notifications/error_excerpt_chars",
+    "proposed_value": 1500,
+    "schema": {
+      "default": 1500,
+      "description": "现有Outbox投递及错误摘录：error_excerpt_chars",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "dynamic_admission",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/notifications/error_excerpt_chars",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "dynamic_admission",
+    "consumer": "导航读取、外部体量提示和有界扫描",
+    "description": "导航读取、外部体量提示和有界扫描：change_lookback_days",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/map/change_lookback_days",
+    "proposed_value": 30,
+    "schema": {
+      "default": 30,
+      "description": "导航读取、外部体量提示和有界扫描：change_lookback_days",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "dynamic_admission",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/map/change_lookback_days",
+    "type": "integer",
+    "unit": "days",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "dynamic_admission",
+    "consumer": "导航读取、外部体量提示和有界扫描",
+    "description": "导航读取、外部体量提示和有界扫描：read_max_bytes",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/map/read_max_bytes",
+    "proposed_value": 262144,
+    "schema": {
+      "default": 262144,
+      "description": "导航读取、外部体量提示和有界扫描：read_max_bytes",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "dynamic_admission",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/map/read_max_bytes",
+    "type": "integer",
+    "unit": "bytes",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "dynamic_admission",
+    "consumer": "导航读取、外部体量提示和有界扫描",
+    "description": "外部目录体量提示阈值，不是授权拒绝门槛",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/map/external_directory_warning/file_count",
+    "proposed_value": 10000,
+    "schema": {
+      "default": 10000,
+      "description": "外部目录体量提示阈值，不是授权拒绝门槛",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "dynamic_admission",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/map/external_directory_warning/file_count",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "dynamic_admission",
+    "consumer": "导航读取、外部体量提示和有界扫描",
+    "description": "外部目录体量提示阈值，1GiB为建议值，不等于全量扫描",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/map/external_directory_warning/total_bytes",
+    "proposed_value": 1073741824,
+    "schema": {
+      "default": 1073741824,
+      "description": "外部目录体量提示阈值，1GiB为建议值，不等于全量扫描",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "dynamic_admission",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/map/external_directory_warning/total_bytes",
+    "type": "integer",
+    "unit": "bytes",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "dynamic_admission",
+    "consumer": "导航读取、外部体量提示和有界扫描",
+    "description": "导航读取、外部体量提示和有界扫描：elapsed_ms",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/map/external_directory_warning/elapsed_ms",
+    "proposed_value": 3000,
+    "schema": {
+      "default": 3000,
+      "description": "导航读取、外部体量提示和有界扫描：elapsed_ms",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "dynamic_admission",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/map/external_directory_warning/elapsed_ms",
+    "type": "integer",
+    "unit": "ms",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "dynamic_admission",
+    "consumer": "导航读取、外部体量提示和有界扫描",
+    "description": "有界扫描条数，未访问的旧Map项不能据此删除",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/map/scan/max_files",
+    "proposed_value": 10000,
+    "schema": {
+      "default": 10000,
+      "description": "有界扫描条数，未访问的旧Map项不能据此删除",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "dynamic_admission",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/map/scan/max_files",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "dynamic_admission",
+    "consumer": "导航读取、外部体量提示和有界扫描",
+    "description": "有界扫描时间，达到限制标部分覆盖，不能当完整总量",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/map/scan/max_duration_ms",
+    "proposed_value": 5000,
+    "schema": {
+      "default": 5000,
+      "description": "有界扫描时间，达到限制标部分覆盖，不能当完整总量",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "dynamic_admission",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/map/scan/max_duration_ms",
+    "type": "integer",
+    "unit": "ms",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "dynamic_admission",
+    "consumer": "日志级别、轮转和可选保留期",
+    "description": "日志级别、轮转和可选保留期：level",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/logging/level",
+    "proposed_value": "INFO",
+    "schema": {
+      "default": "INFO",
+      "description": "日志级别、轮转和可选保留期：level",
+      "enum": [
+        "DEBUG",
+        "INFO",
+        "WARNING",
+        "ERROR",
+        "CRITICAL"
+      ],
+      "x-apply-mode": "dynamic_admission",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/logging/level",
+    "type": "enum",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "dynamic_admission",
+    "consumer": "日志级别、轮转和可选保留期",
+    "description": "日志级别、轮转和可选保留期：max_file_bytes",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/logging/max_file_bytes",
+    "proposed_value": 52428800,
+    "schema": {
+      "default": 52428800,
+      "description": "日志级别、轮转和可选保留期：max_file_bytes",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "dynamic_admission",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/logging/max_file_bytes",
+    "type": "integer",
+    "unit": "bytes",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "dynamic_admission",
+    "consumer": "日志级别、轮转和可选保留期",
+    "description": "日志级别、轮转和可选保留期：backup_files",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/logging/backup_files",
+    "proposed_value": 10,
+    "schema": {
+      "default": 10,
+      "description": "日志级别、轮转和可选保留期：backup_files",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "dynamic_admission",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/logging/backup_files",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "dynamic_admission",
+    "consumer": "日志级别、轮转和可选保留期",
+    "description": "日志级别、轮转和可选保留期：trace_retention_days",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "没有设置此额外限制/保留期；不是0，不触发自动删除",
+    "path": "/logging/trace_retention_days",
+    "proposed_value": null,
+    "schema": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "日志级别、轮转和可选保留期：trace_retention_days",
+      "x-apply-mode": "dynamic_admission",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/logging/trace_retention_days",
+    "type": "nullable",
+    "unit": "days",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "dynamic_admission",
+    "consumer": "基础设施变更备份及可选保留期",
+    "description": "基础设施变更备份及可选保留期：directory",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/backups/directory",
+    "proposed_value": "backups",
+    "schema": {
+      "default": "backups",
+      "description": "基础设施变更备份及可选保留期：directory",
+      "minLength": 1,
+      "type": "string",
+      "x-apply-mode": "dynamic_admission",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/backups/directory",
+    "type": "string",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "dynamic_admission",
+    "consumer": "基础设施变更备份及可选保留期",
+    "description": "基础设施改动前备份义务，不能借普通配置关闭必要备份",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/backups/before_infrastructure_change",
+    "proposed_value": true,
+    "schema": {
+      "const": true,
+      "default": true,
+      "description": "基础设施改动前备份义务，不能借普通配置关闭必要备份",
+      "x-apply-mode": "dynamic_admission",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/backups/before_infrastructure_change",
+    "type": "constant",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "dynamic_admission",
+    "consumer": "基础设施变更备份及可选保留期",
+    "description": "基础设施变更备份及可选保留期：retention_days",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "没有设置此额外限制/保留期；不是0，不触发自动删除",
+    "path": "/backups/retention_days",
+    "proposed_value": null,
+    "schema": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "基础设施变更备份及可选保留期：retention_days",
+      "x-apply-mode": "dynamic_admission",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/backups/retention_days",
+    "type": "nullable",
+    "unit": "days",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "现有文档服务参数",
+    "description": "现有文档服务参数：listen_port",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/document_service/listen_port",
+    "proposed_value": 5001,
+    "schema": {
+      "default": 5001,
+      "description": "现有文档服务参数：listen_port",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "pending_restart",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/document_service/listen_port",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "现有文档服务参数",
+    "description": "现有文档服务参数：workers",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/document_service/workers",
+    "proposed_value": 1,
+    "schema": {
+      "default": 1,
+      "description": "现有文档服务参数：workers",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "pending_restart",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/document_service/workers",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "现有文档服务参数",
+    "description": "现有文档服务参数：request_timeout_seconds",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/document_service/request_timeout_seconds",
+    "proposed_value": 180,
+    "schema": {
+      "default": 180,
+      "description": "现有文档服务参数：request_timeout_seconds",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "pending_restart",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/document_service/request_timeout_seconds",
+    "type": "integer",
+    "unit": "seconds",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "现有RAG重排服务参数",
+    "description": "现有RAG重排服务参数：listen_port",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/reranker/listen_port",
+    "proposed_value": 8080,
+    "schema": {
+      "default": 8080,
+      "description": "现有RAG重排服务参数：listen_port",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "pending_restart",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/reranker/listen_port",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "现有RAG重排服务参数",
+    "description": "现有RAG重排服务参数：request_timeout_seconds",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/reranker/request_timeout_seconds",
+    "proposed_value": 60,
+    "schema": {
+      "default": 60,
+      "description": "现有RAG重排服务参数：request_timeout_seconds",
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "pending_restart",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/reranker/request_timeout_seconds",
+    "type": "integer",
+    "unit": "seconds",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "现有RAG重排服务参数",
+    "description": "现有RAG重排服务参数：credential_ref",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/reranker/credential_ref",
+    "proposed_value": "secret://infrastructure/reranker",
+    "schema": {
+      "default": "secret://infrastructure/reranker",
+      "description": "现有RAG重排服务参数：credential_ref",
+      "pattern": "^secret://[A-Za-z0-9_./-]+$",
+      "type": "string",
+      "x-apply-mode": "pending_restart",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/reranker/credential_ref",
+    "type": "string",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_recreate",
+    "consumer": "Kernel及基础依赖的Docker配置，不启用其他业务服务",
+    "description": "Kernel及基础依赖的Docker配置，不启用其他业务服务：compose_project",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/infrastructure/compose_project",
+    "proposed_value": "ai",
+    "schema": {
+      "default": "ai",
+      "description": "Kernel及基础依赖的Docker配置，不启用其他业务服务：compose_project",
+      "minLength": 1,
+      "type": "string",
+      "x-apply-mode": "pending_recreate",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/infrastructure/compose_project",
+    "type": "string",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_recreate",
+    "consumer": "Kernel及基础依赖的Docker配置，不启用其他业务服务",
+    "description": "Kernel及基础依赖的Docker配置，不启用其他业务服务：network_key",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/infrastructure/network_key",
+    "proposed_value": "rec_net",
+    "schema": {
+      "default": "rec_net",
+      "description": "Kernel及基础依赖的Docker配置，不启用其他业务服务：network_key",
+      "minLength": 1,
+      "type": "string",
+      "x-apply-mode": "pending_recreate",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/infrastructure/network_key",
+    "type": "string",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_recreate",
+    "consumer": "Kernel及基础依赖的Docker配置，不启用其他业务服务",
+    "description": "Kernel及基础依赖的Docker配置，不启用其他业务服务：host_bind_address",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/infrastructure/host_bind_address",
+    "proposed_value": "127.0.0.1",
+    "schema": {
+      "default": "127.0.0.1",
+      "description": "Kernel及基础依赖的Docker配置，不启用其他业务服务：host_bind_address",
+      "minLength": 1,
+      "type": "string",
+      "x-apply-mode": "pending_recreate",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/infrastructure/host_bind_address",
+    "type": "string",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_recreate",
+    "consumer": "Kernel及基础依赖的Docker配置，不启用其他业务服务",
+    "description": "Kernel及基础依赖的Docker配置，不启用其他业务服务：kernel_api",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/infrastructure/host_ports/kernel_api",
+    "proposed_value": 18001,
+    "schema": {
+      "default": 18001,
+      "description": "Kernel及基础依赖的Docker配置，不启用其他业务服务：kernel_api",
+      "maximum": 65535,
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "pending_recreate",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/infrastructure/host_ports/kernel_api",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_recreate",
+    "consumer": "Kernel及基础依赖的Docker配置，不启用其他业务服务",
+    "description": "Kernel及基础依赖的Docker配置，不启用其他业务服务：kernel_mcp",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/infrastructure/host_ports/kernel_mcp",
+    "proposed_value": 18002,
+    "schema": {
+      "default": 18002,
+      "description": "Kernel及基础依赖的Docker配置，不启用其他业务服务：kernel_mcp",
+      "maximum": 65535,
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "pending_recreate",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/infrastructure/host_ports/kernel_mcp",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_recreate",
+    "consumer": "Kernel及基础依赖的Docker配置，不启用其他业务服务",
+    "description": "Kernel及基础依赖的Docker配置，不启用其他业务服务：postgres",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/infrastructure/host_ports/postgres",
+    "proposed_value": 15432,
+    "schema": {
+      "default": 15432,
+      "description": "Kernel及基础依赖的Docker配置，不启用其他业务服务：postgres",
+      "maximum": 65535,
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "pending_recreate",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/infrastructure/host_ports/postgres",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_recreate",
+    "consumer": "Kernel及基础依赖的Docker配置，不启用其他业务服务",
+    "description": "Kernel及基础依赖的Docker配置，不启用其他业务服务：redis",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/infrastructure/host_ports/redis",
+    "proposed_value": 16379,
+    "schema": {
+      "default": 16379,
+      "description": "Kernel及基础依赖的Docker配置，不启用其他业务服务：redis",
+      "maximum": 65535,
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "pending_recreate",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/infrastructure/host_ports/redis",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_recreate",
+    "consumer": "Kernel及基础依赖的Docker配置，不启用其他业务服务",
+    "description": "Kernel及基础依赖的Docker配置，不启用其他业务服务：document_service",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/infrastructure/host_ports/document_service",
+    "proposed_value": 15001,
+    "schema": {
+      "default": 15001,
+      "description": "Kernel及基础依赖的Docker配置，不启用其他业务服务：document_service",
+      "maximum": 65535,
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "pending_recreate",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/infrastructure/host_ports/document_service",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_recreate",
+    "consumer": "Kernel及基础依赖的Docker配置，不启用其他业务服务",
+    "description": "Kernel及基础依赖的Docker配置，不启用其他业务服务：reranker",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/infrastructure/host_ports/reranker",
+    "proposed_value": 18088,
+    "schema": {
+      "default": 18088,
+      "description": "Kernel及基础依赖的Docker配置，不启用其他业务服务：reranker",
+      "maximum": 65535,
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "pending_recreate",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/infrastructure/host_ports/reranker",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_recreate",
+    "consumer": "Kernel及基础依赖的Docker配置，不启用其他业务服务",
+    "description": "Kernel及基础依赖的Docker配置，不启用其他业务服务：image",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/infrastructure/services/AI/image",
+    "proposed_value": "assistant-ai:0.1.0",
+    "schema": {
+      "default": "assistant-ai:0.1.0",
+      "description": "Kernel及基础依赖的Docker配置，不启用其他业务服务：image",
+      "minLength": 1,
+      "type": "string",
+      "x-apply-mode": "pending_recreate",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/infrastructure/services/AI/image",
+    "type": "string",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_recreate",
+    "consumer": "Kernel及基础依赖的Docker配置，不启用其他业务服务",
+    "description": "Docker容器CPU配额，应用后核Docker实际值",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "没有设置此额外限制/保留期；不是0，不触发自动删除",
+    "path": "/infrastructure/services/AI/cpu_limit",
+    "proposed_value": null,
+    "schema": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Docker容器CPU配额，应用后核Docker实际值",
+      "x-apply-mode": "pending_recreate",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/infrastructure/services/AI/cpu_limit",
+    "type": "nullable",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_recreate",
+    "consumer": "Kernel及基础依赖的Docker配置，不启用其他业务服务",
+    "description": "Docker容器内存上限，null保持无新增上限",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "没有设置此额外限制/保留期；不是0，不触发自动删除",
+    "path": "/infrastructure/services/AI/memory_limit_mb",
+    "proposed_value": null,
+    "schema": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Docker容器内存上限，null保持无新增上限",
+      "x-apply-mode": "pending_recreate",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/infrastructure/services/AI/memory_limit_mb",
+    "type": "nullable",
+    "unit": "MB",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_recreate",
+    "consumer": "Kernel及基础依赖的Docker配置，不启用其他业务服务",
+    "description": "Kernel及基础依赖的Docker配置，不启用其他业务服务：image",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/infrastructure/services/rag-postgres/image",
+    "proposed_value": "pgvector/pgvector:0.8.6-pg18-trixie",
+    "schema": {
+      "default": "pgvector/pgvector:0.8.6-pg18-trixie",
+      "description": "Kernel及基础依赖的Docker配置，不启用其他业务服务：image",
+      "minLength": 1,
+      "type": "string",
+      "x-apply-mode": "pending_recreate",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/infrastructure/services/rag-postgres/image",
+    "type": "string",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_recreate",
+    "consumer": "Kernel及基础依赖的Docker配置，不启用其他业务服务",
+    "description": "Docker容器CPU配额，应用后核Docker实际值",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "没有设置此额外限制/保留期；不是0，不触发自动删除",
+    "path": "/infrastructure/services/rag-postgres/cpu_limit",
+    "proposed_value": null,
+    "schema": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Docker容器CPU配额，应用后核Docker实际值",
+      "x-apply-mode": "pending_recreate",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/infrastructure/services/rag-postgres/cpu_limit",
+    "type": "nullable",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_recreate",
+    "consumer": "Kernel及基础依赖的Docker配置，不启用其他业务服务",
+    "description": "Docker容器内存上限，null保持无新增上限",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "没有设置此额外限制/保留期；不是0，不触发自动删除",
+    "path": "/infrastructure/services/rag-postgres/memory_limit_mb",
+    "proposed_value": null,
+    "schema": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Docker容器内存上限，null保持无新增上限",
+      "x-apply-mode": "pending_recreate",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/infrastructure/services/rag-postgres/memory_limit_mb",
+    "type": "nullable",
+    "unit": "MB",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_recreate",
+    "consumer": "Kernel及基础依赖的Docker配置，不启用其他业务服务",
+    "description": "Kernel及基础依赖的Docker配置，不启用其他业务服务：image",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/infrastructure/services/redis/image",
+    "proposed_value": "redis:6-alpine",
+    "schema": {
+      "default": "redis:6-alpine",
+      "description": "Kernel及基础依赖的Docker配置，不启用其他业务服务：image",
+      "minLength": 1,
+      "type": "string",
+      "x-apply-mode": "pending_recreate",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/infrastructure/services/redis/image",
+    "type": "string",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_recreate",
+    "consumer": "Kernel及基础依赖的Docker配置，不启用其他业务服务",
+    "description": "Docker容器CPU配额，应用后核Docker实际值",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "没有设置此额外限制/保留期；不是0，不触发自动删除",
+    "path": "/infrastructure/services/redis/cpu_limit",
+    "proposed_value": null,
+    "schema": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Docker容器CPU配额，应用后核Docker实际值",
+      "x-apply-mode": "pending_recreate",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/infrastructure/services/redis/cpu_limit",
+    "type": "nullable",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_recreate",
+    "consumer": "Kernel及基础依赖的Docker配置，不启用其他业务服务",
+    "description": "Docker容器内存上限，null保持无新增上限",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "没有设置此额外限制/保留期；不是0，不触发自动删除",
+    "path": "/infrastructure/services/redis/memory_limit_mb",
+    "proposed_value": null,
+    "schema": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Docker容器内存上限，null保持无新增上限",
+      "x-apply-mode": "pending_recreate",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/infrastructure/services/redis/memory_limit_mb",
+    "type": "nullable",
+    "unit": "MB",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_recreate",
+    "consumer": "Kernel及基础依赖的Docker配置，不启用其他业务服务",
+    "description": "Kernel及基础依赖的Docker配置，不启用其他业务服务：image",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/infrastructure/services/rag-reranker/image",
+    "proposed_value": "local/rag-reranker-gateway:1.0.0",
+    "schema": {
+      "default": "local/rag-reranker-gateway:1.0.0",
+      "description": "Kernel及基础依赖的Docker配置，不启用其他业务服务：image",
+      "minLength": 1,
+      "type": "string",
+      "x-apply-mode": "pending_recreate",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/infrastructure/services/rag-reranker/image",
+    "type": "string",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_recreate",
+    "consumer": "Kernel及基础依赖的Docker配置，不启用其他业务服务",
+    "description": "Docker容器CPU配额，应用后核Docker实际值",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "没有设置此额外限制/保留期；不是0，不触发自动删除",
+    "path": "/infrastructure/services/rag-reranker/cpu_limit",
+    "proposed_value": null,
+    "schema": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Docker容器CPU配额，应用后核Docker实际值",
+      "x-apply-mode": "pending_recreate",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/infrastructure/services/rag-reranker/cpu_limit",
+    "type": "nullable",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_recreate",
+    "consumer": "Kernel及基础依赖的Docker配置，不启用其他业务服务",
+    "description": "Docker容器内存上限，null保持无新增上限",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "没有设置此额外限制/保留期；不是0，不触发自动删除",
+    "path": "/infrastructure/services/rag-reranker/memory_limit_mb",
+    "proposed_value": null,
+    "schema": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Docker容器内存上限，null保持无新增上限",
+      "x-apply-mode": "pending_recreate",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/infrastructure/services/rag-reranker/memory_limit_mb",
+    "type": "nullable",
+    "unit": "MB",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "requires_migration",
+    "consumer": "Kernel及基础依赖的Docker配置，不启用其他业务服务",
+    "description": "Kernel及基础依赖的Docker配置，不启用其他业务服务：type",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/infrastructure/storage/postgres/type",
+    "proposed_value": "bind",
+    "schema": {
+      "default": "bind",
+      "description": "Kernel及基础依赖的Docker配置，不启用其他业务服务：type",
+      "enum": [
+        "bind",
+        "volume"
+      ],
+      "x-apply-mode": "requires_migration",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/infrastructure/storage/postgres/type",
+    "type": "enum",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "requires_migration",
+    "consumer": "Kernel及基础依赖的Docker配置，不启用其他业务服务",
+    "description": "挂载源；bind为相对部署根目录，volume为卷身份；变化须检查迁移",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/infrastructure/storage/postgres/source",
+    "proposed_value": "rag-stack/data/postgres",
+    "schema": {
+      "default": "rag-stack/data/postgres",
+      "description": "挂载源；bind为相对部署根目录，volume为卷身份；变化须检查迁移",
+      "minLength": 1,
+      "type": "string",
+      "x-apply-mode": "requires_migration",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/infrastructure/storage/postgres/source",
+    "type": "string",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "requires_migration",
+    "consumer": "Kernel及基础依赖的Docker配置，不启用其他业务服务",
+    "description": "Linux容器内挂载目标；不能将换目标当数据已迁移",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/infrastructure/storage/postgres/target",
+    "proposed_value": "/var/lib/postgresql",
+    "schema": {
+      "default": "/var/lib/postgresql",
+      "description": "Linux容器内挂载目标；不能将换目标当数据已迁移",
+      "minLength": 1,
+      "pattern": "^/",
+      "type": "string",
+      "x-apply-mode": "requires_migration",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/infrastructure/storage/postgres/target",
+    "type": "string",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "requires_migration",
+    "consumer": "Kernel及基础依赖的Docker配置，不启用其他业务服务",
+    "description": "Kernel及基础依赖的Docker配置，不启用其他业务服务：type",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/infrastructure/storage/redis/type",
+    "proposed_value": "bind",
+    "schema": {
+      "default": "bind",
+      "description": "Kernel及基础依赖的Docker配置，不启用其他业务服务：type",
+      "enum": [
+        "bind",
+        "volume"
+      ],
+      "x-apply-mode": "requires_migration",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/infrastructure/storage/redis/type",
+    "type": "enum",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "requires_migration",
+    "consumer": "Kernel及基础依赖的Docker配置，不启用其他业务服务",
+    "description": "挂载源；bind为相对部署根目录，volume为卷身份；变化须检查迁移",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/infrastructure/storage/redis/source",
+    "proposed_value": "redis_data",
+    "schema": {
+      "default": "redis_data",
+      "description": "挂载源；bind为相对部署根目录，volume为卷身份；变化须检查迁移",
+      "minLength": 1,
+      "type": "string",
+      "x-apply-mode": "requires_migration",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/infrastructure/storage/redis/source",
+    "type": "string",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "requires_migration",
+    "consumer": "Kernel及基础依赖的Docker配置，不启用其他业务服务",
+    "description": "Linux容器内挂载目标；不能将换目标当数据已迁移",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/infrastructure/storage/redis/target",
+    "proposed_value": "/data",
+    "schema": {
+      "default": "/data",
+      "description": "Linux容器内挂载目标；不能将换目标当数据已迁移",
+      "minLength": 1,
+      "pattern": "^/",
+      "type": "string",
+      "x-apply-mode": "requires_migration",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/infrastructure/storage/redis/target",
+    "type": "string",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "requires_migration",
+    "consumer": "Kernel及基础依赖的Docker配置，不启用其他业务服务",
+    "description": "Kernel及基础依赖的Docker配置，不启用其他业务服务：type",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/infrastructure/storage/document_cache/type",
+    "proposed_value": "bind",
+    "schema": {
+      "default": "bind",
+      "description": "Kernel及基础依赖的Docker配置，不启用其他业务服务：type",
+      "enum": [
+        "bind",
+        "volume"
+      ],
+      "x-apply-mode": "requires_migration",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/infrastructure/storage/document_cache/type",
+    "type": "enum",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "requires_migration",
+    "consumer": "Kernel及基础依赖的Docker配置，不启用其他业务服务",
+    "description": "挂载源；bind为相对部署根目录，volume为卷身份；变化须检查迁移",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/infrastructure/storage/document_cache/source",
+    "proposed_value": "assistant-data/caches/docling",
+    "schema": {
+      "default": "assistant-data/caches/docling",
+      "description": "挂载源；bind为相对部署根目录，volume为卷身份；变化须检查迁移",
+      "minLength": 1,
+      "type": "string",
+      "x-apply-mode": "requires_migration",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/infrastructure/storage/document_cache/source",
+    "type": "string",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "requires_migration",
+    "consumer": "Kernel及基础依赖的Docker配置，不启用其他业务服务",
+    "description": "Linux容器内挂载目标；不能将换目标当数据已迁移",
+    "failure": "拒非法候选/保旧有效值；外部应用按组记录失败和待生效",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/infrastructure/storage/document_cache/target",
+    "proposed_value": "/home/v/.cache/docling",
+    "schema": {
+      "default": "/home/v/.cache/docling",
+      "description": "Linux容器内挂载目标；不能将换目标当数据已迁移",
+      "minLength": 1,
+      "pattern": "^/",
+      "type": "string",
+      "x-apply-mode": "requires_migration",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/infrastructure/storage/document_cache/target",
+    "type": "string",
+    "unit": "count/value",
+    "value_source": "修订方案二完整JSON；现网已有值迁移导入，新增建议不冒已生效",
+    "visibility": "kernel_management_only",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "channel",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/channels/discord/allow_dm",
+    "proposed_value": null,
+    "schema": {
+      "type": "boolean"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "channel",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/channels/discord/allowed_channel_ids",
+    "proposed_value": null,
+    "schema": {
+      "items": {
+        "pattern": "^[0-9]+$",
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "channel",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/channels/discord/allowed_user_ids",
+    "proposed_value": null,
+    "schema": {
+      "items": {
+        "pattern": "^[0-9]+$",
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "channel",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/channels/discord/api_base_url",
+    "proposed_value": null,
+    "schema": {
+      "format": "uri",
+      "pattern": "^https?://",
+      "type": "string"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "channel",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/channels/discord/application_id",
+    "proposed_value": null,
+    "schema": {
+      "pattern": "^[0-9]+$",
+      "type": "string"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "channel",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/channels/discord/archived_channel_ids",
+    "proposed_value": null,
+    "schema": {
+      "items": {
+        "pattern": "^[0-9]+$",
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "channel",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/channels/discord/auto_provision_projects",
+    "proposed_value": null,
+    "schema": {
+      "type": "boolean"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "channel",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/channels/discord/guild_ids",
+    "proposed_value": null,
+    "schema": {
+      "items": {
+        "pattern": "^[0-9]+$",
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "channel",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/channels/discord/home_channel_id",
+    "proposed_value": null,
+    "schema": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9]+$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "channel",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/channels/discord/message_content",
+    "proposed_value": null,
+    "schema": {
+      "type": "boolean"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "channel",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/channels/discord/owner_user_ids",
+    "proposed_value": null,
+    "schema": {
+      "items": {
+        "pattern": "^[0-9]+$",
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "channel",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/channels/discord/project_category_id",
+    "proposed_value": null,
+    "schema": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9]+$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "channel",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/channels/feishu/app_id",
+    "proposed_value": null,
+    "schema": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "channel",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/channels/feishu/mode",
+    "proposed_value": null,
+    "schema": {
+      "enum": [
+        "full",
+        "standby"
+      ]
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "channel",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/channels/feishu/owner_open_ids",
+    "proposed_value": null,
+    "schema": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "channel",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/channels/feishu/receive_mode",
+    "proposed_value": null,
+    "schema": {
+      "enum": [
+        "websocket",
+        "callback"
+      ]
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "pending_restart",
+    "consumer": "channel",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/model_catalog_ref",
+    "proposed_value": null,
+    "schema": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/api_key_ref",
+    "proposed_value": null,
+    "schema": {
+      "pattern": "^secret://",
+      "type": "string"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/enabled",
+    "proposed_value": null,
+    "schema": {
+      "type": "boolean"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/max_retries",
+    "proposed_value": null,
+    "schema": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/model_names/document_ocr",
+    "proposed_value": null,
+    "schema": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/model_names/embedding",
+    "proposed_value": null,
+    "schema": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/model_names/multimodal_embedding",
+    "proposed_value": null,
+    "schema": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/model_names/multimodal_reranker",
+    "proposed_value": null,
+    "schema": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/model_names/reranker",
+    "proposed_value": null,
+    "schema": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/model_names/vision",
+    "proposed_value": null,
+    "schema": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/native_base_url",
+    "proposed_value": null,
+    "schema": {
+      "anyOf": [
+        {
+          "format": "uri",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/openai_compatible_base_url",
+    "proposed_value": null,
+    "schema": {
+      "anyOf": [
+        {
+          "format": "uri",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/provider_type",
+    "proposed_value": null,
+    "schema": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/region",
+    "proposed_value": null,
+    "schema": {
+      "type": "string"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/rerank_base_url",
+    "proposed_value": null,
+    "schema": {
+      "anyOf": [
+        {
+          "format": "uri",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/timeout_seconds",
+    "proposed_value": null,
+    "schema": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/workspace_id",
+    "proposed_value": null,
+    "schema": {
+      "type": "string"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/chat_models/<model_id>/display_name",
+    "proposed_value": null,
+    "schema": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/chat_models/<model_id>/api_style",
+    "proposed_value": null,
+    "schema": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/chat_models/<model_id>/runtime",
+    "proposed_value": null,
+    "schema": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/chat_models/<model_id>/provider_npm",
+    "proposed_value": null,
+    "schema": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/chat_models/<model_id>/verified_at",
+    "proposed_value": null,
+    "schema": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/chat_models/<model_id>/model_id",
+    "proposed_value": null,
+    "schema": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/chat_models/<model_id>/endpoint_id",
+    "proposed_value": null,
+    "schema": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/chat_models/<model_id>/base_url",
+    "proposed_value": null,
+    "schema": {
+      "anyOf": [
+        {
+          "format": "uri",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/chat_models/<model_id>/api_key_env",
+    "proposed_value": null,
+    "schema": {
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+      "type": "string"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/chat_models/<model_id>/context_window_tokens",
+    "proposed_value": null,
+    "schema": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/chat_models/<model_id>/max_output_tokens",
+    "proposed_value": null,
+    "schema": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/chat_models/<model_id>/input_price_per_million_tokens_usd",
+    "proposed_value": null,
+    "schema": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/chat_models/<model_id>/output_price_per_million_tokens_usd",
+    "proposed_value": null,
+    "schema": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/chat_models/<model_id>/cached_input_price_per_million_tokens_usd",
+    "proposed_value": null,
+    "schema": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/chat_models/<model_id>/strengths",
+    "proposed_value": null,
+    "schema": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/chat_models/<model_id>/weaknesses",
+    "proposed_value": null,
+    "schema": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/chat_models/<model_id>/enabled",
+    "proposed_value": null,
+    "schema": {
+      "type": "boolean"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/chat_models/<model_id>/capabilities/reasoning",
+    "proposed_value": null,
+    "schema": {
+      "type": "boolean"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/chat_models/<model_id>/capabilities/function_calling",
+    "proposed_value": null,
+    "schema": {
+      "type": "boolean"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/chat_models/<model_id>/capabilities/structured_output",
+    "proposed_value": null,
+    "schema": {
+      "type": "boolean"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/chat_models/<model_id>/capabilities/opencode_local_mcp",
+    "proposed_value": null,
+    "schema": {
+      "type": "boolean"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/chat_models/<model_id>/capabilities/codex_builtin_shell",
+    "proposed_value": null,
+    "schema": {
+      "type": "boolean"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/chat_models/<model_id>/capabilities/codex_custom_mcp",
+    "proposed_value": null,
+    "schema": {
+      "type": "boolean"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/chat_models/<model_id>/pricing_verification/status",
+    "proposed_value": null,
+    "schema": {
+      "enum": [
+        "unverified",
+        "verified"
+      ]
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/chat_models/<model_id>/pricing_verification/source_refs",
+    "proposed_value": null,
+    "schema": {
+      "items": {
+        "$ref": "#/$defs/Ref"
+      },
+      "type": "array"
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "next_invocation",
+    "consumer": "model_provider",
+    "inheritance": "explicit_import",
+    "null_meaning": "as declared by Schema; missing is not configured",
+    "path": "/providers/<provider_id>/chat_models/<model_id>/pricing_verification/verified_at",
+    "proposed_value": null,
+    "schema": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "secret_value_allowed": false,
+    "value_source": "import actual legacy non-secret identity/provider fields; never infer from missing template values",
+    "visibility": "kernel_management"
+  },
+  {
+    "apply_mode": "dynamic_admission",
+    "consumer": "kernel-scheduler",
+    "description": "Kernel内置定时器 enabled",
+    "failure": "拒绝非法参数，保留上次有效配置；实际消费后写回执",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/kernel/scheduler/enabled",
+    "proposed_value": false,
+    "schema": {
+      "default": false,
+      "description": "Kernel内置定时器 enabled",
+      "type": "boolean",
+      "x-apply-mode": "dynamic_admission",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/kernel/scheduler/enabled",
+    "type": "boolean",
+    "unit": "count/value",
+    "value_source": "用户批准的 Kernel 0.31 定时实现方案",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "dynamic_admission",
+    "consumer": "kernel-scheduler",
+    "description": "Kernel内置定时器 poll_seconds",
+    "failure": "拒绝非法参数，保留上次有效配置；实际消费后写回执",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/kernel/scheduler/poll_seconds",
+    "proposed_value": 1,
+    "schema": {
+      "default": 1,
+      "description": "Kernel内置定时器 poll_seconds",
+      "maximum": 60,
+      "minimum": 0.1,
+      "type": "number",
+      "x-apply-mode": "dynamic_admission",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/kernel/scheduler/poll_seconds",
+    "type": "number",
+    "unit": "seconds",
+    "value_source": "用户批准的 Kernel 0.31 定时实现方案",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "dynamic_admission",
+    "consumer": "kernel-scheduler",
+    "description": "Kernel内置定时器 late_grace_seconds",
+    "failure": "拒绝非法参数，保留上次有效配置；实际消费后写回执",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/kernel/scheduler/late_grace_seconds",
+    "proposed_value": 5,
+    "schema": {
+      "default": 5,
+      "description": "Kernel内置定时器 late_grace_seconds",
+      "maximum": 300,
+      "minimum": 0,
+      "type": "number",
+      "x-apply-mode": "dynamic_admission",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/kernel/scheduler/late_grace_seconds",
+    "type": "number",
+    "unit": "seconds",
+    "value_source": "用户批准的 Kernel 0.31 定时实现方案",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  },
+  {
+    "apply_mode": "dynamic_admission",
+    "consumer": "kernel-scheduler",
+    "description": "Kernel内置定时器 batch_size",
+    "failure": "拒绝非法参数，保留上次有效配置；实际消费后写回执",
+    "inheritance": "global_only",
+    "null_meaning": "不允许null",
+    "path": "/kernel/scheduler/batch_size",
+    "proposed_value": 100,
+    "schema": {
+      "default": 100,
+      "description": "Kernel内置定时器 batch_size",
+      "maximum": 1000,
+      "minimum": 1,
+      "type": "integer",
+      "x-apply-mode": "dynamic_admission",
+      "x-inheritable": false
+    },
+    "secret_value_allowed": false,
+    "source_plan_pointer": "/kernel/scheduler/batch_size",
+    "type": "integer",
+    "unit": "count/value",
+    "value_source": "用户批准的 Kernel 0.31 定时实现方案",
+    "visibility": "related_operational_read",
+    "write_authority": "kernel_management"
+  }
+]

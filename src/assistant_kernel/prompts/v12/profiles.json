@@ -1,0 +1,989 @@
+{
+  "common_control_ref": {
+    "document_schema": null,
+    "id": "v12-template/roles/common-control.md",
+    "kind": "source",
+    "purpose": "fixed published template asset; not business approval",
+    "revision_id": null,
+    "schema_version": "resource-ref.v1",
+    "sha256": "76dabdcc33b5b49c7b01b942cc31599c2cb0b475dd08c3140c187dd2231d15e2",
+    "uri": "kernel://template-assets/76dabdcc33b5b49c7b01b942cc31599c2cb0b475dd08c3140c187dd2231d15e2/roles/common-control.md"
+  },
+  "common_role_ref": {
+    "document_schema": null,
+    "id": "v12-template/roles/pm-common.md",
+    "kind": "source",
+    "purpose": "fixed published template asset; not business approval",
+    "revision_id": null,
+    "schema_version": "resource-ref.v1",
+    "sha256": "7821a2c84807a51d0a76330e135e6f016fb61b341c39cf1dae0dd156195eec13",
+    "uri": "kernel://template-assets/7821a2c84807a51d0a76330e135e6f016fb61b341c39cf1dae0dd156195eec13/roles/pm-common.md"
+  },
+  "loading_rule": "从固定工作项/设计读条件，解析已发布版本，记录实际载入；不是Role/Skill文件操作ACL",
+  "mcp_tool_policy": {
+    "actors": {
+      "native_subagent": [],
+      "supervisor": [
+        "get_authorized_workspace",
+        "list_authorized_tree",
+        "read_authorized_file",
+        "read_project_document",
+        "list_recent_history",
+        "get_project_map",
+        "query_project_map",
+        "read_map_component",
+        "project_task_status",
+        "run_status",
+        "list_project_agents",
+        "current_conversation_route",
+        "list_runtime_units",
+        "runtime_unit_status",
+        "query_project_operations",
+        "preview_schedule",
+        "list_schedules",
+        "schedule_status",
+        "list_schedule_ticks",
+        "list_projects",
+        "queue_project_task",
+        "request_operation_report"
+      ]
+    },
+    "phases": {
+      "audit": [
+        "get_authorized_workspace",
+        "list_authorized_tree",
+        "read_authorized_file",
+        "read_project_document",
+        "list_recent_history",
+        "get_project_map",
+        "query_project_map",
+        "read_map_component",
+        "project_task_status",
+        "run_status",
+        "list_project_agents",
+        "current_conversation_route",
+        "list_project_changes",
+        "read_change_diff",
+        "list_stage_artifacts",
+        "read_stage_artifact",
+        "list_runtime_units",
+        "runtime_unit_status",
+        "query_project_operations",
+        "preview_schedule",
+        "list_schedules",
+        "schedule_status",
+        "list_schedule_ticks"
+      ],
+      "build": [
+        "get_authorized_workspace",
+        "list_authorized_tree",
+        "read_authorized_file",
+        "read_project_document",
+        "list_recent_history",
+        "get_project_map",
+        "query_project_map",
+        "read_map_component",
+        "project_task_status",
+        "run_status",
+        "list_project_agents",
+        "current_conversation_route",
+        "list_projects",
+        "list_source_discovery_roots",
+        "inspect_source_path",
+        "list_runtime_units",
+        "runtime_unit_status",
+        "query_project_operations",
+        "preview_schedule",
+        "list_schedules",
+        "schedule_status",
+        "list_schedule_ticks",
+        "list_project_credentials",
+        "get_project_credential",
+        "resolve_runtime_config",
+        "write_runtime_document",
+        "write_operation_document",
+        "submit_project_python",
+        "list_project_changes",
+        "read_change_diff",
+        "refresh_project_map",
+        "request_project_credential",
+        "propose_source_scope",
+        "activate_source_scope"
+      ],
+      "design": [
+        "get_authorized_workspace",
+        "list_authorized_tree",
+        "read_authorized_file",
+        "read_project_document",
+        "list_recent_history",
+        "get_project_map",
+        "query_project_map",
+        "read_map_component",
+        "project_task_status",
+        "run_status",
+        "list_project_agents",
+        "current_conversation_route",
+        "list_projects",
+        "list_source_discovery_roots",
+        "inspect_source_path",
+        "list_runtime_units",
+        "runtime_unit_status",
+        "query_project_operations",
+        "preview_schedule",
+        "list_schedules",
+        "schedule_status",
+        "list_schedule_ticks",
+        "list_project_credentials",
+        "resolve_runtime_config",
+        "write_operation_document",
+        "request_project_credential",
+        "propose_source_scope",
+        "activate_source_scope"
+      ],
+      "operate": [
+        "get_authorized_workspace",
+        "list_authorized_tree",
+        "read_authorized_file",
+        "read_project_document",
+        "list_recent_history",
+        "get_project_map",
+        "query_project_map",
+        "read_map_component",
+        "project_task_status",
+        "run_status",
+        "list_project_agents",
+        "current_conversation_route",
+        "list_projects",
+        "list_source_discovery_roots",
+        "inspect_source_path",
+        "list_runtime_units",
+        "runtime_unit_status",
+        "query_project_operations",
+        "preview_schedule",
+        "list_schedules",
+        "schedule_status",
+        "list_schedule_ticks",
+        "list_project_credentials",
+        "get_project_credential",
+        "resolve_runtime_config",
+        "write_runtime_document",
+        "write_operation_document",
+        "submit_project_python",
+        "register_runtime_unit",
+        "control_runtime_unit",
+        "set_operation_monitor_policy",
+        "register_schedule",
+        "control_schedule",
+        "run_project_action",
+        "request_project_credential",
+        "propose_source_scope",
+        "activate_source_scope"
+      ],
+      "requirements": [
+        "get_authorized_workspace",
+        "list_authorized_tree",
+        "read_authorized_file",
+        "read_project_document",
+        "list_recent_history",
+        "get_project_map",
+        "query_project_map",
+        "read_map_component",
+        "project_task_status",
+        "run_status",
+        "list_project_agents",
+        "current_conversation_route",
+        "list_projects",
+        "list_source_discovery_roots",
+        "inspect_source_path",
+        "list_runtime_units",
+        "runtime_unit_status",
+        "query_project_operations",
+        "preview_schedule",
+        "list_schedules",
+        "schedule_status",
+        "list_schedule_ticks",
+        "request_project_credential",
+        "propose_source_scope",
+        "activate_source_scope"
+      ]
+    }
+  },
+  "profiles": {
+    "audit": {
+      "business_mutation_policy": "independent_audit",
+      "business_tool_names": [],
+      "conditional_skill_rules": [
+        {
+          "condition": "python_program_work",
+          "must_record_actual_load": true,
+          "published_ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-business-runtime-design/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "a36ddc2551151f65e2f21173051be1f593c746cda663e3d02ac4bd38bb208c6c",
+            "uri": "kernel://template-assets/a36ddc2551151f65e2f21173051be1f593c746cda663e3d02ac4bd38bb208c6c/skills/assistant-business-runtime-design/SKILL.md"
+          },
+          "skill_name": "assistant-business-runtime-design"
+        },
+        {
+          "condition": "langgraph_work",
+          "must_record_actual_load": true,
+          "published_ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-business-workflow/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "6ea85a95753025bd9d3ea40f96c755ad7a2d5c1dc3a0c59c4f94026cb5068af2",
+            "uri": "kernel://template-assets/6ea85a95753025bd9d3ea40f96c755ad7a2d5c1dc3a0c59c4f94026cb5068af2/skills/assistant-business-workflow/SKILL.md"
+          },
+          "skill_name": "assistant-business-workflow"
+        },
+        {
+          "condition": "service_work",
+          "must_record_actual_load": true,
+          "published_ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-service-lifecycle/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "d162204151d825488d8b3a0a4dc9028dfc06468bede45bbe7580fd2a48591fef",
+            "uri": "kernel://template-assets/d162204151d825488d8b3a0a4dc9028dfc06468bede45bbe7580fd2a48591fef/skills/assistant-service-lifecycle/SKILL.md"
+          },
+          "skill_name": "assistant-service-lifecycle"
+        },
+        {
+          "condition": "schedule_work",
+          "must_record_actual_load": true,
+          "published_ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-schedule-management/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "73e1aefc4987d7b81736967edfee134364d601a06ef2e33966164ffa065dd70b",
+            "uri": "kernel://template-assets/73e1aefc4987d7b81736967edfee134364d601a06ef2e33966164ffa065dd70b/skills/assistant-schedule-management/SKILL.md"
+          },
+          "skill_name": "assistant-schedule-management"
+        }
+      ],
+      "display_phase": "review",
+      "file_ops_loading_mode": "native_only",
+      "file_ops_tool": null,
+      "file_package": "directory-full.v1",
+      "mode_id": "audit",
+      "optional_skills": [],
+      "output_definition": "V12_Active_AgentResult",
+      "output_schema_ref": {
+        "document_schema": null,
+        "id": "v12-template/schemas/agent-result.schema.json",
+        "kind": "source",
+        "purpose": "fixed published template asset; not business approval",
+        "revision_id": null,
+        "schema_version": "resource-ref.v1",
+        "sha256": "44eee7dfccc0781c3e3ca13c02751f81f3c754a8b4057b7437e5f207db289c98",
+        "uri": "kernel://template-assets/44eee7dfccc0781c3e3ca13c02751f81f3c754a8b4057b7437e5f207db289c98/schemas/agent-result.schema.json"
+      },
+      "required_skills": [
+        {
+          "name": "assistant-source-scope",
+          "ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-source-scope/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "0ca2e7204f6809181f09de4ece7a76e8490b3380f1a425bce9f21fcf52dce828",
+            "uri": "kernel://template-assets/0ca2e7204f6809181f09de4ece7a76e8490b3380f1a425bce9f21fcf52dce828/skills/assistant-source-scope/SKILL.md"
+          },
+          "source": "project"
+        },
+        {
+          "name": "assistant-task-continuity",
+          "ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-task-continuity/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "92370e865f11127b68ff0fecbc447da5eeffaa5f1ddffa2e092f812eae83089c",
+            "uri": "kernel://template-assets/92370e865f11127b68ff0fecbc447da5eeffaa5f1ddffa2e092f812eae83089c/skills/assistant-task-continuity/SKILL.md"
+          },
+          "source": "project"
+        },
+        {
+          "name": "assistant-project-agent",
+          "ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-project-agent/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "dd9ccc5fbd5886e7677c883752fa6bb6d86227057d68e314b9863f3b80b232e1",
+            "uri": "kernel://template-assets/dd9ccc5fbd5886e7677c883752fa6bb6d86227057d68e314b9863f3b80b232e1/skills/assistant-project-agent/SKILL.md"
+          },
+          "source": "project"
+        },
+        {
+          "name": "assistant-release-audit",
+          "ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-release-audit/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "37db5e5ac047c6e2b7db64a807ef26db4f387cb4499808f3852fc9f1035ae832",
+            "uri": "kernel://template-assets/37db5e5ac047c6e2b7db64a807ef26db4f387cb4499808f3852fc9f1035ae832/skills/assistant-release-audit/SKILL.md"
+          },
+          "source": "project"
+        }
+      ],
+      "role_ref": {
+        "document_schema": null,
+        "id": "v12-template/roles/pm-audit.md",
+        "kind": "source",
+        "purpose": "fixed published template asset; not business approval",
+        "revision_id": null,
+        "schema_version": "resource-ref.v1",
+        "sha256": "1386404dd61467ab6d1379686a7eab7e854d91fbf7543c3b6dfb47569441088a",
+        "uri": "kernel://template-assets/1386404dd61467ab6d1379686a7eab7e854d91fbf7543c3b6dfb47569441088a/roles/pm-audit.md"
+      },
+      "schema_version": "project-agent-profile.v2"
+    },
+    "build": {
+      "business_mutation_policy": "approved_build",
+      "business_tool_names": [],
+      "conditional_skill_rules": [
+        {
+          "condition": "python_program_work",
+          "must_record_actual_load": true,
+          "published_ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-business-runtime-design/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "a36ddc2551151f65e2f21173051be1f593c746cda663e3d02ac4bd38bb208c6c",
+            "uri": "kernel://template-assets/a36ddc2551151f65e2f21173051be1f593c746cda663e3d02ac4bd38bb208c6c/skills/assistant-business-runtime-design/SKILL.md"
+          },
+          "skill_name": "assistant-business-runtime-design"
+        },
+        {
+          "condition": "langgraph_work",
+          "must_record_actual_load": true,
+          "published_ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-business-workflow/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "6ea85a95753025bd9d3ea40f96c755ad7a2d5c1dc3a0c59c4f94026cb5068af2",
+            "uri": "kernel://template-assets/6ea85a95753025bd9d3ea40f96c755ad7a2d5c1dc3a0c59c4f94026cb5068af2/skills/assistant-business-workflow/SKILL.md"
+          },
+          "skill_name": "assistant-business-workflow"
+        },
+        {
+          "condition": "service_work",
+          "must_record_actual_load": true,
+          "published_ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-service-lifecycle/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "d162204151d825488d8b3a0a4dc9028dfc06468bede45bbe7580fd2a48591fef",
+            "uri": "kernel://template-assets/d162204151d825488d8b3a0a4dc9028dfc06468bede45bbe7580fd2a48591fef/skills/assistant-service-lifecycle/SKILL.md"
+          },
+          "skill_name": "assistant-service-lifecycle"
+        },
+        {
+          "condition": "schedule_work",
+          "must_record_actual_load": true,
+          "published_ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-schedule-management/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "73e1aefc4987d7b81736967edfee134364d601a06ef2e33966164ffa065dd70b",
+            "uri": "kernel://template-assets/73e1aefc4987d7b81736967edfee134364d601a06ef2e33966164ffa065dd70b/skills/assistant-schedule-management/SKILL.md"
+          },
+          "skill_name": "assistant-schedule-management"
+        }
+      ],
+      "display_phase": "implementation",
+      "file_ops_loading_mode": "native_only",
+      "file_ops_tool": null,
+      "file_package": "directory-full.v1",
+      "mode_id": "build",
+      "optional_skills": [],
+      "output_definition": "V12_Active_AgentResult",
+      "output_schema_ref": {
+        "document_schema": null,
+        "id": "v12-template/schemas/agent-result.schema.json",
+        "kind": "source",
+        "purpose": "fixed published template asset; not business approval",
+        "revision_id": null,
+        "schema_version": "resource-ref.v1",
+        "sha256": "44eee7dfccc0781c3e3ca13c02751f81f3c754a8b4057b7437e5f207db289c98",
+        "uri": "kernel://template-assets/44eee7dfccc0781c3e3ca13c02751f81f3c754a8b4057b7437e5f207db289c98/schemas/agent-result.schema.json"
+      },
+      "required_skills": [
+        {
+          "name": "assistant-source-scope",
+          "ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-source-scope/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "0ca2e7204f6809181f09de4ece7a76e8490b3380f1a425bce9f21fcf52dce828",
+            "uri": "kernel://template-assets/0ca2e7204f6809181f09de4ece7a76e8490b3380f1a425bce9f21fcf52dce828/skills/assistant-source-scope/SKILL.md"
+          },
+          "source": "project"
+        },
+        {
+          "name": "assistant-task-continuity",
+          "ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-task-continuity/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "92370e865f11127b68ff0fecbc447da5eeffaa5f1ddffa2e092f812eae83089c",
+            "uri": "kernel://template-assets/92370e865f11127b68ff0fecbc447da5eeffaa5f1ddffa2e092f812eae83089c/skills/assistant-task-continuity/SKILL.md"
+          },
+          "source": "project"
+        },
+        {
+          "name": "assistant-project-agent",
+          "ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-project-agent/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "dd9ccc5fbd5886e7677c883752fa6bb6d86227057d68e314b9863f3b80b232e1",
+            "uri": "kernel://template-assets/dd9ccc5fbd5886e7677c883752fa6bb6d86227057d68e314b9863f3b80b232e1/skills/assistant-project-agent/SKILL.md"
+          },
+          "source": "project"
+        },
+        {
+          "name": "assistant-implementation",
+          "ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-implementation/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "a6f74e2779db8239c9660be4cb0bc37dbc6468a8cd46f7ad1f483780522c77ac",
+            "uri": "kernel://template-assets/a6f74e2779db8239c9660be4cb0bc37dbc6468a8cd46f7ad1f483780522c77ac/skills/assistant-implementation/SKILL.md"
+          },
+          "source": "project"
+        }
+      ],
+      "role_ref": {
+        "document_schema": null,
+        "id": "v12-template/roles/pm-build.md",
+        "kind": "source",
+        "purpose": "fixed published template asset; not business approval",
+        "revision_id": null,
+        "schema_version": "resource-ref.v1",
+        "sha256": "14eff273d7096116e87c8ef5ee0f15eddd76aff64f44c93efd6f7550ac66bf49",
+        "uri": "kernel://template-assets/14eff273d7096116e87c8ef5ee0f15eddd76aff64f44c93efd6f7550ac66bf49/roles/pm-build.md"
+      },
+      "schema_version": "project-agent-profile.v2"
+    },
+    "design": {
+      "business_mutation_policy": "analysis_only",
+      "business_tool_names": [],
+      "conditional_skill_rules": [
+        {
+          "condition": "python_program_work",
+          "must_record_actual_load": true,
+          "published_ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-business-runtime-design/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "a36ddc2551151f65e2f21173051be1f593c746cda663e3d02ac4bd38bb208c6c",
+            "uri": "kernel://template-assets/a36ddc2551151f65e2f21173051be1f593c746cda663e3d02ac4bd38bb208c6c/skills/assistant-business-runtime-design/SKILL.md"
+          },
+          "skill_name": "assistant-business-runtime-design"
+        },
+        {
+          "condition": "langgraph_work",
+          "must_record_actual_load": true,
+          "published_ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-business-workflow/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "6ea85a95753025bd9d3ea40f96c755ad7a2d5c1dc3a0c59c4f94026cb5068af2",
+            "uri": "kernel://template-assets/6ea85a95753025bd9d3ea40f96c755ad7a2d5c1dc3a0c59c4f94026cb5068af2/skills/assistant-business-workflow/SKILL.md"
+          },
+          "skill_name": "assistant-business-workflow"
+        },
+        {
+          "condition": "service_work",
+          "must_record_actual_load": true,
+          "published_ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-service-lifecycle/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "d162204151d825488d8b3a0a4dc9028dfc06468bede45bbe7580fd2a48591fef",
+            "uri": "kernel://template-assets/d162204151d825488d8b3a0a4dc9028dfc06468bede45bbe7580fd2a48591fef/skills/assistant-service-lifecycle/SKILL.md"
+          },
+          "skill_name": "assistant-service-lifecycle"
+        },
+        {
+          "condition": "schedule_work",
+          "must_record_actual_load": true,
+          "published_ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-schedule-management/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "73e1aefc4987d7b81736967edfee134364d601a06ef2e33966164ffa065dd70b",
+            "uri": "kernel://template-assets/73e1aefc4987d7b81736967edfee134364d601a06ef2e33966164ffa065dd70b/skills/assistant-schedule-management/SKILL.md"
+          },
+          "skill_name": "assistant-schedule-management"
+        }
+      ],
+      "display_phase": "design",
+      "file_ops_loading_mode": "native_only",
+      "file_ops_tool": null,
+      "file_package": "directory-full.v1",
+      "mode_id": "design",
+      "optional_skills": [],
+      "output_definition": "V12_Active_AgentResult",
+      "output_schema_ref": {
+        "document_schema": null,
+        "id": "v12-template/schemas/agent-result.schema.json",
+        "kind": "source",
+        "purpose": "fixed published template asset; not business approval",
+        "revision_id": null,
+        "schema_version": "resource-ref.v1",
+        "sha256": "44eee7dfccc0781c3e3ca13c02751f81f3c754a8b4057b7437e5f207db289c98",
+        "uri": "kernel://template-assets/44eee7dfccc0781c3e3ca13c02751f81f3c754a8b4057b7437e5f207db289c98/schemas/agent-result.schema.json"
+      },
+      "required_skills": [
+        {
+          "name": "assistant-source-scope",
+          "ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-source-scope/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "0ca2e7204f6809181f09de4ece7a76e8490b3380f1a425bce9f21fcf52dce828",
+            "uri": "kernel://template-assets/0ca2e7204f6809181f09de4ece7a76e8490b3380f1a425bce9f21fcf52dce828/skills/assistant-source-scope/SKILL.md"
+          },
+          "source": "project"
+        },
+        {
+          "name": "assistant-task-continuity",
+          "ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-task-continuity/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "92370e865f11127b68ff0fecbc447da5eeffaa5f1ddffa2e092f812eae83089c",
+            "uri": "kernel://template-assets/92370e865f11127b68ff0fecbc447da5eeffaa5f1ddffa2e092f812eae83089c/skills/assistant-task-continuity/SKILL.md"
+          },
+          "source": "project"
+        },
+        {
+          "name": "assistant-project-agent",
+          "ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-project-agent/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "dd9ccc5fbd5886e7677c883752fa6bb6d86227057d68e314b9863f3b80b232e1",
+            "uri": "kernel://template-assets/dd9ccc5fbd5886e7677c883752fa6bb6d86227057d68e314b9863f3b80b232e1/skills/assistant-project-agent/SKILL.md"
+          },
+          "source": "project"
+        },
+        {
+          "name": "assistant-solution-design",
+          "ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-solution-design/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "122e7b6e770fe0f303bd052f607fa1b81675104eb8e394bb2535505b623725e6",
+            "uri": "kernel://template-assets/122e7b6e770fe0f303bd052f607fa1b81675104eb8e394bb2535505b623725e6/skills/assistant-solution-design/SKILL.md"
+          },
+          "source": "project"
+        }
+      ],
+      "role_ref": {
+        "document_schema": null,
+        "id": "v12-template/roles/pm-design.md",
+        "kind": "source",
+        "purpose": "fixed published template asset; not business approval",
+        "revision_id": null,
+        "schema_version": "resource-ref.v1",
+        "sha256": "32f7ca49682c1a2ae03bdd407b7ca9adda88832bbf7013b81f18ffdcf2488c9d",
+        "uri": "kernel://template-assets/32f7ca49682c1a2ae03bdd407b7ca9adda88832bbf7013b81f18ffdcf2488c9d/roles/pm-design.md"
+      },
+      "schema_version": "project-agent-profile.v2"
+    },
+    "operate": {
+      "business_mutation_policy": "approved_operation",
+      "business_tool_names": [],
+      "conditional_skill_rules": [
+        {
+          "condition": "python_program_work",
+          "must_record_actual_load": true,
+          "published_ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-business-runtime-design/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "a36ddc2551151f65e2f21173051be1f593c746cda663e3d02ac4bd38bb208c6c",
+            "uri": "kernel://template-assets/a36ddc2551151f65e2f21173051be1f593c746cda663e3d02ac4bd38bb208c6c/skills/assistant-business-runtime-design/SKILL.md"
+          },
+          "skill_name": "assistant-business-runtime-design"
+        },
+        {
+          "condition": "langgraph_work",
+          "must_record_actual_load": true,
+          "published_ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-business-workflow/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "6ea85a95753025bd9d3ea40f96c755ad7a2d5c1dc3a0c59c4f94026cb5068af2",
+            "uri": "kernel://template-assets/6ea85a95753025bd9d3ea40f96c755ad7a2d5c1dc3a0c59c4f94026cb5068af2/skills/assistant-business-workflow/SKILL.md"
+          },
+          "skill_name": "assistant-business-workflow"
+        },
+        {
+          "condition": "service_work",
+          "must_record_actual_load": true,
+          "published_ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-service-lifecycle/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "d162204151d825488d8b3a0a4dc9028dfc06468bede45bbe7580fd2a48591fef",
+            "uri": "kernel://template-assets/d162204151d825488d8b3a0a4dc9028dfc06468bede45bbe7580fd2a48591fef/skills/assistant-service-lifecycle/SKILL.md"
+          },
+          "skill_name": "assistant-service-lifecycle"
+        },
+        {
+          "condition": "schedule_work",
+          "must_record_actual_load": true,
+          "published_ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-schedule-management/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "73e1aefc4987d7b81736967edfee134364d601a06ef2e33966164ffa065dd70b",
+            "uri": "kernel://template-assets/73e1aefc4987d7b81736967edfee134364d601a06ef2e33966164ffa065dd70b/skills/assistant-schedule-management/SKILL.md"
+          },
+          "skill_name": "assistant-schedule-management"
+        }
+      ],
+      "display_phase": "operation",
+      "file_ops_loading_mode": "native_only",
+      "file_ops_tool": null,
+      "file_package": "directory-full.v1",
+      "mode_id": "operate",
+      "optional_skills": [],
+      "output_definition": "V12_Active_AgentResult",
+      "output_schema_ref": {
+        "document_schema": null,
+        "id": "v12-template/schemas/agent-result.schema.json",
+        "kind": "source",
+        "purpose": "fixed published template asset; not business approval",
+        "revision_id": null,
+        "schema_version": "resource-ref.v1",
+        "sha256": "44eee7dfccc0781c3e3ca13c02751f81f3c754a8b4057b7437e5f207db289c98",
+        "uri": "kernel://template-assets/44eee7dfccc0781c3e3ca13c02751f81f3c754a8b4057b7437e5f207db289c98/schemas/agent-result.schema.json"
+      },
+      "required_skills": [
+        {
+          "name": "assistant-source-scope",
+          "ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-source-scope/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "0ca2e7204f6809181f09de4ece7a76e8490b3380f1a425bce9f21fcf52dce828",
+            "uri": "kernel://template-assets/0ca2e7204f6809181f09de4ece7a76e8490b3380f1a425bce9f21fcf52dce828/skills/assistant-source-scope/SKILL.md"
+          },
+          "source": "project"
+        },
+        {
+          "name": "assistant-task-continuity",
+          "ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-task-continuity/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "92370e865f11127b68ff0fecbc447da5eeffaa5f1ddffa2e092f812eae83089c",
+            "uri": "kernel://template-assets/92370e865f11127b68ff0fecbc447da5eeffaa5f1ddffa2e092f812eae83089c/skills/assistant-task-continuity/SKILL.md"
+          },
+          "source": "project"
+        },
+        {
+          "name": "assistant-project-agent",
+          "ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-project-agent/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "dd9ccc5fbd5886e7677c883752fa6bb6d86227057d68e314b9863f3b80b232e1",
+            "uri": "kernel://template-assets/dd9ccc5fbd5886e7677c883752fa6bb6d86227057d68e314b9863f3b80b232e1/skills/assistant-project-agent/SKILL.md"
+          },
+          "source": "project"
+        },
+        {
+          "name": "assistant-operation",
+          "ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-operation/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "c22de9fbbb4779c7ead9cb5e961e9052c65338808780b817b9f362ded172e599",
+            "uri": "kernel://template-assets/c22de9fbbb4779c7ead9cb5e961e9052c65338808780b817b9f362ded172e599/skills/assistant-operation/SKILL.md"
+          },
+          "source": "project"
+        }
+      ],
+      "role_ref": {
+        "document_schema": null,
+        "id": "v12-template/roles/pm-operate.md",
+        "kind": "source",
+        "purpose": "fixed published template asset; not business approval",
+        "revision_id": null,
+        "schema_version": "resource-ref.v1",
+        "sha256": "d4414e806a2a7e8d63626e927e2ad5f89a0bc919779945224aaac0830678cb53",
+        "uri": "kernel://template-assets/d4414e806a2a7e8d63626e927e2ad5f89a0bc919779945224aaac0830678cb53/roles/pm-operate.md"
+      },
+      "schema_version": "project-agent-profile.v2"
+    },
+    "requirements": {
+      "business_mutation_policy": "analysis_only",
+      "business_tool_names": [],
+      "conditional_skill_rules": [
+        {
+          "condition": "python_program_work",
+          "must_record_actual_load": true,
+          "published_ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-business-runtime-design/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "a36ddc2551151f65e2f21173051be1f593c746cda663e3d02ac4bd38bb208c6c",
+            "uri": "kernel://template-assets/a36ddc2551151f65e2f21173051be1f593c746cda663e3d02ac4bd38bb208c6c/skills/assistant-business-runtime-design/SKILL.md"
+          },
+          "skill_name": "assistant-business-runtime-design"
+        },
+        {
+          "condition": "langgraph_work",
+          "must_record_actual_load": true,
+          "published_ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-business-workflow/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "6ea85a95753025bd9d3ea40f96c755ad7a2d5c1dc3a0c59c4f94026cb5068af2",
+            "uri": "kernel://template-assets/6ea85a95753025bd9d3ea40f96c755ad7a2d5c1dc3a0c59c4f94026cb5068af2/skills/assistant-business-workflow/SKILL.md"
+          },
+          "skill_name": "assistant-business-workflow"
+        },
+        {
+          "condition": "service_work",
+          "must_record_actual_load": true,
+          "published_ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-service-lifecycle/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "d162204151d825488d8b3a0a4dc9028dfc06468bede45bbe7580fd2a48591fef",
+            "uri": "kernel://template-assets/d162204151d825488d8b3a0a4dc9028dfc06468bede45bbe7580fd2a48591fef/skills/assistant-service-lifecycle/SKILL.md"
+          },
+          "skill_name": "assistant-service-lifecycle"
+        },
+        {
+          "condition": "schedule_work",
+          "must_record_actual_load": true,
+          "published_ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-schedule-management/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "73e1aefc4987d7b81736967edfee134364d601a06ef2e33966164ffa065dd70b",
+            "uri": "kernel://template-assets/73e1aefc4987d7b81736967edfee134364d601a06ef2e33966164ffa065dd70b/skills/assistant-schedule-management/SKILL.md"
+          },
+          "skill_name": "assistant-schedule-management"
+        }
+      ],
+      "display_phase": "requirements",
+      "file_ops_loading_mode": "native_only",
+      "file_ops_tool": null,
+      "file_package": "directory-full.v1",
+      "mode_id": "requirements",
+      "optional_skills": [],
+      "output_definition": "V12_Active_AgentResult",
+      "output_schema_ref": {
+        "document_schema": null,
+        "id": "v12-template/schemas/agent-result.schema.json",
+        "kind": "source",
+        "purpose": "fixed published template asset; not business approval",
+        "revision_id": null,
+        "schema_version": "resource-ref.v1",
+        "sha256": "44eee7dfccc0781c3e3ca13c02751f81f3c754a8b4057b7437e5f207db289c98",
+        "uri": "kernel://template-assets/44eee7dfccc0781c3e3ca13c02751f81f3c754a8b4057b7437e5f207db289c98/schemas/agent-result.schema.json"
+      },
+      "required_skills": [
+        {
+          "name": "assistant-source-scope",
+          "ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-source-scope/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "0ca2e7204f6809181f09de4ece7a76e8490b3380f1a425bce9f21fcf52dce828",
+            "uri": "kernel://template-assets/0ca2e7204f6809181f09de4ece7a76e8490b3380f1a425bce9f21fcf52dce828/skills/assistant-source-scope/SKILL.md"
+          },
+          "source": "project"
+        },
+        {
+          "name": "assistant-task-continuity",
+          "ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-task-continuity/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "92370e865f11127b68ff0fecbc447da5eeffaa5f1ddffa2e092f812eae83089c",
+            "uri": "kernel://template-assets/92370e865f11127b68ff0fecbc447da5eeffaa5f1ddffa2e092f812eae83089c/skills/assistant-task-continuity/SKILL.md"
+          },
+          "source": "project"
+        },
+        {
+          "name": "assistant-project-agent",
+          "ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-project-agent/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "dd9ccc5fbd5886e7677c883752fa6bb6d86227057d68e314b9863f3b80b232e1",
+            "uri": "kernel://template-assets/dd9ccc5fbd5886e7677c883752fa6bb6d86227057d68e314b9863f3b80b232e1/skills/assistant-project-agent/SKILL.md"
+          },
+          "source": "project"
+        },
+        {
+          "name": "assistant-requirements",
+          "ref": {
+            "document_schema": null,
+            "id": "v12-template/skills/assistant-requirements/SKILL.md",
+            "kind": "source",
+            "purpose": "fixed published template asset; not business approval",
+            "revision_id": null,
+            "schema_version": "resource-ref.v1",
+            "sha256": "a09f28e1a562184e631c155248bb9399b8b85b31edb00985e83c48de72ee5b06",
+            "uri": "kernel://template-assets/a09f28e1a562184e631c155248bb9399b8b85b31edb00985e83c48de72ee5b06/skills/assistant-requirements/SKILL.md"
+          },
+          "source": "project"
+        }
+      ],
+      "role_ref": {
+        "document_schema": null,
+        "id": "v12-template/roles/pm-requirements.md",
+        "kind": "source",
+        "purpose": "fixed published template asset; not business approval",
+        "revision_id": null,
+        "schema_version": "resource-ref.v1",
+        "sha256": "c51d8832097372cc74ee5a508e37afab64af558a26dfd54d36bdcff4bac97c91",
+        "uri": "kernel://template-assets/c51d8832097372cc74ee5a508e37afab64af558a26dfd54d36bdcff4bac97c91/roles/pm-requirements.md"
+      },
+      "schema_version": "project-agent-profile.v2"
+    }
+  },
+  "status": "v1.2_candidate_not_published",
+  "supervisor_required_additions": [
+    {
+      "name": "assistant-session-boundary",
+      "ref": {
+        "document_schema": null,
+        "id": "v12-template/skills/assistant-session-boundary/SKILL.md",
+        "kind": "source",
+        "purpose": "fixed published template asset; not business approval",
+        "revision_id": null,
+        "schema_version": "resource-ref.v1",
+        "sha256": "f3c5575b65f00380f108a5f8da3e0b4e495d435cd815aa01090522da0cc6a7ad",
+        "uri": "kernel://template-assets/f3c5575b65f00380f108a5f8da3e0b4e495d435cd815aa01090522da0cc6a7ad/skills/assistant-session-boundary/SKILL.md"
+      }
+    }
+  ]
+}

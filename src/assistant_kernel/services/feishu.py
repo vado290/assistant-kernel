@@ -1,4 +1,6 @@
 from __future__ import annotations
+from assistant_kernel.services.kernel_management import management_route
+from assistant_kernel.services.agent_files import unbound_route
 
 import asyncio
 import base64
@@ -132,6 +134,7 @@ async def _handle_slash_command(
     binding_chat_id: str | None = None,
     binding_inherited: bool = False,
     binding_block_reason: str | None = None,
+    interface_binding: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     platform_chat_label = platform_chat_label or f"{platform_label}{chat_label}聊"
     binding_chat_id = binding_chat_id or chat_id
@@ -159,6 +162,9 @@ async def _handle_slash_command(
         await repository.resolve_chat_project_binding(channel, binding_chat_id)
         if chat_type == "group" else None
     )
+    # Dedicated role channels have already been resolved by the channel adapter.
+    # Keep their identity visible without replacing the Project's PM binding.
+    display_binding = interface_binding or group_binding
     if command == "/audit":
         mode = (argument or "full").strip().lower()
         try:
@@ -216,8 +222,9 @@ async def _handle_slash_command(
             idempotency_key=f"conversation-reset:{channel}:{external_event_id}",
         )
         reply = (
-            "已开始新的对话。Project绑定保持不变；旧消息和任务已经归档，"
-            "不会自动进入新的上下文。可使用 /resume <run-id> 恢复旧待答任务。"
+            "已开始新的对话。Project绑定保持不变；历史消息保留，不会自动进入新的上下文。"
+            "未完成的工程任务和待答仍保留，可用 /pending 查看，"
+            "/resume <run-id> 恢复待答入口。"
         )
         if reset["cancel_requested_run_ids"]:
             reply += " 当前前台回复已请求停止。"
@@ -435,7 +442,7 @@ async def _handle_slash_command(
                         f"- [{str(item['run_id'])[:8]}] {item['status']} · {target} · attempt {attempts}"
                     )
                 if any(item["status"] in {
-                    "waiting_user", "waiting_supervisor", "waiting_children", "blocked"
+                    "waiting_user", "waiting_supervisor", "blocked"
                 } for item in runs):
                     lines.append("待处理任务可使用 /pending 查看，或使用 /resume 恢复。")
             reply = "\n".join(lines)
@@ -581,8 +588,7 @@ async def _handle_slash_command(
             except ValueError as exc:
                 reply = f"解除绑定失败: {exc}"
             else:
-                selected_project = "system"
-                selected_agent = "system-butler"
+                selected_project, selected_agent = "kernel", "retired:management"
                 reply = (
                     f"已解除本{chat_label}与Project {argument}的绑定。"
                     if unbound["changed"] else f"本{chat_label}当前没有有效的Project绑定。"
@@ -590,11 +596,11 @@ async def _handle_slash_command(
     elif command == "/binding":
         if chat_type != "group":
             reply = f"当前不是{platform_chat_label}；私聊使用大管家路由。"
-        elif group_binding is None:
+        elif display_binding is None:
             reply = f"本{chat_label}尚未绑定Project。可使用 /bind_project <project-id>。"
         else:
-            selected_project = str(group_binding["project_id"])
-            selected_agent = str(group_binding["agent_key"])
+            selected_project = str(display_binding["project_id"])
+            selected_agent = str(display_binding["agent_key"])
             reply = (
                 f"当前{chat_label}绑定Project: {selected_project}\n"
                 f"默认Agent: {selected_agent}\n"
@@ -605,32 +611,14 @@ async def _handle_slash_command(
     elif command == "/whoami":
         reply = f"当前Project: {project_id}\n当前Agent: {agent_key}"
         if chat_type == "group":
-            reply += f"\n{chat_label}绑定: {group_binding['project_id'] if group_binding else '未绑定'}"
+            reply += f"\n{chat_label}绑定: {display_binding['project_id'] if display_binding else '未绑定'}"
             if binding_inherited:
                 reply += f"\nThread继承父频道: {binding_chat_id}"
     elif command == "/butler":
-        if chat_type == "group" and group_binding is not None:
-            reply = f"Project{chat_label}不能切换到大管家；请在机器人私聊中使用大管家。"
-        else:
-            selected_project = "system"
-            selected_agent = "system-butler"
-            await repository.set_route_binding(
-                channel=channel,
-                chat_id=chat_id,
-                user_id=user_id,
-                project_id=selected_project,
-                agent_key=selected_agent,
-                reason=f"{channel}_slash_butler",
-                source_message_id=str(inbound["message_id"]),
-                idempotency_key=f"command-route:{channel}:{external_event_id}",
-            )
-            reply = (
-                "Hi，我是你的个人超级助理大管家。\n"
-                "现在已回到大管家总入口，有什么需要？"
-            )
+        reply = "Butler 已退役。请使用 /bind_project <project-id> 绑定现有项目；项目创建能力本轮暂不提供。"
     elif command == "/agents":
         if project_id == "system":
-            reply = "当前位于大管家。请先进入一个Project，再使用 /agents。"
+            reply = "该历史入口已退役，请先绑定现有 Project。"
         else:
             agents = [
                 item for item in loader.list_agents(project_id)
@@ -643,16 +631,21 @@ async def _handle_slash_command(
                     f"- {item.agent_id}: {item.display_name}" for item in agents
                 )
     elif command == "/pm":
-        if chat_type == "group" and group_binding is not None:
+        if interface_binding is not None:
+            pm_binding = await repository.resolve_project_chat_binding(channel, project_id)
+            target = (pm_binding or {}).get("chat_id")
+            reply = (
+                f"当前为 Project {project_id} 的 Supervisor 入口。"
+                + (f"请到 <#{target}> 与 PM 对话。" if channel == "discord" and target
+                   else "请到本项目的 PM 频道对话。")
+            )
+        elif chat_type == "group" and group_binding is not None:
             selected_project = str(group_binding["project_id"])
             selected_agent = str(group_binding["agent_key"])
             reply = (
                 f"Hi，我是 Project {selected_project} 的 Project Manager。\n"
                 "当前群已固定进入这个项目，有什么需要？"
             )
-        elif project_id == "system":
-            selected_agent = "system-butler"
-            reply = "当前已在大管家。"
         else:
             try:
                 selected_agent = loader.resolve_agent(project_id, "pm").agent_key
@@ -820,6 +813,31 @@ async def ingest_event(
     if action and original is None:
         raise PermissionError("card action target is unknown or unauthorized")
 
+    from assistant_kernel.services.question_groups import QuestionGroupService, projection_ref
+    if original and (original.get('content_json') or {}).get('interaction_kind')=='prompt_confirmation' and action:
+        from assistant_kernel.services.prompt_protocol import PromptProtocol
+        claimed=action.get('value') or {}
+        result=await PromptProtocol(settings,repository).record_confirmation(display_message_id=str(original['message_id']),
+            project_id=str(original['project_id']),channel='feishu',chat_id=chat_id,user_id=str(user_id or ''),
+            external_event_id=f'{app_id or "default"}:{event_id}',action=str(claimed.get('verb') or ''),
+            expected_package_sha256=str(claimed.get('package_sha256') or ''))
+        return {'message':None,'run':None,'confirmation':result,'resumed':False}
+    if original and projection_ref(original.get('content_json') or {}):
+        service=QuestionGroupService(settings,repository)
+        if action:
+            claimed=action.get('value') or {}
+            if claimed.get('kind')!='questionnaire': raise PermissionError('Canonical question card requires its versioned action')
+            verb=str(claimed.get('verb') or '');value=claimed.get('choice_index')
+            if verb in {'text','additional'}: value=(action.get('form_value') or {}).get('answer')
+            result=await repository.record_questionnaire_action(message_id=str(original['message_id']),
+                project_id=str(original['project_id']),channel='feishu',chat_id=chat_id,user_id=str(user_id or ''),
+                external_event_id=f'{app_id or "default"}:{event_id}',revision=int(claimed.get('revision',-1)),
+                page=int(claimed.get('page',-1)),action=verb,value=value)
+        else:
+            result=await service.record_text(projection={**original,'channel':'feishu'},channel='feishu',
+                chat_id=chat_id,user_id=str(user_id or ''),external_event_id=f'{app_id or "default"}:{event_id}',text=text)
+        return {'message':result['message'],'run':None,'duplicate':result['duplicate'],'resumed':False,'partial_answer':True}
+
     if original:
         project_id = str(original["project_id"])
         agent_key = str(original["agent_key"] or (
@@ -908,13 +926,13 @@ async def ingest_event(
         if chat_type == "group":
             group_binding = await repository.resolve_chat_project_binding("feishu", chat_id)
             if group_binding is None:
-                project_id, agent_key = "system", "system-butler"
+                project_id, agent_key = unbound_route(settings)
             else:
                 project_id = str(group_binding["project_id"])
                 try:
                     _, target = _resolve_project_pm(settings, repository, project_id)
                 except (KeyError, PermissionError, ValueError):
-                    project_id, agent_key = "system", "system-butler"
+                    project_id, agent_key = unbound_route(settings)
                     group_binding = None
                 else:
                     agent_key = target.agent_key
@@ -927,6 +945,17 @@ async def ingest_event(
             project_id, agent_key = await RouteResolver(settings, repository).resolve(
                 "feishu", chat_id, user_id,
             )
+    if original is None:
+        project_id, agent_key = management_route(settings.data_root, (project_id, agent_key))
+
+    from assistant_kernel.services.kernel_management import retired_identity
+    if retired_identity(project_id, agent_key):
+        project_id, agent_key = "kernel", "project:kernel:manager"
+        original = None
+        message_type = "text"
+        if slash_candidate is None or slash_candidate[0] not in {"/bind_project", "/unbind_project", "/binding", "/help"}:
+            slash_candidate = ("/butler", None)
+
     slash = slash_candidate if original is None and message_type == "text" else None
     if feishu_config.get("mode") == "standby":
         allowed_slash = bool(
@@ -943,8 +972,8 @@ async def ingest_event(
         )
         if not allowed_slash and not allowed_answer:
             recorded = await repository.record_channel_command(
-                project_id="system",
-                agent_key="system-butler",
+                project_id="kernel",
+                agent_key="project:kernel:manager",
                 channel="feishu",
                 chat_id=chat_id,
                 user_id=user_id,
@@ -953,7 +982,7 @@ async def ingest_event(
                 content={"text": text, "reason": "feishu_standby", "raw": payload},
             )
             outbound = await repository.create_outbound(
-                project_id="system",
+                project_id="kernel",
                 session_id=None,
                 run_id=None,
                 channel="feishu",
@@ -1003,8 +1032,8 @@ async def ingest_event(
         )
     if chat_type == "group" and group_binding is None and original is None:
         recorded = await repository.record_channel_command(
-            project_id="system",
-            agent_key="system-butler",
+            project_id="kernel",
+            agent_key="project:kernel:manager",
             channel="feishu",
             chat_id=chat_id,
             user_id=user_id,
@@ -1017,7 +1046,7 @@ async def ingest_event(
             },
         )
         outbound = await repository.create_outbound(
-            project_id="system",
+            project_id="kernel",
             session_id=None,
             run_id=None,
             channel="feishu",
@@ -1065,6 +1094,17 @@ def render_feishu_message(message: dict[str, Any]) -> tuple[str, dict[str, Any]]
     """Render normal conversation as text and true approvals as interactive cards."""
     text = render_text(message)
     message_type = str(message.get("message_type") or "")
+    body=message.get('content_json') or {}
+    if body.get('interaction_kind')=='prompt_confirmation':
+        actions=[]
+        if body.get('action_status')=='open':
+            actions=[{'tag':'button','text':{'tag':'plain_text','content':item['label']},'value':{
+                'kind':'prompt_confirmation','verb':item['id'],'package_sha256':body['package_ref']['sha256'],
+                'question_message_id':str(message['message_id']),'project_id':message['project_id']}}
+                for item in body.get('actions') or []]
+        return 'interactive',{'config':{'wide_screen_mode':True},'header':{'template':'blue',
+            'title':{'tag':'plain_text','content':'具体执行内容确认'}},'elements':[
+                {'tag':'markdown','content':str(body['text'])},*([{'tag':'action','actions':actions}] if actions else [])]}
     if message_type not in {"approval", "question"}:
         return "text", {"text": text}
     content = dict(message.get("content_json") or {})
@@ -1074,6 +1114,31 @@ def render_feishu_message(message: dict[str, Any]) -> tuple[str, dict[str, Any]]
         "run_id": str(message.get("run_id") or correlation.get("run_id") or ""),
         "question_message_id": str(message.get("message_id") or ""),
     }
+    from assistant_kernel.services.questionnaire import is_questionnaire
+    if is_questionnaire(content):
+        state=content['questionnaire'];page=int(state['cursor']);revision=int(state['revision']);questions=content['questions']
+        elements=[{'tag':'markdown','content':text}]
+        if state.get('status')=='draft':
+            def button(label,verb,**values):
+                return {'tag':'button','text':{'tag':'plain_text','content':label},'value':{
+                    **common,'kind':'questionnaire','page':page,'revision':revision,'verb':verb,**values}}
+            choices=[]
+            if page<len(questions):
+                q=questions[page]
+                choices=[button(str(option['label'])+('（推荐）' if option['id']==q.get('recommended_option_id') else ''),
+                    'choice',choice_index=str(i)) for i,option in enumerate(q.get('options') or [])]
+                verb='text';label='保存本题答案'
+                choices.append(button('下一问' if page+1<len(questions) else '查看并提交','next'))
+            else:
+                verb='additional';label='保存补充说明';choices.append(button('提交全部答案','submit'))
+            if page>0: choices.append(button('上一问','previous'))
+            elements.append({'tag':'form','name':'question_answer','elements':[
+                {'tag':'input','name':'answer','label':{'tag':'plain_text','content':'自己的答案' if verb=='text' else '补充说明'},
+                    'required':verb=='text'},
+                {**button(label,verb),'name':'save_answer','action_type':'form_submit'}]})
+            if choices: elements.append({'tag':'action','actions':choices})
+        return 'interactive',{'config':{'wide_screen_mode':True},'header':{'template':'blue',
+            'title':{'tag':'plain_text','content':'问题与答案'}},'elements':elements}
     if message_type == "question":
         input_schema = dict(content.get("input_schema") or {})
         if input_schema.get("kind") == "project_credential":
@@ -1231,7 +1296,21 @@ class FeishuSender:
             token = token_data.get("tenant_access_token")
             if token_data.get("code") != 0 or not token:
                 raise RuntimeError("Feishu token request failed")
-            msg_type, content = render_feishu_message(message)
+            body=dict(message.get('content_json') or {})
+            display_message={**message,'message_id':body['target_message_id']} if body.get('target_message_id') else message
+            msg_type, content = render_feishu_message(display_message)
+            if body.get('target_message_id'):
+                target=str(body.get('update_external_message_id') or '')
+                if not target: raise RuntimeError('Question projection has no external edit target')
+                response=await client.patch('/open-apis/im/v1/messages/'+target,
+                    headers={'Authorization':f'Bearer {token}'},
+                    json={'content':json.dumps(content,ensure_ascii=False)})
+                response.raise_for_status();data=response.json()
+                if data.get('code')!=0: raise RuntimeError('Feishu question projection edit failed')
+                accepted=await self.repository.acknowledge_delivery(str(message['message_id']),worker_instance_id,target,
+                    {'mode':'edit','msg_type':msg_type,'response_sha256':hashlib.sha256(response.content).hexdigest()})
+                if not accepted: raise RuntimeError('Question edit lease was lost before acknowledgment')
+                return
             text_content = {"text": render_text(message)}
             reply_external_id = await self.repository.delivery_reply_external_id(
                 str(message["message_id"])

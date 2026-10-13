@@ -18,6 +18,7 @@ def now_iso() -> str:
 
 class ChannelHealthReporter:
     def __init__(self, settings: KernelSettings, channel: str) -> None:
+        self.settings=settings
         self.path = settings.data_root / "runtime" / "channel-health" / f"{channel}.json"
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
@@ -54,7 +55,7 @@ class ChannelHealthReporter:
 async def channel_health_pulse(reporter: ChannelHealthReporter) -> None:
     while True:
         reporter.update(process_running=True, last_process_heartbeat_at=now_iso())
-        await asyncio.sleep(30)
+        await asyncio.sleep(reporter.settings.health_heartbeat_seconds)
 
 
 def read_channel_health(settings: KernelSettings, channel: str) -> dict[str, Any]:
@@ -65,13 +66,14 @@ def read_channel_health(settings: KernelSettings, channel: str) -> dict[str, Any
         data = json.loads(path.read_text(encoding="utf-8"))
         updated = datetime.fromisoformat(str(data.get("updated_at") or ""))
         age = max((datetime.now(timezone.utc) - updated).total_seconds(), 0.0)
-        return {**data, "stale": age > 90, "age_seconds": round(age, 3)}
+        return {**data, "stale": age > settings.health_stale_after_seconds, "age_seconds": round(age, 3)}
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return {"channel": channel, "process_running": False, "connected": False, "stale": True}
 
 
 class WorkerHealthReporter:
     def __init__(self, settings: KernelSettings, worker_id: str) -> None:
+        self.settings=settings
         safe_id = re.sub(r"[^A-Za-z0-9._-]+", "-", str(worker_id)).strip("-")
         if not safe_id:
             raise ValueError("worker health id is empty")
@@ -104,12 +106,13 @@ class WorkerHealthReporter:
 async def worker_health_pulse(reporter: WorkerHealthReporter) -> None:
     while True:
         reporter.update(process_running=True, last_process_heartbeat_at=now_iso())
-        await asyncio.sleep(30)
+        await asyncio.sleep(reporter.settings.health_heartbeat_seconds)
 
 
 def read_worker_health(
-    settings: KernelSettings, *, stale_after_seconds: float = 90.0,
+    settings: KernelSettings, *, stale_after_seconds: float | None = None,
 ) -> dict[str, Any]:
+    stale_after_seconds=settings.health_stale_after_seconds if stale_after_seconds is None else stale_after_seconds
     root = settings.data_root / "runtime" / "worker-health"
     workers: list[dict[str, Any]] = []
     if root.is_dir():
@@ -134,6 +137,7 @@ def read_worker_health(
     ]
     return {
         "fresh_count": len(fresh),
+        "fresh_by_queue": {queue: sum(item.get("queue_kind") == queue for item in fresh) for queue in ("interactive", "runtime")},
         "total_count": len(workers),
         "workers": workers,
     }

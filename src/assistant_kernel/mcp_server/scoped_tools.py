@@ -10,7 +10,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 
 from assistant_kernel.config import KernelSettings
-from assistant_kernel.mcp_server.error_protocol import install_error_protocol
+from assistant_kernel.mcp_server.error_protocol import install_error_protocol, v12_tool_errors
 from assistant_kernel.repositories import CoreRepository
 from assistant_kernel.services.project_directory import ProjectDirectoryService
 from assistant_kernel.services.project_credentials import ProjectCredentialsStore
@@ -20,6 +20,7 @@ from assistant_kernel.services.stage_handoff import StageHandoffService
 from assistant_kernel.services.agent_files import AgentFileLoader
 from assistant_kernel.services.workspace_scope import WorkspaceScopeService
 from assistant_kernel.services.semantic_map import SemanticMapService
+from assistant_kernel.services.project_changes import ProjectChangeService
 from assistant_kernel.model_providers import VolcengineGateway
 from assistant_kernel.storage import ProjectRuntimeManager
 
@@ -41,6 +42,7 @@ allowed = {
 }
 workspace_scope = WorkspaceScopeService(settings)
 semantic_maps = SemanticMapService(settings)
+project_changes = ProjectChangeService(settings)
 capabilities = CapabilityBundleService(settings)
 handoffs = StageHandoffService(settings)
 agent_files = AgentFileLoader(settings)
@@ -110,6 +112,88 @@ def safe_file(relative_path: str):
 def require_scope_initialized() -> None:
     if not scope_initialized:
         raise PermissionError("call get_authorized_workspace before using scoped tools")
+
+
+
+
+async def current_project_task_source() -> tuple[dict, str]:
+    """Resolve Kernel-owned Root and original user source from this leased invocation."""
+    await repository.claimed_run_source(run_id=run_id, worker_instance_id=worker_instance_id,
+                                         claim_token=claim_token)
+    current = await repository.get_run(run_id)
+    if current is None or str(current["project_id"]) != project_id:
+        raise PermissionError("current Task belongs to another Project")
+    request = dict(current.get("request_json") or {})
+    task_id = str(request.get("task_root_run_id") or request.get("task_id") or run_id)
+    task = await repository.get_run(task_id)
+    if task is None or str(task["project_id"]) != project_id:
+        raise PermissionError("Root Task belongs to another Project")
+    task_request = dict(task.get("request_json") or {})
+    source_id = str(task_request.get("source_message_id") or task.get("trigger_message_id") or "")
+    source = await repository.get_message(source_id)
+    if source is None or str(source["project_id"]) != project_id or source.get("direction") != "inbound":
+        raise PermissionError("Task needs an original user Message in this Project")
+    return task, source_id
+
+
+if any(name in allowed for name in {
+    "get_system_config", "validate_system_config", "update_system_config", "restore_system_config",
+}):
+    from assistant_kernel.services.system_config import SystemConfigService
+    system_configuration = SystemConfigService(settings)
+
+
+if "get_system_config" in allowed:
+    @server.tool(annotations=READ_ONLY)
+    @v12_tool_errors()
+    async def get_system_config(view: str = "status", paths: list[str] | None = None) -> dict:
+        """Read desired or actually adopted values; no credentials are returned."""
+        require_scope_initialized()
+        await repository.claimed_run_source(run_id=run_id, worker_instance_id=worker_instance_id,
+                                            claim_token=claim_token)
+        return await system_configuration.view(view=view, paths=paths or [], management=project_id == "kernel")
+
+
+if "validate_system_config" in allowed:
+    @server.tool(annotations=READ_ONLY)
+    async def validate_system_config(candidate: dict) -> dict:
+        raise PermissionError("This management tool is retired; no configuration was changed")
+
+
+if "update_system_config" in allowed:
+    @server.tool(annotations=SCOPED_WRITE)
+    async def update_system_config(changes: list[dict], expected_revision: str, reason: str) -> dict:
+        raise PermissionError("This management tool is retired; no configuration was changed")
+
+
+if "restore_system_config" in allowed:
+    @server.tool(annotations=SCOPED_WRITE)
+    async def restore_system_config(revision: str, expected_revision: str) -> dict:
+        raise PermissionError("This management tool is retired; no configuration was changed")
+
+
+if "read_project_document" in allowed:
+    @server.tool(annotations=READ_ONLY)
+    @v12_tool_errors()
+    async def read_project_document(ref: dict, max_bytes: int = 262144) -> dict:
+        """Read a pinned Project document with identity, byte and contract checks."""
+        require_scope_initialized()
+        await repository.claimed_run_source(run_id=run_id,worker_instance_id=worker_instance_id,claim_token=claim_token)
+        from assistant_kernel.services.document_runtime import TaskDocumentService, validate_resource_ref
+        normalized = validate_resource_ref(ref)
+        prefix = f"vault://{project_id}/"
+        if normalized["kind"] != "document" or not str(normalized["uri"]).startswith(prefix):
+            raise PermissionError("document is not in the current Project")
+        if not 1 <= max_bytes <= 2097152:
+            raise ValueError("max_bytes must be 1..2097152")
+        path = runtime.resolve_vault_file(project_id, normalized["uri"][len(prefix):])
+        if path.stat().st_size > max_bytes:
+            raise ValueError("document exceeds the requested read limit; request an appropriate bounded source")
+        document = TaskDocumentService(settings).read(project_id, normalized)
+        return {"ref":normalized,"document_schema":document["schema_version"],
+                "actual_scope":document.get("scope", "task"),"payload":document["payload"],
+                "file_sha256":normalized["sha256"],"size":path.stat().st_size,
+                "coverage":{"status":"complete","covered_refs":[normalized],"missing_refs":[],"notes":[]}}
 
 
 if "volcengine_model_status" in allowed:
@@ -188,7 +272,7 @@ if "get_authorized_workspace" in allowed:
                         "write" if item.access == "write" and (
                             item.key in {"candidate", "run_work"} or (
                                 item.write_mode == "direct"
-                                and item.native_mode == "enforced"
+                                and item.native_mode in {"enforced", "behavioral"}
                                 and effective_permissions.get("workspace_file_access") == "read_write_execute"
                             )
                         )
@@ -202,6 +286,7 @@ if "get_authorized_workspace" in allowed:
                     "write_mode": item.write_mode,
                     "native_mode": item.native_mode,
                     "recursive": item.recursive,
+                    "permission_package": item.permission_package,
                 }
                 for item in authorized_roots
             ],
@@ -228,9 +313,15 @@ if "get_authorized_workspace" in allowed:
 
 if "get_project_map" in allowed:
     @server.tool(annotations=READ_ONLY)
-    def get_project_map() -> dict:
+    async def get_project_map(file_limit: int = 100) -> dict:
         """Return the Project Semantic Map header and compact component catalog."""
         require_scope_initialized()
+        refresh_error = None
+        try:
+            await project_changes.refresh_map(project_id, roots=authorized_roots, run_id=run_id)
+        except Exception as exc:
+            semantic_maps.mark_stale(project_id, reason=f"source reconciliation failed: {type(exc).__name__}")
+            refresh_error = {"type": type(exc).__name__, "message": str(exc)[:300]}
         payload = semantic_maps.load(project_id)
         by_key = {item.key: item for item in authorized_roots}
         diagnostics = []
@@ -283,7 +374,251 @@ if "get_project_map" in allowed:
             ],
             "unclassified_sources": payload.get("unclassified_sources") or [],
             "source_diagnostics": diagnostics,
+            "files": (payload.get("files") or [])[:min(max(file_limit, 1), 1000)],
+            "file_count": len(payload.get("files") or []),
+            "files_truncated": len(payload.get("files") or []) > min(max(file_limit, 1), 1000),
+            "map_ref": semantic_maps.current_ref(project_id),
+            "refresh_error": refresh_error,
         }
+
+
+if "refresh_project_map" in allowed:
+    @server.tool(annotations=SCOPED_WRITE)
+    async def refresh_project_map(source_uris: list[str] | None = None) -> dict:
+        """Reconcile only this Project's derived Map and unknown source-change evidence."""
+        require_scope_initialized()
+        for uri in source_uris or []:
+            workspace_scope.resolve_uri(authorized_roots, uri)
+        return await project_changes.refresh_map(project_id, roots=authorized_roots, run_id=run_id,
+                                                source_uris=source_uris)
+
+
+if "list_project_changes" in allowed:
+    @server.tool(annotations=READ_ONLY)
+    async def list_project_changes(
+        lookback_days: int = 30, limit: int = 50, cursor: str | None = None,
+        root_key: str | None = None, path: str | None = None,
+    ) -> dict:
+        """Read recent evidence in this fixed Project; reasons do not grant authorization."""
+        require_scope_initialized()
+        if root_key and root_key not in {item.key for item in authorized_roots}:
+            raise PermissionError("workspace root is outside the authorized scope")
+        return await project_changes.list_project_changes(
+            project_id, lookback_days=lookback_days, limit=limit, cursor=cursor,
+            root_key=root_key, path=path)
+
+
+if "read_change_diff" in allowed:
+    @server.tool(annotations=READ_ONLY)
+    async def read_change_diff(change_id: str, max_bytes: int = 262144) -> dict:
+        """Read a stored SHA-checked diff for a change registered in the current Project."""
+        require_scope_initialized()
+        return await project_changes.read_change_diff(project_id, change_id, max_bytes=max_bytes)
+
+
+if "get_public_background_fields" in allowed:
+    @server.tool(annotations=READ_ONLY)
+    def get_public_background_fields(fields: list[str] | None = None) -> dict:
+        """Read confirmed public fields; Project-local intent hypotheses are excluded."""
+        require_scope_initialized()
+        from assistant_kernel.services.public_background import PublicBackgroundService
+        return PublicBackgroundService(settings.data_root,settings).read_project_context(project_id, fields=fields)
+
+
+if "project_task_status" in allowed:
+    @server.tool(annotations=READ_ONLY)
+    async def project_task_status() -> dict:
+        """Read this Project's foreground, suspended and queued work."""
+        require_scope_initialized()
+        from assistant_kernel.services.task_queue import ProjectTaskQueue
+        return await ProjectTaskQueue(settings, repository).status(project_id)
+
+
+if "queue_project_task" in allowed:
+    @server.tool(annotations=SCOPED_WRITE)
+    async def queue_project_task(goal: str, priority: str = "normal", task_kind: str = "delivery") -> dict:
+        """Queue work from this invocation's original user source; no cross-Project target."""
+        require_scope_initialized()
+        _, source_id = await current_project_task_source()
+        from assistant_kernel.services.task_queue import ProjectTaskQueue
+        return await ProjectTaskQueue(settings, repository).queue(
+            project_id, goal, source_id, priority=priority, task_kind=task_kind)
+
+
+if "request_operation_report" in allowed:
+    @server.tool(annotations=SCOPED_WRITE)
+    async def request_operation_report(report_window: dict) -> dict:
+        """Request one normal queued report for a stable approved operating window."""
+        require_scope_initialized()
+        _, source_id = await current_project_task_source()
+        from assistant_kernel.services.operations import ProjectOperations
+        return await ProjectOperations(settings, repository).request_report(project_id, report_window, source_id)
+
+
+if "run_project_action" in allowed:
+    @server.tool(annotations=SCOPED_WRITE)
+    async def run_project_action(action_id: str, inputs: dict, idempotency_key: str) -> dict:
+        """Dispatch only an approved fixed runbook script; command/source overrides are impossible."""
+        require_scope_initialized()
+        task, _ = await current_project_task_source()
+        from assistant_kernel.services.operations import ProjectOperations
+        return await ProjectOperations(settings, repository).run_action(
+            project_id, str(task["run_id"]), action_id, inputs, idempotency_key)
+
+
+if 'submit_project_python' in allowed:
+    @server.tool(annotations=SCOPED_WRITE)
+    async def submit_project_python(manifest_ref:dict,inputs:dict,idempotency_key:str,execution_kind:str,
+        runtime_unit_ref:dict|None=None,logical_execution_id:str|None=None,resume_owner:dict|None=None)->dict:
+        """Use the fixed finite manifest and actual current invocation authority."""
+        require_scope_initialized()
+        await repository.claimed_run_source(run_id=run_id,worker_instance_id=worker_instance_id,claim_token=claim_token)
+        current=await repository.get_run(run_id)
+        from assistant_kernel.services.project_python import ProjectPython
+        return await ProjectPython(settings,repository).submit(project_id,{
+            'manifest_ref':manifest_ref,'inputs':inputs,'idempotency_key':idempotency_key,'execution_kind':execution_kind,
+            'runtime_unit_ref':runtime_unit_ref,'logical_execution_id':logical_execution_id,'resume_owner':resume_owner},source_run=current)
+
+
+if 'preview_schedule' in allowed:
+    @server.tool(annotations=READ_ONLY)
+    async def preview_schedule(rule:dict,timezone:str='Asia/Shanghai')->dict:
+        """Validate time rules and show the next five actual instants; never register or enable."""
+        require_scope_initialized()
+        from assistant_kernel.services.schedule_time import preview
+        return preview(rule,timezone)
+
+if 'register_schedule' in allowed:
+    @server.tool(annotations=SCOPED_WRITE)
+    async def register_schedule(definition_ref:dict,idempotency_key:str,authorization_source_refs:list[dict],expected_control_revision:int=0)->dict:
+        """Register a fixed schedule in confirmed Operate; registration never enables it."""
+        require_scope_initialized();task,_=await current_project_task_source()
+        from assistant_kernel.services.schedules import Schedules
+        return await Schedules(settings,repository).register(project_id,definition_ref,task_id=str(task['run_id']),
+            idempotency_key=idempotency_key,authorization_source_refs=authorization_source_refs,expected_control_revision=expected_control_revision)
+
+if 'control_schedule' in allowed:
+    @server.tool(annotations=SCOPED_WRITE)
+    async def control_schedule(schedule_id:str,action:str,expected_control_revision:int,idempotency_key:str,
+                               authorization_source_refs:list[dict],target_definition_ref:dict|None=None)->dict:
+        """Update, enable, pause, resume, retire, run_now or cancel_current with real Operate authority."""
+        require_scope_initialized();task,_=await current_project_task_source()
+        from assistant_kernel.services.schedules import Schedules
+        return await Schedules(settings,repository).control(project_id,{'schedule_id':schedule_id,'action':action,
+            'expected_control_revision':expected_control_revision,'idempotency_key':idempotency_key,
+            'authorization_source_refs':authorization_source_refs,'target_definition_ref':target_definition_ref},task_id=str(task['run_id']))
+
+if 'list_schedules' in allowed:
+    @server.tool(annotations=READ_ONLY)
+    async def list_schedules(limit:int=20,cursor:str|None=None)->dict:
+        require_scope_initialized()
+        from assistant_kernel.services.schedules import Schedules
+        return await Schedules(settings,repository).list(project_id,limit,cursor)
+
+if 'schedule_status' in allowed:
+    @server.tool(annotations=READ_ONLY)
+    async def schedule_status(schedule_id:str)->dict:
+        require_scope_initialized()
+        from assistant_kernel.services.schedules import Schedules
+        return await Schedules(settings,repository).status(project_id,schedule_id)
+
+if 'list_schedule_ticks' in allowed:
+    @server.tool(annotations=READ_ONLY)
+    async def list_schedule_ticks(schedule_id:str,limit:int=20,cursor:str|None=None)->dict:
+        require_scope_initialized()
+        from assistant_kernel.services.schedules import Schedules
+        return await Schedules(settings,repository).ticks(project_id,schedule_id,limit,cursor)
+
+if 'register_runtime_unit' in allowed:
+    @server.tool(annotations=SCOPED_WRITE)
+    async def register_runtime_unit(definition_ref:dict,review_ref:dict,publication_ref:dict,expected_control_revision:int=0)->dict:
+        """Register an actually accepted reviewed/published definition; registration never enables it."""
+        require_scope_initialized()
+        task,_=await current_project_task_source()
+        if task['request_json'].get('current_stage')!='operate':raise PermissionError('Registration follows publication in Operate')
+        from assistant_kernel.services.runtime_units import RuntimeUnits
+        service=RuntimeUnits(settings,repository)
+        return service.registration(await service.register(project_id,definition_ref,review_ref=review_ref,
+            publication_ref=publication_ref,expected_control_revision=expected_control_revision))
+
+
+if 'write_runtime_document' in allowed:
+    @server.tool(annotations=SCOPED_WRITE)
+    async def write_runtime_document(document_kind:str,payload:dict)->dict:
+        """Write a fixed runtime candidate envelope; never grant execution or accepted status."""
+        require_scope_initialized()
+        task,_=await current_project_task_source()
+        from assistant_kernel.services.runtime_documents import write_runtime_document as write
+        return write(settings,task,document_kind,payload)
+
+
+if 'resolve_runtime_config' in allowed:
+    @server.tool(annotations=READ_ONLY)
+    async def resolve_runtime_config(bindings:list[dict])->dict:
+        require_scope_initialized();task,_=await current_project_task_source()
+        from assistant_kernel.services.runtime_documents import resolve_runtime_config as resolve
+        return await resolve(settings,task,bindings)
+
+
+if 'list_runtime_units' in allowed:
+    @server.tool(annotations=READ_ONLY)
+    async def list_runtime_units(limit:int=20,cursor:str|None=None)->dict:
+        require_scope_initialized()
+        from assistant_kernel.services.runtime_units import RuntimeUnits
+        return await RuntimeUnits(settings,repository).list(project_id,limit,cursor)
+
+
+if 'runtime_unit_status' in allowed:
+    @server.tool(annotations=READ_ONLY)
+    async def runtime_unit_status(runtime_unit_ref:dict)->dict:
+        require_scope_initialized()
+        from assistant_kernel.services.runtime_units import RuntimeUnits
+        return await RuntimeUnits(settings,repository).view(project_id,runtime_unit_ref)
+
+
+if 'control_runtime_unit' in allowed:
+    @server.tool(annotations=SCOPED_WRITE)
+    async def control_runtime_unit(runtime_unit_ref:dict,action:str,expected_control_revision:int,idempotency_key:str,
+            authorization_source_refs:list[dict],target_definition_ref:dict|None,stop_policy:str,cause:str,tick_ref:None,
+            expected_instance_ref:dict|None,expires_at:str|None)->dict:
+        request={'runtime_unit_ref':runtime_unit_ref,'action':action,'expected_control_revision':expected_control_revision,
+            'idempotency_key':idempotency_key,'authorization_source_refs':authorization_source_refs,'target_definition_ref':target_definition_ref,
+            'stop_policy':stop_policy,'cause':cause,'tick_ref':tick_ref,'expected_instance_ref':expected_instance_ref,'expires_at':expires_at}
+        require_scope_initialized();task,_=await current_project_task_source()
+        state=task['request_json'];confirmation=state.get('prompt_confirmation_message_id')
+        if state.get('current_stage')!='operate' or not confirmation or not state.get('confirmed_turn_package_ref'):
+            raise PermissionError('Runtime control requires this actual confirmed Operate Turn')
+        if not any(x.get('uri')=='db://assistant/messages/'+confirmation for x in request.get('authorization_source_refs',[])):
+            raise PermissionError('Control must include the current concrete Prompt confirmation, not only an old execution scope')
+        from assistant_kernel.services.runtime_units import RuntimeUnits
+        from assistant_kernel.services.document_runtime import TaskDocumentService
+        ref=await RuntimeUnits(settings,repository).control(project_id,request,authenticated_operator=True)
+        return TaskDocumentService(settings).read(project_id,ref)['payload']
+
+
+if 'write_operation_document' in allowed:
+    @server.tool(annotations=SCOPED_WRITE)
+    async def write_operation_document(document_kind:str,payload:dict)->dict:
+        require_scope_initialized();task,_=await current_project_task_source()
+        from assistant_kernel.services.operation_records import OperationRecords
+        return await OperationRecords(settings,repository).write(task,document_kind,payload)
+
+
+if 'query_project_operations' in allowed:
+    @server.tool(annotations=READ_ONLY)
+    async def query_project_operations(kind:str,object_id:str|None=None,lookback_days:int=7,limit:int=50,cursor:str|None=None)->dict:
+        require_scope_initialized()
+        from assistant_kernel.services.operation_records import OperationRecords
+        return await OperationRecords(settings,repository).query(project_id,{'kind':kind,'object_id':object_id,'lookback_days':lookback_days,'limit':limit,'cursor':cursor})
+
+
+if 'set_operation_monitor_policy' in allowed:
+    @server.tool(annotations=SCOPED_WRITE)
+    async def set_operation_monitor_policy(policy_ref:dict,authorization_source_refs:list[dict],active:bool)->dict:
+        require_scope_initialized();task,_=await current_project_task_source()
+        if task['request_json'].get('current_stage')!='operate':raise PermissionError('Policy adoption belongs to Operate')
+        from assistant_kernel.services.operation_records import OperationRecords
+        return await OperationRecords(settings,repository).activate_policy(project_id,policy_ref,authorization_source_refs,active=active,authenticated_operator=True)
 
 
 if "query_project_map" in allowed:
@@ -297,7 +632,7 @@ if "query_project_map" in allowed:
         return semantic_maps.query(
             project_id, task_kind=str(task_kind or "chat"),
             query_terms=[str(query or "")], component_ids=component_ids or [],
-            limit=limit,
+            limit=limit, roots=authorized_roots,
         )
 
 
@@ -308,7 +643,8 @@ if "read_map_component" in allowed:
         require_scope_initialized()
         for item in semantic_maps.load(project_id).get("components") or []:
             if str(item.get("component_id")) == str(component_id):
-                return dict(item)
+                return {**dict(item), "source_diagnostics": semantic_maps.validate_sources(
+                    project_id, roots=authorized_roots, component_ids=[str(component_id)])}
         raise FileNotFoundError(f"semantic component is not registered: {component_id}")
 
 
@@ -339,20 +675,33 @@ if "list_authorized_tree" in allowed:
 
 if "read_authorized_file" in allowed:
     @server.tool(annotations=READ_ONLY)
-    def read_authorized_file(uri: str, max_bytes: int = 262144) -> dict:
+    async def read_authorized_file(uri: str, max_bytes: int = 262144) -> dict:
         """Read one UTF-8 file addressed by an authorized workspace URI."""
         require_scope_initialized()
-        _, target, _ = workspace_scope.resolve_uri(authorized_roots, uri)
+        read_root, target, _ = workspace_scope.resolve_uri(authorized_roots, uri)
         if not target.is_file():
             raise FileNotFoundError(uri)
         limit = min(max(max_bytes, 1), 2 * 1024 * 1024)
         data = target.read_bytes()
         if len(data) > limit:
             raise ValueError(f"file exceeds max_bytes={limit}")
+        digest = hashlib.sha256(data).hexdigest()
+        _, _, relative = workspace_scope.resolve_uri(authorized_roots, uri)
+        if not semantic_maps._skip_file(relative, project_vault=read_root.key == "project"):
+            registered = next((item for item in semantic_maps.load(project_id).get("files") or []
+                               if item.get("uri") == uri), None)
+            if registered is None or registered.get("sha256") != digest:
+                semantic_maps.mark_stale(project_id, reason="source file changed on read")
+                try:
+                    await project_changes.refresh_map(project_id, roots=authorized_roots, run_id=run_id,
+                                                      source_uris=[uri])
+                except Exception:
+                    # The verified file read remains usable; the index explicitly stays stale.
+                    pass
         return {
             "uri": uri,
             "text": data.decode("utf-8"),
-            "sha256": hashlib.sha256(data).hexdigest(),
+            "sha256": digest,
             "size": len(data),
         }
 
@@ -418,20 +767,27 @@ if "inspect_source_path" in allowed:
 
 if "propose_source_scope" in allowed:
     @server.tool(annotations=SCOPED_WRITE)
-    def propose_source_scope(
+    async def propose_source_scope(
         bindings: list[dict], reason: str, target_project_id: str | None = None,
         resume_blocked_run_id: str | None = None,
         authorization_mode: str = "explicit_request",
     ) -> dict:
         """Persist a hash-fixed record for user-requested external workspaces."""
         require_scope_initialized()
+        from assistant_kernel.services.directory_assessment import configured_parameters
+        parameters=await configured_parameters(settings)
         target = str(target_project_id or project_id)
-        return source_scopes.propose(
+        import asyncio
+        result=await asyncio.to_thread(source_scopes.propose,
             current_project_id=project_id, run_id=run_id,
             target_project_id=target, bindings=bindings, reason=reason,
             resume_blocked_run_id=resume_blocked_run_id,
             authorization_mode=authorization_mode,
+            assessment_parameters=parameters,
         )
+        from assistant_kernel.services.directory_assessment import record_configuration_use
+        result['configuration_use_ref']=await record_configuration_use(settings,result.get('directory_assessments',[]))
+        return result
 
 
 if "activate_source_scope" in allowed:
@@ -578,7 +934,7 @@ if "run_status" in allowed:
         if str(row["project_id"]) != project_id:
             raise PermissionError("Run belongs to another Project")
         result = dict(row)
-        blocker = await repository.active_execution_blocker(project_id)
+        blocker = await repository.active_execution_blocker(project_id, selected)
         if (
             str(row.get("status") or "") == "queued"
             and blocker is not None
@@ -613,7 +969,7 @@ if "list_recent_history" in allowed:
                 raise FileNotFoundError("current Run trigger message was not found")
             channel = str(trigger["channel"])
             chat_id = str(trigger["chat_id"])
-        return await repository.list_recent_history(
+        history = await repository.list_recent_history(
             project_id=project_id,
             lookback_days=lookback_days,
             limit=limit,
@@ -621,41 +977,20 @@ if "list_recent_history" in allowed:
             channel=channel,
             chat_id=chat_id,
         )
+        from assistant_kernel.services.public_background import PublicBackgroundService
+        revoked = PublicBackgroundService(settings.data_root,settings).revoked_source_message_ids()
+        history["items"] = [item for item in history.get("items") or []
+                            if str(item.get("message_id") or "") not in revoked]
+        history["withdrawn_sources_filtered"] = True
+        # Preserve the repository's pagination boundary, including an empty filtered page.
+        return history
 
 
 if "list_projects" in allowed:
     @server.tool(annotations=READ_ONLY)
     def list_projects() -> dict:
-        """List switchable PM targets without reading their private content."""
         require_scope_initialized()
-        if stage is not None:
-            raise PermissionError("Stage agents cannot list cross-Project PM targets")
-        active = [
-            {
-                **item,
-                "agent_key": f"project:{item['project_id']}:manager",
-            }
-            for item in projects.list()
-        ]
-        return {"projects": [{
-            "schema_version": "project-card.v1",
-            "project_id": "system",
-            "display_name": "个人超级助理大管家",
-            "purpose": "返回个人超级助理的大管家总入口",
-            "status": "active",
-            "default_agent": "system-butler",
-            "initial_goal": "",
-            "boundaries": ["普通交流、一次性问答、Project定位和受控移交"],
-            "non_goals": ["代替目标Project执行内部实施"],
-            "routing": {
-                "aliases": ["大管家", "butler", "总入口"],
-                "topics": ["普通问答", "项目定位", "新项目提案"],
-                "typical_requests": ["返回大管家", "帮我找到负责这个话题的项目"],
-                "exclusions": ["已经明确属于某个现有Project的内部工作"],
-                "related_projects": [],
-            },
-            "agent_key": "system-butler",
-        }, *active]}
+        return {"projects": [{**item, "agent_key": "project:"+item["project_id"]+":manager"} for item in projects.list()]}
 
 
 if "list_project_agents" in allowed:
@@ -700,11 +1035,25 @@ if "current_conversation_route" in allowed:
         route = await repository.resolve_route_binding(
             str(trigger["channel"]), str(trigger["chat_id"]), trigger.get("user_id")
         )
+        python_context=None
+        if 'submit_project_python' in allowed:
+            await repository.claimed_run_source(run_id=run_id,worker_instance_id=worker_instance_id,claim_token=claim_token)
+            async with repository.database.connection() as connection:
+                active=await (await connection.execute("SELECT invocation_id FROM assistant.model_invocations WHERE run_id=%s AND status='running'",(run_id,))).fetchall()
+            state=current['request_json'];confirmation=state.get('prompt_confirmation_message_id')
+            if len(active)==1 and confirmation and state.get('confirmed_turn_package_ref'):
+                from assistant_kernel.services.document_runtime import resource_ref
+                invocation=active[0]['invocation_id']
+                python_context={'creating_task_ref':resource_ref(kind='receipt',identity=run_id,uri='db://assistant/runs/'+run_id,purpose='current actual Task'),
+                    'creating_invocation_ref':resource_ref(kind='receipt',identity=invocation,uri='db://assistant/model_invocations/'+invocation,purpose='current actual model invocation'),
+                    'authorization_ref':resource_ref(kind='message',identity=confirmation,uri='db://assistant/messages/'+confirmation,purpose='actual current Prompt confirmation'),
+                    'turn_boundary_ref':state['confirmed_turn_package_ref']}
         return {
             "project_id": route[0] if route else str(current["project_id"]),
             "agent_key": route[1] if route else str(current["agent_key"]),
             "channel": str(trigger["channel"]),
             "chat_id": str(trigger["chat_id"]),
+            "python_execution_context": python_context,
         }
 
 
@@ -741,84 +1090,23 @@ if "handoff_to_agent" in allowed:
         }
 
 
-if "propose_project" in allowed:
-    @server.tool(annotations=SCOPED_WRITE)
-    def propose_project(
-        new_project_id: str, purpose: str, initial_goal: str = "",
-        boundaries: list[str] | None = None, non_goals: list[str] | None = None,
-        workspace_roots: list[dict] | None = None,
-    ) -> dict:
-        """Persist a Project proposal and any user-selected recursive parent roots."""
-        require_scope_initialized()
-        if project_id != "system":
-            raise PermissionError("only the system Butler can propose Projects")
-        return projects.propose(
-            run_id, new_project_id, purpose, initial_goal=initial_goal,
-            boundaries=boundaries, non_goals=non_goals,
-            workspace_roots=workspace_roots,
-        )
 
 
-if "create_project" in allowed:
-    @server.tool(annotations=SCOPED_WRITE)
-    async def create_project(
-        proposal_uri: str, proposal_sha256: str, handoff_summary: str = ""
-    ) -> dict:
-        """Create an approved Project and idempotently hand this Run to its PM."""
-        require_scope_initialized()
-        if project_id != "system":
-            raise PermissionError("only the system Butler can create Projects")
-        return await projects.create_and_handoff_from_approved_run(
-            run_id=run_id, worker_instance_id=worker_instance_id,
-            claim_token=claim_token, proposal_uri=proposal_uri,
-            expected_sha256=proposal_sha256, handoff_summary=handoff_summary,
-        )
 
 
 if "handoff_to_project" in allowed:
     @server.tool(annotations=SCOPED_WRITE)
-    async def handoff_to_project(target_project_id: str, handoff_summary: str) -> dict:
-        """Open an active Project in its Discord channel and hand off to its PM."""
+    async def handoff_to_project(target_project_id: str, handoff_summary: str, target_agent_id: str | None = None) -> dict:
         require_scope_initialized()
-        if stage is not None:
-            raise PermissionError("Stage agents cannot hand off across Projects")
-        if target_project_id == project_id:
-            raise ValueError("target Project is already the current PM")
-        active_targets = {
-            str(item["project_id"]) for item in projects.list()
-        } | {"system"}
-        if target_project_id not in active_targets:
-            raise ValueError("target Project is not active in the Project directory")
-        target = runtime.describe(target_project_id).vault_root
-        if not target.is_dir() or not agent_files.list_agents(target_project_id):
-            raise ValueError("target Project is not registered by a valid Vault directory")
-        if target_project_id == "system":
-            result = await repository.handoff_from_claim(
-                source_run_id=run_id, worker_instance_id=worker_instance_id,
-                claim_token=claim_token, target_project_id=target_project_id,
-                handoff_summary=handoff_summary,
-            )
-        else:
-            result = await projects.handoff_to_existing_project_from_claim(
-                run_id=run_id, worker_instance_id=worker_instance_id,
-                claim_token=claim_token, target_project_id=target_project_id,
-                handoff_summary=handoff_summary,
-            )
-        response = {
-            "project_id": target_project_id,
-            "message_id": str(result["message"]["message_id"]),
-            "run_id": str(result["run"]["run_id"]),
-            "status": str(result["run"]["status"]),
-        }
-        provisioning = result.get("discord_provisioning")
-        if isinstance(provisioning, dict):
-            channel_id = str(provisioning.get("channel_id") or "")
-            response.update({
-                "discord_channel_id": channel_id or None,
-                "discord_channel_mention": f"<#{channel_id}>" if channel_id else None,
-                "discord_channel_created": bool(provisioning.get("created")),
-            })
-        return response
+        if target_agent_id not in {None, "pm"}:
+            raise ValueError("Only an existing Project PM is a handoff destination")
+        from assistant_kernel.services.kernel_management import require_active_identity
+        require_active_identity(target_project_id, "project:"+target_project_id+":manager")
+        result = await projects.handoff_to_existing_project_from_claim(
+            run_id=run_id, worker_instance_id=worker_instance_id, claim_token=claim_token,
+            target_project_id=target_project_id, handoff_summary=handoff_summary)
+        return {"project_id":target_project_id,"run_id":str(result["run"]["run_id"]),
+                "status":str(result["run"]["status"]),"message_id":str(result["message"]["message_id"])}
 
 
 if "start_project_task" in allowed:
@@ -832,68 +1120,20 @@ if "start_project_task" in allowed:
         supersede_run_id: str | None = None,
         supersede_reason: str | None = None,
     ) -> dict:
-        """Start a deterministic, approval-gated stage chain in the current Project."""
-        if project_id == "system":
-            raise PermissionError("the Butler must hand off to a Project before starting a task")
-        require_scope_initialized()
-        if change_class not in {"minor", "major"}:
-            raise ValueError("change_class must be minor or major")
-        stages = stages or (
-            ["requirements", "implementation", "review"]
-            if change_class == "major" else ["implementation", "review"]
-        )
-        for stage in stages:
-            try:
-                agent_files.load(project_id, f"project:{project_id}:{stage}")
-            except FileNotFoundError as exc:
-                raise ValueError(f"Project stage is not configured: {stage}") from exc
-        task_metadata: dict = {
-            "task_kind": "project_task",
-            "requested_skills": requested_skills or [],
-        }
-        baseline = None
-        if target_skill:
-            baseline = capabilities.inspect(project_id, target_skill)
-            task_metadata = {
-                "task_kind": "skill_change",
-                "requested_skills": requested_skills or [],
-                "capability_change": {
-                    "target_skill": baseline["name"],
-                    "change_mode": baseline["change_mode"],
-                    "baseline": baseline,
-                },
-            }
-        stage_bindings = {}
-        for selected_stage in stages:
-            config = agent_files.load(
-                project_id, f"project:{project_id}:{selected_stage}",
-                task_kind=task_metadata["task_kind"],
-                requested_skills=requested_skills or [],
-            )
-            snapshot_uri, snapshot_hash = agent_files.snapshot(project_id, config)
-            stage_bindings[selected_stage] = {
-                "config_snapshot_uri": snapshot_uri,
-                "config_bundle_hash": snapshot_hash,
-                "source_files": list(config.source_files),
-                "skill_bindings": list(config.skill_bindings),
-            }
-        task_metadata["stage_bindings"] = stage_bindings
-        row = await repository.start_task_from_claim(
-            source_run_id=run_id, worker_instance_id=worker_instance_id,
-            claim_token=claim_token, goal=goal, stages=stages,
-            change_class=change_class,
-            task_metadata=task_metadata,
-            supersede_run_id=supersede_run_id,
-            supersede_reason=supersede_reason,
-        )
-        return {
-            "task_root_run_id": str(row["run_id"]),
-            "stage": str(row["stage"]), "status": str(row["status"]),
-            "task_kind": task_metadata["task_kind"],
-            "capability_change": task_metadata.get("capability_change"),
-            "supersedes_run_id": supersede_run_id,
-        }
+        raise PermissionError("Stage execution is retired; use single-agent.v2")
 
 
 if __name__ == "__main__":
     server.run(transport="stdio")
+
+# Fixed historical packages receive a retirement error, never an executable creation path.
+if "propose_project" in allowed:
+    @server.tool(annotations=SCOPED_WRITE)
+    async def propose_project(project_id: str, purpose: str, initial_goal: str = "", boundaries: list[str] | None = None,
+                              non_goals: list[str] | None = None, workspace_roots: list[dict] | None = None) -> dict:
+        raise PermissionError("Project creation is retired; no proposal was written")
+
+if "create_project" in allowed:
+    @server.tool(annotations=SCOPED_WRITE)
+    async def create_project(proposal_uri: str, proposal_sha256: str, handoff_summary: str = "") -> dict:
+        raise PermissionError("Project creation is retired; no Project was created")

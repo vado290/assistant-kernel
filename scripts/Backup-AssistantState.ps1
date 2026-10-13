@@ -5,8 +5,7 @@ param(
 $ErrorActionPreference = "Stop"
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $backupRoot = Join-Path $WorkspaceRoot "assistant-data\backups\$stamp"
-$n8nExportRoot = Join-Path $WorkspaceRoot "n8n\local-files\assistant-backup-$stamp"
-New-Item -ItemType Directory -Force -Path $backupRoot, $n8nExportRoot | Out-Null
+New-Item -ItemType Directory -Force -Path $backupRoot | Out-Null
 
 $pgTemp = "/tmp/assistant-$stamp.dump"
 docker exec rag-postgres sh -lc ('pg_dump -Fc -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f "{0}"' -f $pgTemp)
@@ -14,12 +13,6 @@ if ($LASTEXITCODE -ne 0) { throw "pg_dump failed" }
 docker cp "rag-postgres:$pgTemp" (Join-Path $backupRoot "postgres.dump")
 if ($LASTEXITCODE -ne 0) { throw "docker cp for PostgreSQL backup failed" }
 docker exec rag-postgres rm -f -- $pgTemp
-
-docker exec -u node n8n n8n export:workflow --backup --output="/files/assistant-backup-$stamp/workflows"
-if ($LASTEXITCODE -ne 0) { throw "n8n workflow export failed" }
-docker exec -u node n8n n8n export:credentials --backup --output="/files/assistant-backup-$stamp/credentials"
-if ($LASTEXITCODE -ne 0) { throw "n8n credential export failed" }
-Move-Item -LiteralPath $n8nExportRoot -Destination (Join-Path $backupRoot "n8n-export")
 
 Copy-Item -LiteralPath (Join-Path $WorkspaceRoot "docker-compose.yml") -Destination $backupRoot
 Copy-Item -LiteralPath (Join-Path $WorkspaceRoot "assistant-kernel") -Destination (Join-Path $backupRoot "assistant-kernel") -Recurse

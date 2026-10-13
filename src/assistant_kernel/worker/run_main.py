@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import argparse
 import logging
 import signal
 
@@ -8,7 +9,7 @@ from assistant_kernel.config import KernelSettings
 from assistant_kernel.worker.main import run_worker_loop
 
 
-async def _run() -> None:
+async def _run(queue_kind: str = "interactive") -> None:
     shutdown_event = asyncio.Event()
     loop = asyncio.get_running_loop()
     installed: list[signal.Signals] = []
@@ -27,7 +28,8 @@ async def _run() -> None:
             continue
         installed.append(received)
     try:
-        await run_worker_loop(KernelSettings.from_environment(), shutdown_event)
+        from assistant_kernel.services.config_consumers import startup_settings
+        await run_worker_loop(startup_settings(KernelSettings.from_environment(),'worker'), shutdown_event, queue_kind)
     finally:
         for received in installed:
             loop.remove_signal_handler(received)
@@ -35,7 +37,9 @@ async def _run() -> None:
 
 def run() -> None:
     logging.basicConfig(level=logging.INFO)
-    asyncio.run(_run())
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--queue", choices=("interactive", "runtime"), default="interactive")
+    asyncio.run(_run(parser.parse_args().queue))
 
 
 if __name__ == "__main__":

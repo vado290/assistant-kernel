@@ -12,6 +12,7 @@ from assistant_kernel.worker.process_control import (
     process_start_ticks,
     terminate_recorded_process_group,
 )
+from assistant_kernel.worker.python_process import cleanup_python_group, inspect_python_group
 
 
 class ReconciliationService:
@@ -92,6 +93,15 @@ class ReconciliationService:
             pid and expected_ticks is not None
             and process_start_ticks(pid) == int(expected_ticks)
         )
+        python_attempt = (run.get("executor_json") or {}).get("python_attempt") or {}
+        python_pending = (run.get("run_type") == "python" and bool(python_attempt)
+                          and (python_attempt.get("cleanup") or {}).get("status") != "verified")
+        if python_pending:
+            probe = inspect_python_group(python_attempt.get("process_identity"))
+            alive = probe["status"] == "active"
+            python_pending = probe["status"] != "verified"
+        elif run.get("run_type") == "python" and python_attempt:
+            alive = False
         trace_completed, summary, trace_changes = self._trace_evidence(run)
         candidate_changes = self._candidate_state(run)
         error = dict(run.get("error_json") or {})
@@ -105,7 +115,7 @@ class ReconciliationService:
         recoverable = bool(
             not alive and trace_completed and summary and run.get("run_type") == "chat"
         )
-        if alive:
+        if alive or python_pending:
             actions = [
                 {"id": "wait", "label": "继续等待", "style": "secondary"},
                 {"id": "cancel", "label": "终止并取消", "style": "danger"},
@@ -145,7 +155,7 @@ class ReconciliationService:
             f"Run ID：{run['run_id']}\n"
             f"阶段：{run.get('stage') or run.get('run_type') or 'chat'}\n"
             f"原因：{reason[:700]}\n"
-            f"进程：{'仍在运行' if alive else '已退出或不存在'}\n"
+            f"进程：{'仍在运行' if alive else 'Python清理待核验' if python_pending else '已退出或不存在'}\n"
             f"Codex结果：{'已有完整结果，可直接恢复' if recoverable else ('Trace已完成但不能自动恢复' if trace_completed else '没有完整完成结果')}\n"
             f"文件变化记录：{changed_count if changed_count is not None else '未知'}\n"
             + (
@@ -197,13 +207,28 @@ class ReconciliationService:
         run = await self.repository.get_run(str(card.get("run_id") or ""))
         if run is None:
             raise PermissionError("reconciliation Run is unknown")
+        from assistant_kernel.services.kernel_management import require_active_identity
+        require_active_identity(run["project_id"], run["agent_key"])
+        python_attempt = (run.get("executor_json") or {}).get("python_attempt") or {}
+        if run.get("run_type") == "python" and python_attempt:
+            cleanup = python_attempt.get("cleanup") or {}
+            if action != "wait" and cleanup.get("status") != "verified":
+                identity = python_attempt.get("process_identity")
+                cleanup = (await cleanup_python_group(identity) if action == "cancel"
+                           else inspect_python_group(identity))
+                if not await self.repository.record_python_cleanup(
+                    str(run["run_id"]), int(run["attempt"]), cleanup,
+                ):
+                    raise PermissionError("Python reconciliation state changed")
+                if cleanup.get("status") != "verified":
+                    raise PermissionError("Python process cleanup is not verified; keep waiting or inspect it")
         alive = bool(
             run.get("process_pid") and run.get("process_start_ticks") is not None
             and process_start_ticks(int(run["process_pid"])) == int(run["process_start_ticks"])
         )
-        if action in {"retry", "resume"} and alive:
+        if action in {"retry", "resume"} and alive and not python_attempt:
             raise PermissionError("cannot resume while the recorded process is alive")
-        if action == "cancel" and alive:
+        if action == "cancel" and alive and not python_attempt:
             await terminate_recorded_process_group(
                 int(run["process_pid"]), int(run["process_start_ticks"]),
             )

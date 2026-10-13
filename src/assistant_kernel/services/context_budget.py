@@ -18,10 +18,10 @@ class ContextBudgetDecision(BaseModel):
 
 
 class ContextBudgetManager:
-    """Evaluates context occupancy once after each completed turn.
+    """Compatibility diagnostic only; native Codex compact owns context capacity.
 
-    input_tokens already includes cached input; cached_input_tokens is a subset and
-    must not be added again. Rotation is strict greater-than the configured soft limit.
+    Cached input is already included in input_tokens. The legacy response fields
+    remain readable, but never authorize a Kernel summary or session rotation.
     """
 
     def __init__(self, soft_ratio: float = 0.70, hard_ratio: float = 0.85):
@@ -34,17 +34,9 @@ class ContextBudgetManager:
         if context_window_tokens <= 0:
             raise ValueError("context_window_tokens must be positive")
         ratio = usage.input_tokens / context_window_tokens
-        hard = ratio > self.hard_ratio
-        rotate = ratio > self.soft_ratio
-        if hard:
-            reason = "hard context threshold exceeded"
-        elif rotate:
-            reason = "soft context threshold exceeded"
-        else:
-            reason = "context remains below or equal to the soft threshold"
         return ContextBudgetDecision(
             ratio=ratio,
-            should_summarize_and_rotate=rotate,
-            hard_limit_reached=hard,
-            reason=reason,
+            should_summarize_and_rotate=False,
+            hard_limit_reached=False,
+            reason="occupancy diagnostic only; Codex native compact owns context capacity",
         )

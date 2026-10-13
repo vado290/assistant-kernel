@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import difflib
 import json
 import os
 from pathlib import Path
@@ -60,6 +61,9 @@ class FileEffectRecorder:
                 with os.scandir(parent) as entries:
                     for entry in entries:
                         relative = Path(entry.path).relative_to(root.path).as_posix()
+                        from assistant_kernel.services.semantic_map import SemanticMapService
+                        if SemanticMapService._skip_file(relative):
+                            continue
                         symlink = entry.is_symlink()
                         directory = entry.is_dir(follow_symlinks=False) if not symlink else False
                         if WorkspaceScopeService._root_excluded(
@@ -164,12 +168,50 @@ class FileEffectRecorder:
                 ) == (
                     current.get("size"), current.get("mtime_ns")
                 ):
-                    continue
+                    if not before.get("sha256"):
+                        continue
+                    root_key, relative = path.split("/", 1)
+                    root = next(item for item in self.roots if item.key == root_key)
+                    actual_sha = self._sha256(root.path / relative)
+                    if actual_sha == before["sha256"]:
+                        continue
+                    current = {**current, "sha256": actual_sha}
             if current is not None and current.get("kind") == "file":
                 root_key, relative = path.split("/", 1)
                 root = next(item for item in self.roots if item.key == root_key)
                 current = {**current, "sha256": self._sha256(root.path / relative)}
-            changes.append({"path": path, "before": before, "after": current})
+            change = {"path": path, "target_uri": f"workspace://{path}",
+                      "before": before, "after": current,
+                      "operation": "delete" if current is None else "create" if before is None else "update",
+                      "before_sha256": (before or {}).get("sha256"),
+                      "after_sha256": (current or {}).get("sha256"),
+                      "lines_added": None, "lines_deleted": None, "diff_ref": None}
+            if (current or before or {}).get("kind") == "file":
+                root_key, relative = path.split("/", 1)
+                root = next(item for item in self.roots if item.key == root_key)
+                backup = self.protected_backup_root / root_key / relative
+                target = root.path / relative
+                sensitive = Path(relative).name in {".env", "auth.json", "credentials.json"} or Path(relative).suffix in {".pem", ".key"}
+                old = backup.read_bytes() if backup.is_file() else b"" if before is None else None
+                new = target.read_bytes() if target.is_file() else b"" if current is None else None
+                if not sensitive and old is not None and new is not None and max(len(old), len(new)) <= 2 * 1024 * 1024:
+                    try:
+                        if b"\x00" in old or b"\x00" in new:
+                            raise UnicodeError("binary")
+                        old_lines, new_lines = old.decode("utf-8").splitlines(True), new.decode("utf-8").splitlines(True)
+                        patch = "".join(difflib.unified_diff(old_lines, new_lines, fromfile=f"a/{path}", tofile=f"b/{path}"))
+                        diff_path = self.root / "diffs" / (hashlib.sha256(path.encode()).hexdigest()[:24] + ".patch")
+                        diff_path.parent.mkdir(parents=True, exist_ok=True)
+                        diff_path.write_text(patch, encoding="utf-8")
+                        change["diff_ref"] = {"uri": f"vault://{self.vault_root.name}/{diff_path.relative_to(self.vault_root).as_posix()}",
+                                              "sha256": hashlib.sha256(diff_path.read_bytes()).hexdigest()}
+                        matcher = difflib.SequenceMatcher(a=old_lines, b=new_lines, autojunk=False)
+                        operations = matcher.get_opcodes()
+                        change["lines_added"] = sum(j2-j1 for tag, i1, i2, j1, j2 in operations if tag in {"replace", "insert"})
+                        change["lines_deleted"] = sum(i2-i1 for tag, i1, i2, j1, j2 in operations if tag in {"replace", "delete"})
+                    except UnicodeError:
+                        pass
+            changes.append(change)
         payload = {
             "schema_version": "file-effects.v1",
             "run_id": self.run_id,
@@ -182,6 +224,7 @@ class FileEffectRecorder:
         target.write_text(json.dumps(payload, sort_keys=True, indent=2), encoding="utf-8")
         return {
             "uri": f"vault://{self.vault_root.name}/{target.relative_to(self.vault_root).as_posix()}",
+            "changes": [item for item in changes if (item["after"] or item["before"]).get("kind") == "file"],
             "changed_file_count": sum(
                 1 for item in changes
                 if (item["after"] or item["before"]).get("kind") != "directory"

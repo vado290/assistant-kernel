@@ -1,7 +1,10 @@
 from __future__ import annotations
+from assistant_kernel.services.kernel_management import management_route
+from assistant_kernel.services.agent_files import unbound_route
 
 import asyncio
 import contextlib
+import io
 import json
 import logging
 import math
@@ -28,6 +31,7 @@ from assistant_kernel.services.channel_health import (
 from assistant_kernel.services.project_credentials import ProjectCredentialsStore
 from assistant_kernel.services.discord_interfaces import DiscordInterfaceRegistry
 from assistant_kernel.services.reconciliation import ReconciliationService
+from assistant_kernel.services.questionnaire import is_questionnaire, render_questionnaire
 from assistant_kernel.services.feishu import (
     _handle_slash_command,
     _resolve_project_pm,
@@ -102,6 +106,8 @@ def kernel_ui_text(value: str) -> str:
 
 
 def render_discord_text(message: dict[str, Any]) -> str:
+    if is_questionnaire(dict(message.get("content_json") or {})):
+        return render_questionnaire(message["content_json"])
     text = render_text(message)
     content = dict(message.get("content_json") or {})
     is_kernel = bool(
@@ -240,10 +246,11 @@ async def _start_supervisor_consultation(
     user_id: str | None, external_event_id: str, external_message_id: str,
     text: str, trigger: str,
     reply_to_message_id: str | None = None, task_id: str | None = None,
+    consultation_id: str | None = None,
 ) -> dict[str, Any]:
     """v6.1: queue a Supervisor consultation Run instead of an inline call."""
     agent_key = f"project:{project_id}:supervisor"
-    if task_id is None:
+    if task_id is None and consultation_id is None:
         current = await repository.current_project_task(project_id)
         task_id = str(current["run_id"]) if current is not None else ""
     recorded = await repository.ingest_message(
@@ -264,37 +271,20 @@ async def _start_supervisor_consultation(
             "message": recorded["message"], "run": None, "outbound": None,
             "duplicate": True,
         }
-    if not task_id:
-        outbound = await repository.create_outbound(
-            project_id=project_id, session_id=None, run_id=None,
-            channel=channel, chat_id=chat_id, user_id=user_id,
-            message_type="reply",
-            content={
-                "text": (
-                    "当前Project没有进行中的Task。请先在PM频道发起或继续任务，"
-                    "Supervisor才能基于Task状态给出建议。"
-                ),
-                "origin": "kernel", "context_visibility": "ui_only",
-            },
-            reply_to_message_id=str(recorded["message"]["message_id"]),
-            idempotency_key=f"supervisor-no-task:discord:{external_event_id}",
-        )
-        return {
-            "message": recorded["message"], "run": None, "outbound": outbound,
-            "duplicate": bool(recorded["duplicate"]),
-        }
+    consultation_id = None if task_id else consultation_id or f"consult-{recorded['message']['message_id']}"
     source_context_epoch = await repository.advance_supervisor_context_epoch(
         task_id,
         reason="new_supervisor_message",
         source_id=str(recorded["message"]["message_id"]),
-    )
+    ) if task_id else 0
     run = await repository.create_run(
         project_id=project_id, agent_key=agent_key, run_type="chat",
         trigger_message_id=str(recorded["message"]["message_id"]),
         request={
             "interaction_kind": "supervisor_consultation",
             "schema_version": "supervisor-consultation.v3",
-            "task_id": task_id, "trigger": trigger, "turn_number": 0,
+            "task_id": task_id or None, "consultation_id": consultation_id,
+            "read_only_consultation": not bool(task_id), "trigger": trigger, "turn_number": 0,
             "source_context_epoch": int(source_context_epoch),
             "source_turn_number": 0,
             "turn_handoff_ref": None,
@@ -317,7 +307,8 @@ async def _start_supervisor_consultation(
         channel=channel, chat_id=chat_id, user_id=user_id,
         message_type="reply",
         content={
-            "text": "已收到，Supervisor正在基于当前Task状态评估，稍后更新状态卡。",
+            "text": "已收到，Supervisor正在评估当前项目；本次为只读咨询。" if not task_id else
+                    "已收到，Supervisor正在基于当前Task状态评估，稍后更新状态卡。",
             "origin": "kernel", "context_visibility": "ui_only",
         },
         reply_to_message_id=str(recorded["message"]["message_id"]),
@@ -394,6 +385,39 @@ async def ingest_discord_event(
             ).fetchone()
         if original is None:
             raise ValueError("the replied Discord message is not a known outbound message")
+        from assistant_kernel.services.question_groups import QuestionGroupService, projection_ref
+        if projection_ref(original.get('content_json') or {}):
+            result=await QuestionGroupService(settings,repository).record_text(
+                projection={**original,'channel':'discord'},channel='discord',chat_id=channel_id,
+                user_id=user_id,external_event_id=_external_event_id(config,event_id),text=text)
+            await repository.create_outbound(project_id=str(original['project_id']),session_id=original['session_id'],
+                run_id=str(original['run_id']),channel='discord',chat_id=channel_id,user_id=user_id,
+                message_type='kernel_notice',content={'text':'输入已保存，交由 Supervisor 澄清问题对应关系。' if result.get('unmapped') else
+                    '正式答案已保存；更正与其他要求保留原文，下一轮 Prompt 仍需单独确认。',
+                    'context_visibility':'ui_only','origin':'kernel'},reply_to_message_id=None,
+                idempotency_key='question-text-receipt:'+event_id)
+            return {'message':result['message'],'run':None,'duplicate':result['duplicate'],
+                'partial_answer':True,'resumed':False}
+        if is_questionnaire(dict(original.get("content_json") or {})):
+            result = await repository.record_questionnaire_action(
+                message_id=str(original["message_id"]), project_id=str(original["project_id"]),
+                channel="discord", chat_id=channel_id, user_id=user_id,
+                external_event_id=_external_event_id(config, event_id),
+                revision=-1, page=-1, action="reply", value=text,
+            )
+            await repository.create_outbound(
+                project_id=str(original["project_id"]), session_id=original["session_id"],
+                run_id=str(original["run_id"]), channel="discord", chat_id=channel_id,
+                user_id=user_id, message_type="kernel_notice",
+                content={
+                    "text": "答案草稿已保存，请刷新原卡片后继续或提交全部答案。",
+                    "origin": "kernel", "context_visibility": "ui_only",
+                },
+                reply_to_message_id=None,
+                idempotency_key=f"questionnaire-draft-receipt:{event_id}",
+            )
+            return {"message": result["message"], "run": None, "duplicate": result["duplicate"],
+                    "partial_answer": True, "resumed": False}
         if original["message_type"] in {"question", "approval"}:
             reply_to_message_id = str(original["message_id"])
             message_type = "answer"
@@ -406,6 +430,11 @@ async def ingest_discord_event(
             # instead of routing to the PM chat.
             reply_to_message_id = str(original["message_id"])
             message_type = "supervisor_reply"
+        elif (original.get("content_json") or {}).get("consultation_id") and str(
+            original.get("agent_key") or ""
+        ).endswith(":supervisor"):
+            reply_to_message_id = str(original["message_id"])
+            message_type = "supervisor_consultation_reply"
 
     if original is not None:
         project_id = str(original["project_id"])
@@ -423,7 +452,7 @@ async def ingest_discord_event(
                     "project_id": interface_project,
                     "agent_key": (
                         f"project:{interface_project}:{interface_role}"
-                        if interface_role in {"supervisor", "operator"}
+                        if interface_role in {"supervisor"}
                         else f"project:{interface_project}:manager"
                     ),
                     "interface_role": interface_role,
@@ -435,7 +464,7 @@ async def ingest_discord_event(
                     await repository.resolve_chat_project_binding("discord", binding_chat_id)
                 )
             if group_binding is None:
-                project_id, agent_key = "system", "system-butler"
+                project_id, agent_key = unbound_route(settings)
             elif project_interface is not None:
                 project_id = str(group_binding["project_id"])
                 agent_key = str(group_binding["agent_key"])
@@ -444,7 +473,7 @@ async def ingest_discord_event(
                 try:
                     _, target = _resolve_project_pm(settings, repository, project_id)
                 except (KeyError, PermissionError, ValueError):
-                    project_id, agent_key = "system", "system-butler"
+                    project_id, agent_key = unbound_route(settings)
                     group_binding = None
                 else:
                     agent_key = target.agent_key
@@ -458,19 +487,30 @@ async def ingest_discord_event(
                 "discord", channel_id, user_id,
             )
 
+    if original is None:
+        project_id, agent_key = management_route(settings.data_root, (project_id, agent_key))
+
+    from assistant_kernel.services.kernel_management import retired_identity
+    if retired_identity(project_id, agent_key):
+        project_id, agent_key = "kernel", "project:kernel:manager"
+        original = None
+        message_type = "text"
+        if slash_candidate is None or slash_candidate[0] not in {"/bind_project", "/unbind_project", "/binding", "/help"}:
+            slash_candidate = ("/butler", None)
+
     external_event_id = _external_event_id(config, event_id)
     if archived and (
         slash_candidate is None
         or slash_candidate[0] not in {"/help", "/binding", "/whoami"}
     ):
         recorded = await repository.record_channel_command(
-            project_id="system", agent_key="system-butler", channel="discord",
+            project_id="kernel", agent_key="project:kernel:manager", channel="discord",
             chat_id=channel_id, user_id=user_id, external_event_id=external_event_id,
             external_message_id=external_message_id,
             content={"text": text, "reason": "archived_channel", "raw": payload},
         )
         outbound = await repository.create_outbound(
-            project_id="system", session_id=None, run_id=None, channel="discord",
+            project_id="kernel", session_id=None, run_id=None, channel="discord",
             chat_id=channel_id, user_id=user_id, message_type="reply",
             content={
                 "text": "该频道已归档，只能查看历史；请在 chief-of-staff 或新的 Project 频道继续。",
@@ -483,6 +523,14 @@ async def ingest_discord_event(
             "message": recorded["message"], "run": None, "outbound": outbound,
             "duplicate": bool(recorded["duplicate"]), "archived_channel": True,
         }
+    if message_type == "supervisor_consultation_reply" and original is not None and slash_candidate is None:
+        return await _start_supervisor_consultation(
+            settings=settings, repository=repository, project_id=project_id, channel="discord",
+            chat_id=channel_id, user_id=user_id, external_event_id=external_event_id,
+            external_message_id=external_message_id, text=text, trigger="user_consultation",
+            reply_to_message_id=reply_to_message_id,
+            consultation_id=str((original["content_json"] or {}).get("consultation_id")),
+        )
     if (
         message_type == "supervisor_reply"
         and original is not None
@@ -534,24 +582,25 @@ async def ingest_discord_event(
             allow_chat_binding=user_id in set(config.get("owner_user_ids") or set()),
             binding_chat_id=binding_chat_id,
             binding_inherited=is_thread,
+            interface_binding=group_binding if project_interface is not None else None,
             binding_block_reason=(
-                "Chief of Staff频道固定连接大管家，不能绑定Project。"
-                if not is_thread and channel_id == config.get("home_channel_id")
-                else None
+                "该频道是已登记的 Project Supervisor 入口，不能用普通绑定命令改变归属。"
+                if project_interface is not None else
+                None
             ),
         )
 
     is_home_conversation = binding_chat_id == config.get("home_channel_id")
     if chat_type == "group" and group_binding is None and original is None and not is_home_conversation:
         recorded = await repository.record_channel_command(
-            project_id="system", agent_key="system-butler", channel="discord",
+            project_id="kernel", agent_key="project:kernel:manager", channel="discord",
             chat_id=channel_id, user_id=user_id, external_event_id=external_event_id,
             external_message_id=external_message_id,
             content={"text": text, "reason": "unbound_channel", "raw": payload},
         )
         target = "父频道" if is_thread else "当前频道"
         outbound = await repository.create_outbound(
-            project_id="system", session_id=None, run_id=None, channel="discord",
+            project_id="kernel", session_id=None, run_id=None, channel="discord",
             chat_id=channel_id, user_id=user_id, message_type="reply",
             content={
                 "text": f"{target}尚未绑定Project。请在顶层频道发送 /bind_project <project-id>。",
@@ -609,8 +658,7 @@ async def ingest_discord_event(
         run
         and str(run.get("run_type") or "") == "chat"
         and (
-            str(run.get("agent_key") or "") == "system-butler"
-            or str(run.get("agent_key") or "").endswith(":manager")
+            str(run.get("agent_key") or "").endswith(":manager")
         )
     )
     superseded = [str(item) for item in result.get("superseded_run_ids") or []]
@@ -643,7 +691,7 @@ async def ingest_discord_event(
                     "text": (
                         f"工程执行平面当前为 {status}（{stage}，"
                         f"Run {str(blocker['run_id'])[:8]}）。"
-                        "PM 对话仍会继续；新的工程执行会保持串行，不会绕过异常任务。"
+                        "同一工程主线会等待该任务；独立脚本和运行任务仍可并行。"
                     ),
                     "origin": "kernel", "context_visibility": "ui_only",
                     "blocking_run_id": str(blocker["run_id"]),
@@ -672,6 +720,84 @@ def split_discord_text(text: str, limit: int = 1900) -> list[str]:
         value = value[cut:].lstrip()
     chunks.append(value)
     return chunks
+
+
+class KernelQuestionnaireModal(discord.ui.Modal):
+    def __init__(
+        self, client: "KernelDiscordClient", message: dict[str, Any], *,
+        revision: int, page: int, additional: bool,
+    ) -> None:
+        super().__init__(title="补充说明" if additional else "自由填写答案", timeout=900)
+        self.kernel_client = client
+        self.kernel_message = message
+        self.revision, self.page = revision, page
+        self.action = "additional" if additional else "text"
+        body = message["content_json"]
+        state = body["questionnaire"]
+        default = state.get("additional_text", "") if additional else (
+            state.get("answers", {}).get(body["questions"][page]["question_id"], "")
+        )
+        self.answer = discord.ui.TextInput(
+            custom_id="answer", style=discord.TextStyle.paragraph,
+            required=not additional, max_length=4000, default=str(default),
+        )
+        self.add_item(discord.ui.Label(
+            text="补充要求或其他说明（可选）" if additional else "自己的答案",
+            component=self.answer,
+        ))
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await self.kernel_client.handle_questionnaire_component(
+            interaction, str(self.kernel_message["message_id"]),
+            f"q:{self.revision}:{self.page}:{self.action}",
+            str(self.answer.value), self.kernel_message,
+        )
+
+
+def build_questionnaire_view(
+    message: dict[str, Any], client: discord.Client,
+) -> discord.ui.View | None:
+    body = message["content_json"]
+    state = body["questionnaire"]
+    if state.get("status") != "draft":
+        return None
+    page, revision = int(state["cursor"]), int(state["revision"])
+    questions = body["questions"]
+    message_id = str(message["message_id"])
+    view = discord.ui.View(timeout=None)
+
+    def button(label: str, verb: str, *, row: int, disabled: bool = False, selected: bool = False):
+        action = f"q:{revision}:{page}:{verb}"
+        item = discord.ui.Button(
+            label=label[:80], row=row, disabled=disabled,
+            style=discord.ButtonStyle.success if selected else discord.ButtonStyle.secondary,
+            custom_id=f"ak:v1:{message_id}:{action}",
+        )
+
+        async def callback(interaction: discord.Interaction) -> None:
+            await client.handle_kernel_component(  # type: ignore[attr-defined]
+                interaction, message_id, action, None, message,
+            )
+
+        item.callback = callback
+        view.add_item(item)
+
+    if page < len(questions):
+        question = questions[page]
+        for index, option in enumerate(question.get("options") or []):
+            recommended = "（推荐）" if option["id"] == question.get("recommended_option_id") else ""
+            label = str(option["label"])
+            button(label[:80 - len(recommended)] + recommended, f"choice:{index}", row=0,
+                   selected=state.get("choices", {}).get(question["question_id"]) == option["id"])
+        button("其他 / 自由填写", "write", row=0)
+        button("上一问", "previous", row=1, disabled=page == 0)
+        button("下一问" if page + 1 < len(questions) else "查看并提交", "next", row=1)
+    else:
+        button("返回修改", "previous", row=0)
+        button("自由补充说明", "supplement", row=0)
+        button("提交全部答案", "submit", row=0)
+    button("刷新", "refresh", row=1)
+    return view
 
 
 class KernelCredentialModal(discord.ui.Modal):
@@ -706,6 +832,8 @@ def build_discord_view(
     if not hasattr(client, "handle_kernel_component"):
         return None
     content = dict(message.get("content_json") or {})
+    if is_questionnaire(content):
+        return build_questionnaire_view(message, client)
     message_id = str(message.get("message_id") or "")
     message_type = str(message.get("message_type") or "")
     view = discord.ui.View(timeout=None)
@@ -732,6 +860,14 @@ def build_discord_view(
         add_button("Request changes", discord.ButtonStyle.secondary, "revise")
         add_button("Reject", discord.ButtonStyle.danger, "reject")
         return view
+
+    if content.get('interaction_kind')=='prompt_confirmation':
+        opened=content.get('action_status')=='open'
+        digest=str((content.get('package_ref') or {}).get('sha256') or '')[:12]
+        for item in content.get('actions') or []:
+            add_button(str(item['label']),discord.ButtonStyle.success if item['id']=='confirm' else discord.ButtonStyle.secondary,
+                'prompt:'+str(item['id'])+':'+digest,disabled=not opened)
+        return view if view.children else None
 
     if content.get("interaction_kind") == "reconcile_run":
         styles = {
@@ -769,6 +905,14 @@ def build_discord_view(
             )
         return view if view.children else None
 
+    if content.get("interaction_kind") == "supervision_recovery":
+        for item in content.get("actions") or []:
+            if isinstance(item, dict) and item.get("id") in {"retry", "wait", "cancel"}:
+                add_button(str(item.get("label") or item["id"]), discord.ButtonStyle.secondary,
+                           "supervision-recovery:" + str(item["id"]),
+                           disabled=bool(item.get("disabled")) or content.get("action_status", "waiting") != "waiting")
+        return view if view.children else None
+
     if message_type == "question":
         input_schema = dict(content.get("input_schema") or {})
         fields = [
@@ -784,8 +928,9 @@ def build_discord_view(
         ]
         if 2 <= len(options) <= 3 and all(item.get("id") and item.get("label") for item in options):
             for option in options:
+                recommended = "（推荐）" if option["id"] == content.get("recommended_option_id") else ""
                 add_button(
-                    str(option["label"]), discord.ButtonStyle.primary,
+                    str(option["label"])[:80 - len(recommended)] + recommended, discord.ButtonStyle.primary,
                     "choice:" + str(option["id"]),
                 )
             return view
@@ -843,10 +988,11 @@ class DiscordSender:
         if not hasattr(channel, "send"):
             raise RuntimeError("Discord destination is not messageable")
 
-        text = render_discord_text(message)
+        content = dict(message.get('content_json') or {})
+        display_message = {**message,'message_id':content['target_message_id']} if content.get('target_message_id') else message
+        text = render_discord_text(display_message)
         chunks = split_discord_text(text)
-        view = build_discord_view(message, self.client)
-        content = dict(message.get("content_json") or {})
+        view = build_discord_view(display_message, self.client)
         update_external_id = str(content.get("update_external_message_id") or "")
         if content.get("interaction_kind") == "supervisor_status" and not content.get(
             "ui_update_only"
@@ -868,7 +1014,10 @@ class DiscordSender:
                 if accepted:
                     return
             except (ValueError, discord.HTTPException, discord.NotFound):
+                if content.get('target_message_id'): raise
                 pass
+        if content.get('target_message_id'):
+            raise RuntimeError('Question projection edit could not be delivered; retain the Outbox retry')
         reply_external_id = await self.repository.delivery_reply_external_id(
             str(message["message_id"])
         )
@@ -884,6 +1033,12 @@ class DiscordSender:
                 kwargs.update({"reference": reference, "mention_author": False})
             if index == 0 and view is not None:
                 kwargs["view"] = view
+            document_markdown = content.get("document_markdown") or content.get("report_markdown")
+            if index == 0 and isinstance(document_markdown, str) and document_markdown:
+                kwargs["file"] = discord.File(
+                    io.BytesIO(document_markdown.encode("utf-8")),
+                    filename=f"artifact-{message['message_id']}.md",
+                )
             try:
                 sent = await channel.send(chunk, **kwargs)
             except discord.HTTPException:
@@ -891,6 +1046,9 @@ class DiscordSender:
                     raise
                 kwargs.pop("reference", None)
                 kwargs.pop("mention_author", None)
+                if "file" in kwargs:
+                    kwargs["file"] = discord.File(io.BytesIO(document_markdown.encode("utf-8")),
+                        filename=f"artifact-{message['message_id']}.md")
                 sent = await channel.send(chunk, **kwargs)
             sent_ids.append(str(sent.id))
         accepted = await self.repository.acknowledge_delivery(
@@ -1115,9 +1273,6 @@ class KernelDiscordClient(discord.Client):
         async def pm_command(interaction: discord.Interaction) -> None:
             await dispatch(interaction, "pm")
 
-        async def butler_command(interaction: discord.Interaction) -> None:
-            await dispatch(interaction, "butler")
-
         commands = (
             (new_command, "new", "开始新的 Kernel 对话"),
             (goal_command, "goal", "查看或更新当前对话目标"),
@@ -1136,7 +1291,6 @@ class KernelDiscordClient(discord.Client):
             (whoami_command, "whoami", "查看当前 Project 和 Agent"),
             (help_command, "help", "查看可用指令"),
             (pm_command, "pm", "进入当前 Project Manager"),
-            (butler_command, "butler", "返回超级助理大管家"),
         )
         for callback, name, description in commands:
             self.tree.command(name=name, description=description)(callback)
@@ -1176,11 +1330,131 @@ class KernelDiscordClient(discord.Client):
             raise PermissionError("component external message differs")
         return message
 
+    async def _refresh_questionnaire_card(
+        self, interaction: discord.Interaction, message_id: str,
+    ) -> None:
+        current = await self._component_message(interaction, message_id)
+        if not is_questionnaire(dict(current.get("content_json") or {})):
+            raise ValueError("not a questionnaire")
+        view = build_discord_view(current, self)
+        text = render_discord_text(current)
+        if view is not None:
+            try:
+                await self.repository.validate_current_waiting_message(
+                    message_id=message_id, project_id=str(current["project_id"]),
+                    channel="discord", chat_id=str(current["chat_id"]),
+                    user_id=str(interaction.user.id),
+                )
+            except PermissionError:
+                view = None
+                text = "这组问题已失效，请使用当前卡片或 /resume 恢复待答任务。"
+        target = interaction.message
+        if target is None and interaction.channel is not None:
+            external_id = str(current.get("external_message_id") or "")
+            if external_id.isdigit() and hasattr(interaction.channel, "get_partial_message"):
+                target = interaction.channel.get_partial_message(int(external_id))
+        if target is not None:
+            await target.edit(
+                content=text, view=view,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+
+    async def handle_questionnaire_component(
+        self, interaction: discord.Interaction, message_id: str, action: str,
+        value: str | None, message_snapshot: dict[str, Any] | None = None,
+    ) -> None:
+        """Navigation and modals share durable state; they never create an LLM Run."""
+        try:
+            parts = action.split(":")
+            if len(parts) not in {4, 5} or parts[0] != "q":
+                raise ValueError("invalid questionnaire action")
+            revision, page, verb = int(parts[1]), int(parts[2]), parts[3]
+            if verb == "choice":
+                if len(parts) != 5:
+                    raise ValueError("invalid questionnaire choice")
+                value = parts[4]
+            elif len(parts) != 4:
+                raise ValueError("invalid questionnaire action")
+            if verb in {"write", "supplement"}:
+                # No database wait before the modal acknowledgement deadline.
+                snapshot = dict(message_snapshot or {})
+                if (
+                    str(snapshot.get("message_id")) != message_id
+                    or str(snapshot.get("chat_id")) != str(interaction.channel_id)
+                    or str(snapshot.get("user_id")) != str(interaction.user.id)
+                ):
+                    raise PermissionError("form belongs to another user or conversation")
+                body = snapshot.get("content_json") or {}
+                state = body.get("questionnaire") or {}
+                if (
+                    not is_questionnaire(body) or state.get("status") != "draft"
+                    or int(state.get("revision", -1)) != revision
+                    or int(state.get("cursor", -1)) != page
+                    or (verb == "supplement") != (page == len(body["questions"]))
+                ):
+                    raise ValueError("form is no longer current")
+                await interaction.response.send_modal(KernelQuestionnaireModal(
+                    self, snapshot, revision=revision, page=page,
+                    additional=verb == "supplement",
+                ))
+                return
+            ack = await self._ack_interaction(interaction)
+            if ack.status != "ok":
+                await self._queue_component_retry_notice(interaction, message_id)
+                return
+            current = await self._component_message(interaction, message_id)
+            if verb != "refresh":
+                for attempt, delay in enumerate(DISCORD_INGRESS_RETRY_DELAYS, start=1):
+                    if delay:
+                        await asyncio.sleep(delay)
+                    try:
+                        result = await self.repository.record_questionnaire_action(
+                            message_id=message_id, project_id=str(current["project_id"]),
+                            channel="discord", chat_id=str(current["chat_id"]),
+                            user_id=str(interaction.user.id),
+                            external_event_id=_external_event_id(self.config, str(interaction.id)),
+                            revision=revision, page=page, action=verb, value=value,
+                        )
+                        break
+                    except (OperationalError, InterfaceError, PoolTimeout, OSError, asyncio.TimeoutError):
+                        if attempt == len(DISCORD_INGRESS_RETRY_DELAYS):
+                            raise
+                self.health.update(last_ingress_commit_at=now_iso(), last_ingress_error_type=None)
+                if result.get('accepted_into_supervision'):
+                    with contextlib.suppress(discord.HTTPException,aiohttp.ClientError):
+                        await interaction.followup.send('正式答案已保存，交由 Supervisor 评估；下一轮具体执行包仍需确认。',ephemeral=True)
+                if result.get("resumed"):
+                    with contextlib.suppress(discord.HTTPException, aiohttp.ClientError):
+                        await interaction.followup.send("答案已提交，任务将继续处理。", ephemeral=True)
+            await self._refresh_questionnaire_card(interaction, message_id)
+        except (PermissionError, ValueError) as exc:
+            # Reject stale pages without removing a valid current questionnaire.
+            with contextlib.suppress(Exception):
+                await self._refresh_questionnaire_card(interaction, message_id)
+            with contextlib.suppress(discord.HTTPException, aiohttp.ClientError):
+                if interaction.response.is_done():
+                    await interaction.followup.send(str(exc), ephemeral=True)
+                else:
+                    await interaction.response.send_message(str(exc), ephemeral=True)
+        except Exception:
+            logging.exception("Discord questionnaire interaction failed")
+            with contextlib.suppress(discord.HTTPException, aiohttp.ClientError):
+                text = "卡片暂时无法更新。已保存的答案不会丢失，可点击刷新后重试。"
+                if interaction.response.is_done():
+                    await interaction.followup.send(text, ephemeral=True)
+                else:
+                    await interaction.response.send_message(text, ephemeral=True)
+
     async def handle_kernel_component(
         self, interaction: discord.Interaction, message_id: str,
         action: str, value: str | None,
         message_snapshot: dict[str, Any] | None = None,
     ) -> None:
+        if action.startswith("q:"):
+            await self.handle_questionnaire_component(
+                interaction, message_id, action, value, message_snapshot,
+            )
+            return
         try:
             if action == "credential":
                 message = dict(message_snapshot or {})
@@ -1224,7 +1498,19 @@ class KernelDiscordClient(discord.Client):
                 await self._queue_component_retry_notice(interaction, message_id)
                 return
             message = await self._component_message(interaction, message_id)
-            if action.startswith("reconcile:"):
+            if action.startswith('prompt:'):
+                from assistant_kernel.services.prompt_protocol import PromptProtocol
+                parts=action.split(':');body=message['content_json'];package=body.get('package_ref') or {}
+                if len(parts)!=3 or parts[2]!=str(package.get('sha256') or '')[:12]:
+                    raise ValueError('Prompt action refers to a different package version')
+                result=await PromptProtocol(self.settings,self.repository).record_confirmation(
+                    display_message_id=message_id,project_id=str(message['project_id']),channel='discord',
+                    chat_id=str(interaction.channel_id),user_id=str(interaction.user.id),
+                    external_event_id=_external_event_id(self.config,str(interaction.id)),
+                    action=parts[1],expected_package_sha256=package['sha256'])
+                response='已确认这份执行包，等待 PM 领取。' if result.get('confirmation_ref') else '已记录，当前执行包不会派发。'
+                if interaction.message is not None: await interaction.message.edit(view=None)
+            elif action.startswith("reconcile:"):
                 selected_action = action.split(":", 1)[1]
                 result = await self.reconciliations.resolve_card(
                     card_message_id=message_id,
@@ -1236,6 +1522,13 @@ class KernelDiscordClient(discord.Client):
                     f"Reconciliation action `{result['action']}` recorded; "
                     f"Run status is `{result['status']}`."
                 )
+            elif action.startswith("supervision-recovery:"):
+                result = await self.repository.record_supervision_recovery(
+                    card_message_id=message_id,
+                    external_event_id=_external_event_id(self.config, str(interaction.id)),
+                    actor_user_id=str(interaction.user.id), action=action.split(":", 1)[1],
+                )
+                response = f"监督恢复动作已记录：{result.get('action') or action.split(':', 1)[1]}。"
             elif action.startswith("supervisor:"):
                 selected_action = action.split(":", 1)[1]
                 if selected_action in {"continue", "reject"}:
@@ -1540,7 +1833,8 @@ async def discord_health_pulse(client: KernelDiscordClient) -> None:
 
 
 async def discord_worker_loop() -> None:
-    settings = KernelSettings.from_environment()
+    from assistant_kernel.services.config_consumers import startup_settings
+    settings = startup_settings(KernelSettings.from_environment(),'discord')
     health = ChannelHealthReporter(settings, "discord")
     while True:
         config = load_discord_config(settings)

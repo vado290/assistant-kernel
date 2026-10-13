@@ -1,0 +1,255 @@
+{
+  "document_selectors": {
+    "activation-report.v1": "Activation",
+    "config-apply-receipt.v1": "ConfigApplyReceipt",
+    "context-manifest.v1": "V12_Active_ContextManifest",
+    "decision-record.v1": "Decision",
+    "delegation-record.v1": "Delegation",
+    "development-environment.v1": "DevelopmentEnvironment",
+    "external-directory-assessment.v1": "ExternalDirectoryAssessment",
+    "handoff.v1": "Handoff",
+    "implementation-report.v1": "V12_Active_Implementation",
+    "improvement-candidate.v1": "Candidate",
+    "improvement-proposal.v1": "Proposal",
+    "kernel-notification.v1": "Notification",
+    "kernel-schedule-definition.v1": "KernelScheduleDefinition",
+    "kernel-system-config.v1": "SystemConfig",
+    "operation-effect-comparison.v1": "EffectComparison",
+    "operation-monitor-policy.v1": "MonitorPolicy",
+    "operation-observation.v1": "Observation",
+    "operation-report.v1": "Active_Operation",
+    "operational-baseline.v1": "Baseline",
+    "project-contract.v1": "ProjectContract",
+    "project-snapshot.v1": "Snapshot",
+    "prompt-proposal.v1": "PromptProposal",
+    "public-background.v1": "PublicBackground",
+    "publication-receipt.v1": "Publication",
+    "python-execution-settlement.v1": "ExecutionSettlement",
+    "python-run-binding.v1": "V12_RunBinding",
+    "python-script-manifest.v1": "V12_PythonManifest",
+    "python-service-manifest.v1": "V12_ServiceManifest",
+    "resolved-system-config.v1": "ResolvedConfigSnapshot",
+    "review-report.v1": "Active_Review",
+    "runtime-assembly-receipt.v1": "V12_RuntimeAssemblyReceipt",
+    "runtime-budget-snapshot.v1": "RuntimeBudgetSnapshot",
+    "runtime-control-receipt.v1": "V12_RuntimeControlReceipt",
+    "runtime-unit-definition.v1": "V12_RuntimeProgramDefinition",
+    "runtime-unit-registration.v1": "V12_RuntimeUnitRegistration",
+    "schedule-control-receipt.v1": "ScheduleControlReceipt",
+    "schedule-tick.v1": "ScheduleTick",
+    "script-failure-notice.v1": "ScriptFailureNotice",
+    "service-instance.v1": "V12_ServiceInstance",
+    "session-boundary-receipt.v1": "SessionBoundaryReceipt",
+    "solution-design.v1": "V12_Active_Design",
+    "supervisor-action-plan.v1": "Active_ActionPlan",
+    "supervisor-brief.v1": "Snapshot",
+    "task-contract.v1": "V12_Active_Contract",
+    "turn-record.v1": "TurnRecord",
+    "user-background.v1": "UserBackground"
+  },
+  "implementation_revision": 10,
+  "internal_interfaces": {
+    "apply_runtime_control": "V12_RuntimeControlReceipt",
+    "assemble_business_runtime": "V12_RuntimeAssemblyReceipt",
+    "commit_session_boundary": "SessionBoundaryReceipt",
+    "dispatch_pm_turn": "TurnAdmission",
+    "prepare_pm_prompt": "PromptPreparation",
+    "reconcile_service_instance": "V12_ServiceInstance",
+    "record_prompt_confirmation": "ConfirmationReceipt",
+    "reserve_runtime_capacity": "RuntimeCapacityReceipt",
+    "settle_pm_turn": "TurnSettlement",
+    "settle_runtime_capacity": "RuntimeCapacityReceipt"
+  },
+  "protocol_revision": "1.2",
+  "public_interfaces": {
+    "assess_external_directory": {
+      "request": "Args_assess_external_directory",
+      "response": "Returns_assess_external_directory"
+    },
+    "control_runtime_unit": {
+      "request": "V12_Args_control_runtime_unit",
+      "response": "V12_Returns_control_runtime_unit"
+    },
+    "control_schedule": {
+      "request": "Args_control_schedule",
+      "response": "ScheduleControlReceipt"
+    },
+    "current_conversation_route": {
+      "request": "Args_current_conversation_route",
+      "response": "Returns_current_conversation_route"
+    },
+    "delete_candidate_file": {
+      "request": "Args_delete_candidate_file",
+      "response": "Returns_delete_candidate_file"
+    },
+    "get_authorized_workspace": {
+      "request": "Args_get_authorized_workspace",
+      "response": "Returns_get_authorized_workspace"
+    },
+    "get_project_map": {
+      "request": "Args_get_project_map",
+      "response": "Returns_get_project_map"
+    },
+    "get_system_config": {
+      "request": "Args_get_system_config",
+      "response": "Returns_get_system_config"
+    },
+    "list_authorized_tree": {
+      "request": "Args_list_authorized_tree",
+      "response": "Returns_list_authorized_tree"
+    },
+    "list_project_changes": {
+      "request": "Args_list_project_changes",
+      "response": "Returns_list_project_changes"
+    },
+    "list_project_credentials": {
+      "request": "Args_list_project_credentials",
+      "response": "Returns_list_project_credentials"
+    },
+    "list_recent_history": {
+      "request": "Args_list_recent_history",
+      "response": "Returns_list_recent_history"
+    },
+    "list_runtime_units": {
+      "request": "Args_list_runtime_units",
+      "response": "V12_Returns_list_runtime_units"
+    },
+    "list_schedule_ticks": {
+      "request": "Args_list_schedule_ticks",
+      "response": "Returns_list_schedule_ticks"
+    },
+    "list_schedules": {
+      "request": "Args_list_schedules",
+      "response": "Returns_list_schedules"
+    },
+    "preview_schedule": {
+      "request": "Args_preview_schedule",
+      "response": "SchedulePreview"
+    },
+    "project_file_ops": {
+      "request": "Args_project_file_ops",
+      "response": "Returns_project_file_ops"
+    },
+    "project_task_status": {
+      "request": "Args_project_task_status",
+      "response": "Returns_project_task_status"
+    },
+    "query_project_map": {
+      "request": "Args_query_project_map",
+      "response": "Returns_query_project_map"
+    },
+    "query_project_operations": {
+      "request": "Args_query_project_operations",
+      "response": "Returns_query_project_operations"
+    },
+    "queue_project_task": {
+      "request": "Args_queue_project_task",
+      "response": "Returns_queue_project_task"
+    },
+    "read_authorized_file": {
+      "request": "Args_read_authorized_file",
+      "response": "Returns_read_authorized_file"
+    },
+    "read_change_diff": {
+      "request": "Args_read_change_diff",
+      "response": "Returns_read_change_diff"
+    },
+    "read_map_component": {
+      "request": "Args_read_map_component",
+      "response": "Returns_read_map_component"
+    },
+    "read_project_document": {
+      "request": "Args_read_project_document",
+      "response": "Returns_read_project_document"
+    },
+    "refresh_project_map": {
+      "request": "Args_refresh_project_map",
+      "response": "Returns_refresh_project_map"
+    },
+    "register_runtime_unit": {
+      "request": "Args_register_runtime_unit",
+      "response": "V12_Returns_register_runtime_unit"
+    },
+    "register_schedule": {
+      "request": "Args_register_schedule",
+      "response": "ScheduleRegistration"
+    },
+    "request_operation_report": {
+      "request": "Args_request_operation_report",
+      "response": "Returns_request_operation_report"
+    },
+    "resolve_runtime_config": {
+      "request": "Args_resolve_runtime_config",
+      "response": "Returns_resolve_runtime_config"
+    },
+    "run_project_action": {
+      "request": "Args_run_project_action",
+      "response": "Returns_run_project_action"
+    },
+    "run_status": {
+      "request": "Args_run_status",
+      "response": "Returns_run_status"
+    },
+    "runtime_unit_status": {
+      "request": "Args_runtime_unit_status",
+      "response": "V12_Returns_runtime_unit_status"
+    },
+    "schedule_status": {
+      "request": "Args_schedule_status",
+      "response": "Returns_schedule_status"
+    },
+    "set_operation_monitor_policy": {
+      "request": "Args_set_operation_monitor_policy",
+      "response": "Returns_set_operation_monitor_policy"
+    },
+    "submit_project_python": {
+      "request": "V12_Active_PythonSubmitRequest",
+      "response": "Returns_submit_project_python"
+    },
+    "write_candidate_file": {
+      "request": "Args_write_candidate_file",
+      "response": "Returns_write_candidate_file"
+    },
+    "write_operation_document": {
+      "request": "Args_write_operation_document",
+      "response": "DocRef"
+    },
+    "write_runtime_document": {
+      "request": "Args_write_runtime_document",
+      "response": "DocRef"
+    }
+  },
+  "write_selectors": {
+    "ActionPlan": "Active_ActionPlan",
+    "AgentResult": "V12_Active_AgentResult",
+    "Capabilities": "V12_Active_Capabilities",
+    "ContextManifest": "V12_Active_ContextManifest",
+    "Contract": "V12_Active_Contract",
+    "Design": "V12_Active_Design",
+    "Document": "V12_Document",
+    "Implementation": "V12_Active_Implementation",
+    "MapIndex": "Active_MapIndex",
+    "Operation": "Active_Operation",
+    "PMPayload": "V12_Active_PMPayload",
+    "PhaseProfile": "V12_Active_PhaseProfile",
+    "PythonResources": "V12_PythonResources",
+    "PythonSubmitRequest": "V12_Active_PythonSubmitRequest",
+    "QuestionGroup": "V12_Active_QuestionGroup",
+    "Review": "Active_Review",
+    "RunBinding": "V12_RunBinding",
+    "RuntimeAssemblyReceipt": "V12_RuntimeAssemblyReceipt",
+    "RuntimeBudgetSnapshot": "RuntimeBudgetSnapshot",
+    "RuntimeContext": "V12_RuntimeContext",
+    "RuntimeControlReceipt": "V12_RuntimeControlReceipt",
+    "RuntimeControlRequest": "V12_RuntimeControlRequest",
+    "RuntimeDesign": "V12_RuntimeDesign",
+    "RuntimeInteractionOwner": "V12_RuntimeInteractionOwner",
+    "RuntimeProgramDefinition": "V12_RuntimeProgramDefinition",
+    "RuntimeRequirement": "V12_RuntimeRequirement",
+    "SchedulingPolicy": "V12_SchedulingPolicy",
+    "ScriptFailureNotice": "ScriptFailureNotice",
+    "ServiceManifest": "V12_ServiceManifest",
+    "SupervisorPayload": "Active_SupervisorPayload",
+    "SystemConfig": "SystemConfig"
+  }
+}

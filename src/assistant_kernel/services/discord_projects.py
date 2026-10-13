@@ -12,6 +12,11 @@ PROJECT_TOPIC_PREFIX = "assistant-kernel-project:"
 INTERFACE_TOPIC_PREFIX = "assistant-kernel-interface:"
 
 
+def topic_has_marker(topic: str | None, marker: str) -> bool:
+    """Project IDs sharing a prefix must never share a channel binding."""
+    return marker in {line.strip() for line in str(topic or '').splitlines()}
+
+
 class DiscordProjectProvisioner:
     """Idempotently materialize one Kernel Project as one Discord text channel."""
 
@@ -110,7 +115,7 @@ class DiscordProjectProvisioner:
         channels = await self._request("GET", f"/guilds/{guild_id}/channels")
         matches = [
             dict(item) for item in (channels or [])
-            if isinstance(item, dict) and marker in str(item.get("topic") or "")
+            if isinstance(item, dict) and topic_has_marker(item.get("topic"), marker)
         ]
         if len(matches) > 1:
             raise RuntimeError(
@@ -205,7 +210,7 @@ class DiscordProjectProvisioner:
         supervisors = [
             dict(item) for item in (channels or [])
             if isinstance(item, dict) and int(item.get("type", -1)) == 0
-            and marker in str(item.get("topic") or "")
+            and topic_has_marker(item.get("topic"), marker)
         ]
         if len(supervisors) > 1:
             raise RuntimeError("multiple Discord Supervisor channels claim this Project")

@@ -12,6 +12,7 @@ from mcp.server.mcpserver import MCPServer
 from pydantic import AnyHttpUrl
 
 from assistant_kernel.config import KernelSettings
+from assistant_kernel.services.config_consumers import effective_providers
 from assistant_kernel.mcp_server.error_protocol import install_error_protocol
 from assistant_kernel.model_providers import CatalogChatProvider, QwenProvider
 from assistant_kernel.repositories import CoreRepository
@@ -140,7 +141,7 @@ async def assistant_embed_texts(
     runtime_manager.ensure(project_id)
     if provider != "dashscope":
         raise NotImplementedError("provider adapter is not implemented")
-    config = settings.load_provider_secrets().providers.get("dashscope")
+    config = effective_providers(settings).providers.get("dashscope")
     if config is None:
         raise RuntimeError("dashscope provider is not configured")
     result = await QwenProvider(config).embed(texts, dimensions)
@@ -159,7 +160,7 @@ async def assistant_rerank(
     runtime_manager.ensure(project_id)
     if provider != "dashscope":
         raise NotImplementedError("provider adapter is not implemented")
-    config = settings.load_provider_secrets().providers.get("dashscope")
+    config = effective_providers(settings).providers.get("dashscope")
     if config is None:
         raise RuntimeError("dashscope provider is not configured")
     result = await QwenProvider(config).rerank(query, documents, top_n)
@@ -185,7 +186,7 @@ def assistant_context_budget(
 @mcp.tool()
 def assistant_model_catalog() -> dict:
     """List configured chat providers and their model aliases without returning secrets."""
-    providers = settings.load_provider_secrets().providers
+    providers = effective_providers(settings).providers
     return {
         name: {
             "enabled": provider.enabled,
@@ -209,7 +210,7 @@ async def assistant_chat(
     """Call one model from the merged callModels catalog and return text plus usage."""
     runtime_manager.ensure(project_id)
     normalized = {"qwen": "dashscope", "doubao": "volcengine"}.get(provider, provider)
-    config = settings.load_provider_secrets().providers.get(normalized)
+    config = effective_providers(settings).providers.get(normalized)
     if config is None:
         raise ValueError("provider is not configured")
     result = await CatalogChatProvider(normalized, config).chat(
@@ -239,7 +240,8 @@ async def assistant_python_submit(
         agent_key=f"project:{project_id}:python",
         run_type="python",
         parent_run_id=parent_run_id,
-        request={"source_uri": source_uri, "args": args or [], "timeout_seconds": timeout_seconds},
+        request={"source_uri": source_uri, "source_sha256":__import__('hashlib').sha256(source.read_bytes()).hexdigest(),
+            "args": args or [], "timeout_seconds": timeout_seconds},
         idempotency_key=f"python:{uuid.uuid4()}",
     )
 
@@ -249,6 +251,13 @@ async def assistant_python_status(execution_id: str) -> dict:
     """Read a durable Python execution record."""
     row = await repository.get_run(execution_id)
     return row or {"execution_id": execution_id, "status": "not_found"}
+
+
+@mcp.tool()
+async def submit_project_python(project_id:str,request:dict)->dict:
+    """Submit the exact approved finite manifest; service programs use their lifecycle adapter."""
+    from assistant_kernel.services.project_python import ProjectPython
+    return await ProjectPython(settings,repository).submit(project_id,request)
 
 
 @mcp.tool()
@@ -303,6 +312,8 @@ def run() -> None:
     parser.add_argument("--transport", choices=("stdio", "streamable-http"), default="stdio")
     args = parser.parse_args()
     if args.transport == "streamable-http":
+        from assistant_kernel.services.config_consumers import startup_settings
+        startup_settings(settings,'mcp')
         mcp.run(
             transport=args.transport,
             host=settings.mcp_host,

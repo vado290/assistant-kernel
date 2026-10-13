@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import yaml
 
+from assistant_kernel import __schema_version__
 from assistant_kernel.config import KernelSettings
 from assistant_kernel.repositories import CoreRepository
 from assistant_kernel.services.agent_files import AgentFileLoader
@@ -17,14 +18,14 @@ async def main() -> None:
     tables = await repository.table_names()
     version = await repository.schema_version()
     expected = [
-        "kernel_meta", "messages", "model_invocations", "project_grants", "runs", "sessions"
+        "kernel_meta", "messages", "model_invocations", "project_grants", "runs", "sessions",
+        "project_file_changes", "project_runtime_units", "service_instances", "project_schedules", "schedule_ticks"
     ]
-    if tables != expected:
+    if set(tables) != set(expected):
         raise RuntimeError(f"unexpected assistant tables: {tables}")
-    if version not in {"core5.v4", "core5.v5", "core5.v6"}:
+    if version != __schema_version__:
         raise RuntimeError(f"unexpected schema version: {version}")
     loader = AgentFileLoader(settings)
-    butler = loader.load("system", "system-butler")
     project_directory = ProjectDirectoryService(settings, repository)
     runtime = ProjectRuntimeManager(settings.data_root)
     verified_projects = []
@@ -32,23 +33,21 @@ async def main() -> None:
         if entry.get("status") != "active":
             continue
         project_id = str(entry["project_id"])
-        project_path = runtime.ensure(project_id).vault_root / "project.yaml"
+        project_path = runtime.describe(project_id).vault_root / "project.yaml"
         project = yaml.safe_load(project_path.read_text(encoding="utf-8")) or {}
         if project.get("task_protocol") != "single-agent.v2":
             raise RuntimeError(f"{project_id} does not use single-agent.v2")
-        if set(project.get("work_modes") or {}) != {
-            "requirements", "build", "audit", "operate", "repair"
-        }:
+        if not {"requirements", "build", "audit", "operate"}.issubset(project.get("work_modes") or {}):
             raise RuntimeError(f"{project_id} Work Mode bundle is incomplete")
         active = {
             item.agent_id: item for item in loader.list_agents(project_id)
             if item.status == "active"
         }
-        if set(active) != {"pm", "supervisor", "operator", "child"}:
+        if set(active) != {"pm", "supervisor"}:
             raise RuntimeError(
                 f"{project_id} active Agent set is not the v2 base pack"
             )
-        for agent_id in ("pm", "supervisor", "operator", "child"):
+        for agent_id in ("pm", "supervisor"):
             loader.load(project_id, active[agent_id].agent_key)
         verified_projects.append(project_id)
     active = {}
@@ -60,7 +59,6 @@ async def main() -> None:
     print(
         "CORE5_VERIFY_OK; "
         f"version={version}; tables={','.join(tables)}; "
-        f"butler_config={butler.config_sha256[:12]}; "
         f"projects={','.join(verified_projects)}; rows={active}"
     )
 

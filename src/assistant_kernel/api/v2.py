@@ -38,16 +38,29 @@ class IntakeMessageRequest(BaseModel):
     model_auto_compact_token_limit: int | None = Field(default=None, ge=1)
 
 
+class PromptConfirmationRequest(BaseModel):
+    model_config={'extra':'forbid'}
+    project_id: str = Field(min_length=1,max_length=128)
+    frontend: str = Field(min_length=1,max_length=128)
+    channel_conversation_id: str = Field(min_length=1,max_length=512)
+    user_id: str = Field(min_length=1,max_length=256)
+    external_event_id: str = Field(min_length=1,max_length=512)
+    display_message_id: UUID
+    package_sha256: str = Field(pattern='^[0-9a-f]{64}$')
+    action: str = Field(pattern='^(confirm|revise|cancel)$')
+
+
 class CreateRunRequest(BaseModel):
     project_id: str = Field(min_length=1, max_length=128)
     agent_key: str | None = Field(default=None, max_length=256)
-    run_type: str = Field(default="stage", pattern="^(chat|stage|python)$")
+    run_type: str = Field(pattern="^(chat|stage|python)$")
     stage: str | None = Field(default=None, max_length=128)
     parent_run_id: UUID | None = None
     trigger_message_id: UUID | None = None
     request: dict[str, Any] = Field(default_factory=dict)
     executor: dict[str, Any] = Field(default_factory=dict)
     idempotency_key: str | None = Field(default=None, max_length=512)
+    shared_write: bool | None = None
 
 
 class DeliveryClaimRequest(BaseModel):
@@ -115,10 +128,26 @@ def build_v2_router(
             )
         except (ValueError, PermissionError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        from assistant_kernel.services.kernel_management import retired_identity
+        if retired_identity(project_id, agent_key):
+            raise HTTPException(status_code=410, detail="Butler retired; provide an existing project_id")
         try:
             runtime.ensure(project_id)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if request.reply_to_message_id:
+            original=await repository.get_message(str(request.reply_to_message_id))
+            from assistant_kernel.services.question_groups import QuestionGroupService,projection_ref
+            if original and projection_ref(original.get('content_json') or {}):
+                try:
+                    result=await QuestionGroupService(settings,repository).record_text(projection=original,
+                        channel=request.frontend,chat_id=request.channel_conversation_id,user_id=str(request.user_id or ''),
+                        external_event_id=request.external_message_id,text=request.text)
+                except PermissionError as exc:raise HTTPException(status_code=403,detail=str(exc)) from exc
+                except ValueError as exc:raise HTTPException(status_code=409,detail=str(exc)) from exc
+                return {'project_id':project_id,'agent_key':agent_key,'message_id':result['input_message_id'],
+                    'run_id':None,'duplicate':result['duplicate'],'partial_answer':True,'resumed':False,
+                    'accepted_into_supervision':result['accepted_into_supervision'],'question_group_ref':result.get('group_ref')}
         result = await repository.ingest_message(
             project_id=project_id,
             agent_key=agent_key,
@@ -172,6 +201,18 @@ def build_v2_router(
             raise HTTPException(status_code=404, detail="message not found")
         return row
 
+    @router.post('/prompt-confirmations')
+    async def prompt_confirmation(request: PromptConfirmationRequest):
+        from assistant_kernel.services.prompt_protocol import PromptProtocol
+        try:
+            receipt=await PromptProtocol(settings,repository).record_confirmation(
+                display_message_id=str(request.display_message_id),project_id=request.project_id,channel=request.frontend,
+                chat_id=request.channel_conversation_id,user_id=request.user_id,external_event_id=request.external_event_id,
+                action=request.action,expected_package_sha256=request.package_sha256)
+        except PermissionError as exc:raise HTTPException(status_code=403,detail=str(exc)) from exc
+        except ValueError as exc:raise HTTPException(status_code=409,detail=str(exc)) from exc
+        return receipt
+
     @router.get("/projects/{project_id}/messages")
     async def list_messages(
         project_id: str, channel: str | None = None,
@@ -181,6 +222,8 @@ def build_v2_router(
 
     @router.post("/runs", status_code=status.HTTP_202_ACCEPTED)
     async def create_run(request: CreateRunRequest):
+        if request.run_type == "stage":
+            raise HTTPException(status_code=409, detail="Stage execution is retired; use single-agent.v2")
         try:
             runtime.ensure(request.project_id)
         except ValueError as exc:
@@ -196,7 +239,7 @@ def build_v2_router(
                 project_id=request.project_id,
                 agent_key=agent_key,
                 run_type=request.run_type,
-                request=request.request,
+                request={**request.request, **({"shared_write": request.shared_write} if request.shared_write is not None else {})},
                 stage=request.stage,
                 parent_run_id=str(request.parent_run_id) if request.parent_run_id else None,
                 trigger_message_id=str(request.trigger_message_id) if request.trigger_message_id else None,
@@ -227,7 +270,7 @@ def build_v2_router(
             new_status = await repository.reconcile_run(
                 str(run_id), request.action, request.note
             )
-        except ValueError as exc:
+        except (ValueError,PermissionError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {"run_id": str(run_id), "status": new_status}
 
@@ -235,7 +278,7 @@ def build_v2_router(
     async def unblock_run(run_id: UUID, request: UnblockRunRequest):
         try:
             new_status = await repository.unblock_run(str(run_id), request.note)
-        except ValueError as exc:
+        except (ValueError, PermissionError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {"run_id": str(run_id), "status": new_status}
 

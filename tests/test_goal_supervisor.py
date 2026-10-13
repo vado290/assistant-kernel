@@ -127,4 +127,4 @@ def test_configuration_defaults_to_sol_medium_with_hard_limits(tmp_path: Path) -
     assert "hourly_eval_limit" not in config
     assert config["daily_input_tokens"] == 200_000
     assert config["daily_output_tokens"] == 40_000
-    assert config["business_state_sources"] == []
+    assert "business_state_sources" not in config

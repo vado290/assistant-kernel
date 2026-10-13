@@ -47,6 +47,7 @@ def test_semantic_map_bootstrap_query_and_context_manifest(tmp_path: Path) -> No
     (root / "knowledge/map/index.yaml").write_text(
         yaml.safe_dump(index, sort_keys=False), encoding="utf-8"
     )
+    service.publish_current("demo")
     result = service.query(
         "demo", task_kind="build", query_terms=["service entrypoint"], limit=5,
     )

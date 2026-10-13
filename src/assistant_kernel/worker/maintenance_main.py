@@ -12,10 +12,12 @@ from assistant_kernel.services.channel_health import (
     now_iso,
 )
 from assistant_kernel.worker.main import run_maintenance_loop
+from assistant_kernel.services.config_watcher import watch_system_config
 
 
 async def _run() -> None:
-    settings = KernelSettings.from_environment()
+    from assistant_kernel.services.config_consumers import startup_settings
+    settings = startup_settings(KernelSettings.from_environment(),'maintenance')
     shutdown_event = asyncio.Event()
     loop = asyncio.get_running_loop()
     installed: list[signal.Signals] = []
@@ -41,6 +43,7 @@ async def _run() -> None:
         last_error_type=None,
     )
     pulse = asyncio.create_task(channel_health_pulse(health))
+    config_watcher = asyncio.create_task(watch_system_config(settings, shutdown_event))
     try:
         await run_maintenance_loop(settings, shutdown_event)
     except Exception as exc:
@@ -51,6 +54,9 @@ async def _run() -> None:
         )
         raise
     finally:
+        config_watcher.cancel()
+        with suppress(asyncio.CancelledError):
+            await config_watcher
         pulse.cancel()
         with suppress(asyncio.CancelledError):
             await pulse

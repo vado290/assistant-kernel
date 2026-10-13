@@ -25,7 +25,7 @@ class RuntimeCatalogService:
         projects = []
         for entry in (raw or {}).get("projects") or []:
             project_id = str(entry.get("project_id") or "")
-            if not project_id:
+            if not project_id or project_id in {"system", "butler-maintenance"}:
                 continue
             vault = self.runtime.describe(project_id).vault_root
             project_file = vault / "project.yaml"
@@ -97,7 +97,7 @@ class RuntimeCatalogService:
             ensure_ascii=False, sort_keys=True, separators=(",", ":"),
         ).encode("utf-8")).hexdigest()
         generation_id = "gen-" + content_sha[:20]
-        root = self.runtime.ensure("system").vault_root / "knowledge" / "runtime-map"
+        root = self.runtime.ensure("kernel").vault_root / "knowledge" / "runtime-map"
         generation = root / "generations" / generation_id
         catalog_path = generation / "catalog.json"
         manifest_path = generation / "manifest.json"

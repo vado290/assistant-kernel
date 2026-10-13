@@ -322,6 +322,7 @@ class SourceScopeService:
         bindings: list[dict[str, Any]], reason: str,
         resume_blocked_run_id: str | None = None,
         authorization_mode: str = "explicit_request",
+        assessment_parameters: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         self._validate_target(current_project_id, target_project_id)
         if not reason.strip() or not bindings:
@@ -357,12 +358,21 @@ class SourceScopeService:
                 "bindings": normalized,
                 "resume_blocked_run_id": str(resume_blocked_run_id or "") or None,
                 "idempotent": True,
+                "directory_disclosure": existing.get('directory_disclosure'),
+                "directory_assessments": existing.get('directory_assessments',[]),
             }
         proposal = {
             **proposal_base,
             "approval_question_id": f"source-scope:{target_project_id}:{material_hash[:16]}",
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
+        from assistant_kernel.services.directory_assessment import assess_bindings,directory_disclosure
+        from assistant_kernel.services.document_runtime import resource_ref
+        assessments=assess_bindings(target_project_id,normalized,context='expand',
+            source_refs=[resource_ref(kind='source',identity=run_id,uri='db://assistant/runs/'+run_id,
+                                     purpose='directory expansion proposal; not approval')],parameters=assessment_parameters)
+        proposal.update(directory_assessments=assessments,directory_disclosure=directory_disclosure(assessments),
+                        presentation_version='directory-disclosure.v1')
         encoded = yaml.safe_dump(
             proposal, allow_unicode=True, sort_keys=False,
         ).encode("utf-8")
@@ -378,6 +388,8 @@ class SourceScopeService:
             "bindings": normalized,
             "resume_blocked_run_id": str(resume_blocked_run_id or "") or None,
             "idempotent": False,
+            "directory_disclosure": proposal['directory_disclosure'],
+            "directory_assessments": assessments,
         }
 
     @staticmethod
@@ -423,6 +435,9 @@ class SourceScopeService:
                     not list(policy.get("excludes") or [])
                     and list(policy.get("includes") or []) in ([], ["**/*"])
                     and str(policy.get("access") or "write") == "write"
+                    and policy.get('recursive') is True
+                    and policy.get('write_mode') == 'direct'
+                    and policy.get('native_mode') in {'enforced', 'behavioral'}
                 )
                 if full_recursive and self._contains_path(existing_path, target_path):
                     covering = row
@@ -595,6 +610,14 @@ class SourceScopeService:
             authorization_mode = str(
                 proposal.get("authorization_mode") or "explicit_request"
             )
+            if proposal.get('presentation_version')=='directory-disclosure.v1' and (
+                    authorization_mode=='explicit_approval' or any(a['warning_reasons'] for a in proposal.get('directory_assessments',[]))):
+                from assistant_kernel.services.proposal_presentations import require_disclosed_subject
+                await require_disclosed_subject(connection,run_id=run_id,answer_message_id=approval_message_id,
+                    question_id=question_id,proposal_uri=proposal_uri,proposal_sha256=expected_sha256)
+                if (selected_text not in {'接受现状','批准扩权'}
+                        and approval_decision({'text':selected_text})!='approve'):
+                    raise PermissionError('Directory warning was not accepted; do not grant or clean automatically')
             if authorization_mode == "explicit_approval":
                 if selected_text not in {"批准扩权", "批准只读授权"} and approval_decision(
                     {"text": selected_text}
@@ -621,20 +644,34 @@ class SourceScopeService:
                     )
                 authorization_message_id = candidate["source_message_id"]
                 user_text = str((candidate["trigger_content"] or {}).get("text") or "")
+                bound_confirmation=False
+                if proposal.get('presentation_version')=='directory-disclosure.v1':
+                    # Mentioning a folder (or requesting a one-off read) is not
+                    # a long-lived full-file grant. Only an explicit full grant
+                    # can reuse the original instruction without another card.
+                    direct_full=bool(re.search(r'(?:授权|授予|开放|允许)[^。；;!?？！\n]{0,100}(?:完整文件权限|完整权限|全部文件权限)|(?:grant|give|allow)[^.?!\n]{0,100}full (?:file )?access',user_text,re.IGNORECASE))
+                    negated=bool(re.search(r'(?:不要|禁止|不允许|尚未)[^，,。；;!?？！\n]{0,20}(?:授权|完整权限)|(?:do not|don.t|never)\s+(?:grant|give|allow)',user_text,re.IGNORECASE))
+                    if not direct_full or negated:
+                        from assistant_kernel.services.proposal_presentations import require_disclosed_subject
+                        await require_disclosed_subject(connection,run_id=run_id,answer_message_id=approval_message_id,
+                            question_id=question_id,proposal_uri=proposal_uri,proposal_sha256=expected_sha256)
+                        if selected_text not in {'接受现状','批准扩权'} and approval_decision({'text':selected_text})!='approve':
+                            raise PermissionError('The displayed full directory agreement was not approved')
+                        bound_confirmation=True
+                        authorization_mode='explicit_approval'
+                        authorization_message_id=approval_message_id
                 normalized_text = user_text.replace("\\", "/").casefold()
-                for binding in proposal.get("bindings") or []:
+                for binding in ([] if bound_confirmation else proposal.get("bindings") or []):
                     names = (
                         str(binding.get("display_path") or ""),
                         str(binding.get("resolved_path") or ""),
-                        str(binding.get("relative_path") or ""),
                     )
                     matched = False
                     for name in names:
-                        parts = name.replace("\\", "/").strip("/").casefold().split("/")
-                        for length in range(len(parts), 1, -1):
-                            if "/".join(parts[:length]) in normalized_text:
-                                matched = True
-                                break
+                        named=name.replace('\\','/').rstrip('/').casefold()
+                        # A mentioned child path does not authorize its parent,
+                        # and a shared suffix does not identify another drive.
+                        if named and re.search(re.escape(named)+r'(?![/A-Za-z0-9._-])',normalized_text):matched=True
                         if matched:
                             break
                     if not matched:

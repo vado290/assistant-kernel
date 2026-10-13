@@ -12,7 +12,7 @@ function New-Token {
     return [Convert]::ToHexString($bytes).ToLowerInvariant()
 }
 
-foreach ($name in @("kernel_api_token", "mcp_bearer_token", "n8n_callback_secret")) {
+foreach ($name in @("kernel_api_token", "mcp_bearer_token")) {
     if ([string]::IsNullOrWhiteSpace([string]$document.internal.$name)) {
         $document.internal.$name = New-Token
     }

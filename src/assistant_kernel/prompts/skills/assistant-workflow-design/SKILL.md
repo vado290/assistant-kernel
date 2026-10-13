@@ -9,7 +9,7 @@ metadata:
 
 ## 任务目标
 
-把Project的长期业务过程分解为职责单一、输入输出明确、可独立调度和恢复的节点，并选择普通Python、n8n、Agent或必要时LangGraph作为最小合适编排方式。Workflow协调节点，Kernel保存业务Run和批准事实，不能出现多个状态所有者。
+把Project的长期业务过程分解为职责单一、输入输出明确、可独立调度和恢复的节点，并选择普通Python、Agent或必要时LangGraph作为最小合适编排方式。Workflow协调节点，Kernel保存业务Run和批准事实，不能出现多个状态所有者。
 
 ## 节点类型
 
@@ -24,7 +24,7 @@ metadata:
 
 ## 编排选择
 
-固定顺序、少量分支和普通人工等待优先使用持久化Python阶段任务；渠道、通知和简单定时可用n8n。只有动态分支、并行汇合、循环返工和图状态恢复确实带来价值时才使用LangGraph。不能让Kernel、n8n和LangGraph同时拥有同一业务状态。
+固定顺序、少量分支和普通人工等待优先使用持久化Python阶段任务；渠道和通知由Kernel现有入口和Outbox处理，业务定时由 Kernel Schedule 统一登记和触发。只有动态分支、并行汇合、循环返工和图状态恢复确实带来价值时才使用LangGraph。不能让Kernel和LangGraph同时拥有同一业务状态。
 
 ## 增量与恢复
 

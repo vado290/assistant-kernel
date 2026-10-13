@@ -75,7 +75,7 @@ class ProjectResourceResolver:
         sandbox: str | None = None,
     ) -> str:
         core_skill = config.skill_bindings[0] if config.skill_bindings else None
-        return self._sha256({
+        payload={
             "agent_key": config.agent_key,
             "role_text": config.role_text,
             "core_skill": (
@@ -93,7 +93,12 @@ class ProjectResourceResolver:
             "context_policy": context_policy,
             "model_context_window_tokens": model_context_window_tokens,
             "model_auto_compact_token_limit": model_auto_compact_token_limit,
-        })
+        }
+        if config.foundation_revision=='1.2':
+            payload.update(foundation_revision='1.2',
+                loaded_skills=[{'name':x['name'],'bundle_hash':x['bundle_hash']} for x in config.skill_bindings],
+                tools=list(config.allowed_tools),mcp_servers=list(config.pinned_mcp_servers))
+        return self._sha256(payload)
 
     def _snapshot_mcp_bundle(
         self, project_id: str, server_id: str, source_root: Path, bundle_hash: str,
@@ -112,8 +117,13 @@ class ProjectResourceResolver:
         )
 
     def resolve_mcp_servers(
-        self, project_id: str, config: FileAgentConfig,
+        self, project_id: str, config: FileAgentConfig, *, preparing: bool = False,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        if config.foundation_revision=='1.2' and not preparing:
+            if config.mcp_servers and not config.pinned_mcp_servers:
+                raise ValueError('Published MCP assets must be pinned before invocation')
+            pinned=[dict(server) for server in config.pinned_mcp_servers]
+            return pinned,self.harness_bindings(project_id,{'bindings':{'mcp_servers':pinned}})
         runtime = self.runtime.ensure(project_id)
         plan_servers: list[dict[str, Any]] = []
         harness_servers: list[dict[str, Any]] = []
@@ -141,7 +151,9 @@ class ProjectResourceResolver:
                     raise ValueError(f"invalid MCP Tool declaration: {server_id}")
                 name = str(item["name"])
                 declared_tools.append(name)
-                tool_effects[name] = str(item.get("effect") or "read")
+                if item.get('effect') not in {'read','write','external','trade'}:
+                    raise ValueError('MCP tools must explicitly declare their effect: '+name)
+                tool_effects[name] = str(item['effect'])
             enabled_tools = [str(item) for item in binding.get("enabled_tools") or []]
             if not enabled_tools:
                 raise ValueError(f"MCP binding must explicitly enable Tools: {server_id}")
@@ -185,6 +197,9 @@ class ProjectResourceResolver:
                 "bundle_hash": bundle_hash,
                 "snapshot_uri": snapshot_uri,
                 "files": entries,
+                "tool_effects": tool_effects,
+                "tool_schema_sha256": {str(item['name']):self._sha256(item['input_schema'])
+                    for item in manifest.get('tools',[]) if 'input_schema' in item},
             }
             if transport == "stdio":
                 entrypoint = str(manifest.get("entrypoint") or "server.py")
@@ -294,15 +309,14 @@ class ProjectResourceResolver:
             return existing_plan, existing_harness, existing_uri, existing_file_sha
         plan_servers, harness_servers = self.resolve_mcp_servers(project_id, config)
         stage = str(run.get("stage") or "") or None
+        shared_agreement = project_id != 'system'
         candidate_only = bool(
             request.get("candidate_only")
-            or request.get("interaction_kind") == "child_task"
         )
         audit_mode = bool(request.get("audit_mode"))
         candidate_enabled = bool(
             (
             stage == "implementation"
-            or request.get("interaction_kind") == "child_task"
             or (
                 request.get("task_protocol") == "single-agent.v2"
                 and request.get("permission_profile_name") == "candidate-write"
@@ -316,6 +330,7 @@ class ProjectResourceResolver:
         scope_snapshot_uri, scope_snapshot_sha256 = self.workspace_scopes.snapshot(
             project_id, run_id, stage, candidate_only=formal_read_only,
             candidate_enabled=candidate_enabled, variant=variant,
+            shared_agreement=shared_agreement,
         )
         snapshot_roots = self.workspace_scopes.load_snapshot(
             project_id, run_id, stage, scope_snapshot_uri, scope_snapshot_sha256,
@@ -343,7 +358,7 @@ class ProjectResourceResolver:
             str(item.grant_id) for item in snapshot_roots if item.grant_id
         )
         network_enabled = True
-        native_profile, native_profile_sha256, native_may_write = (
+        native_profile, native_profile_sha256, native_may_write = (None,None,True) if shared_agreement else (
             PermissionPolicyCompiler(
                 PermissionPolicyCompiler.current_runtime_root(self.settings.workspace_root)
             ).materialize(
@@ -355,14 +370,14 @@ class ProjectResourceResolver:
         )
         has_writable_workspace = any(
             item.access == "write" and item.write_mode == "direct"
-            and item.native_mode == "enforced"
+            and item.native_mode in {"enforced", "behavioral"}
             and item.key not in {"candidate", "run_work"} for item in snapshot_roots
         )
-        effective_sandbox = (
+        effective_sandbox = 'danger-full-access' if shared_agreement else (
             "workspace-write" if native_may_write else "read-only"
         ) if native_profile else (sandbox or config.sandbox)
         effective_workspace_write = (
-            has_writable_workspace and effective_sandbox == "workspace-write"
+            has_writable_workspace and effective_sandbox in {"workspace-write", "danger-full-access"}
         )
         stage_permissions = {
             "project_workspace_grant": (
@@ -378,6 +393,10 @@ class ProjectResourceResolver:
             "account_connect": True,
             "trade": True,
         }
+        if shared_agreement:
+            stage_permissions.update(file_agreement='project_shared',native_isolation=False,
+                business_approval_required=True,role_does_not_reduce_file_package=True,
+                account_connect=False,trade=False)
         plan = {
             "schema_version": "execution-plan.v1",
             "run_id": run_id,
@@ -411,6 +430,8 @@ class ProjectResourceResolver:
                 "active_file_grant_ids": active_file_grant_ids,
                 "native_permission_profile": native_profile,
                 "native_permission_profile_sha256": native_profile_sha256,
+                "foundation_revision": config.foundation_revision,
+                "file_agreement_revision": '1.2' if shared_agreement else None,
                 "stage_permissions": stage_permissions,
                 "mcp_servers": plan_servers,
             },
@@ -497,6 +518,56 @@ class ProjectResourceResolver:
         )
         return plan, harness_servers, uri, hashlib.sha256(encoded).hexdigest()
 
+    def bind_current_file_agreement(self, plan, *, invocation_id):
+        """Refresh directory authority without rebuilding the pinned business package."""
+        if plan['project_id'] == 'system':
+            raise ValueError('Legacy system scope is not a Project directory agreement')
+        if not SAFE_ID.fullmatch(invocation_id):
+            raise ValueError('Invalid invocation identity')
+        project_id = str(plan['project_id']); run_id = str(plan['run_id'])
+        previous_uri = plan['bindings']['workspace_scope_snapshot_uri']
+        previous_sha = plan['bindings']['workspace_scope_snapshot_sha256']
+        # Read the accepted snapshot for its stage and candidate semantics; only
+        # the current Project agreement is allowed to change here.
+        prefix = f'vault://{project_id}/'
+        if not previous_uri.startswith(prefix):
+            raise ValueError('Scope snapshot belongs to another Project')
+        encoded = self.runtime.resolve_vault_file(project_id, previous_uri[len(prefix):]).read_bytes()
+        if self._sha256(encoded) != previous_sha:
+            raise ValueError('Pinned scope snapshot hash differs')
+        previous = json.loads(encoded)
+        uri, sha = self.workspace_scopes.snapshot(project_id, run_id, previous.get('stage'),
+            candidate_only=previous.get('candidate_only', False),
+            candidate_enabled=previous.get('candidate_enabled', False),
+            variant=invocation_id, shared_agreement=True)
+        roots = self.workspace_scopes.load_snapshot(project_id, run_id, previous.get('stage'), uri, sha)
+        updated = json.loads(json.dumps(plan))
+        updated['bindings'].update(workspace_scope_snapshot_uri=uri,
+            workspace_scope_snapshot_sha256=sha,
+            file_agreement_revision='1.2', native_permission_profile=None,
+            native_permission_profile_sha256=None,
+            active_file_grant_ids=sorted(str(root.grant_id) for root in roots if root.grant_id))
+        writable = any(root.access == 'write' and root.key not in {'candidate', 'run_work'} for root in roots)
+        updated['runtime'].update(may_write_shared=writable, may_write_files=True, sandbox='danger-full-access')
+        updated['bindings']['stage_permissions'].update(
+            project_workspace_grant='read_write_execute' if writable else 'project_only',
+            workspace_file_access='read_write_execute' if writable else 'read_execute',
+            direct_workspace_write=writable, file_agreement='project_shared', native_isolation=False,
+            business_approval_required=True, role_does_not_reduce_file_package=True,
+            account_connect=False, trade=False)
+        updated['authority_refresh'] = {'invocation_id': invocation_id, 'previous_plan_sha256': plan['plan_sha256']}
+        updated.pop('plan_sha256', None)
+        updated['plan_sha256'] = self._sha256(updated)
+        relative = Path('runs') / run_id / 'resolved' / f'invocation-plan-{invocation_id}.json'
+        path = self.runtime.ensure(project_id).vault_root / relative
+        payload = self._canonical_bytes(updated)
+        if path.exists() and path.read_bytes() != payload:
+            raise ValueError('Invocation agreement binding is immutable')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            temporary = path.with_suffix('.tmp'); temporary.write_bytes(payload); temporary.replace(path)
+        return updated, f'vault://{project_id}/{relative.as_posix()}', self._sha256(payload)
+
     def load_materialized(
         self, project_id: str, uri: str, expected_sha256: str,
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -533,6 +604,13 @@ class ProjectResourceResolver:
             snapshot_root = self.runtime.resolve_vault_file(
                 project_id, snapshot_uri[len(prefix):].rstrip("/")
             )
+            for entry in server.get('files') or []:
+                path=self.runtime.resolve_below(snapshot_root,entry['path'])
+                if not path.is_file() or self._sha256(path.read_bytes())!=entry['sha256']:
+                    raise ValueError('Pinned MCP asset is missing or changed')
+            if 'tool_effects' not in server:
+                manifest=yaml.safe_load((snapshot_root/'mcp-manifest.yaml').read_text())
+                server['tool_effects']={str(x['name']):str(x.get('effect','write')) for x in manifest.get('tools',[])}
             if transport == "stdio":
                 entrypoint = str(server.get("entrypoint") or "")
                 target = self.runtime.resolve_below(snapshot_root, entrypoint)

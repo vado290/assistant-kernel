@@ -9,7 +9,8 @@ from assistant_kernel.services.feishu import channel_worker_loop, feishu_gateway
 
 
 async def feishu_worker_loop() -> None:
-    settings = KernelSettings.from_environment()
+    from assistant_kernel.services.config_consumers import startup_settings
+    settings = startup_settings(KernelSettings.from_environment(),'feishu')
     health = ChannelHealthReporter(settings, "feishu")
     await asyncio.gather(
         channel_worker_loop(settings, health),

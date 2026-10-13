@@ -1,4 +1,4 @@
-"""Project-scoped immutable Incident records for on-demand Operator analysis."""
+"""Project-scoped immutable Incident records for deterministic diagnosis and PM review."""
 from __future__ import annotations
 
 import hashlib

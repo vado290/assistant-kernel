@@ -1,0 +1,11 @@
+{
+  "design_report_sha256": "f9ae591846cc24c57687dd9bc35c8fa0f940668a83bcf1e66ff1f0414a4a3b29",
+  "files": {
+    "config-field-catalog.json": "5db22385a5ec11fc52a03c4f2f15408b283626698c4bbaeba8fd178b42bbfa56",
+    "kernel-system.example.json": "9c5ce1bc4dcd22d74510f6f2497b8523c282e866f7ca5ad3ff5371b19c91bbdd",
+    "registry-v12.json": "441b30f1e05a44c74abcb9de00289f85ac914af09a24992f771adf7737b63300",
+    "schema-library-v12.json": "122562b675d89922ea4aa7a474757ea1b77cdfb3262cc7aebcd5468c4cefbacc"
+  },
+  "implementation_revision": 10,
+  "original_library_sha256": "fbd1783b37bda5688be8089aa4b80ebb5bf4c326a885eb3d884f97aac53557af"
+}

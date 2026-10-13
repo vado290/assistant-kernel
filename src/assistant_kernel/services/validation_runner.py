@@ -140,6 +140,8 @@ class ValidationRunner:
                 "PYTHONPATH": str(overlay),
                 "TASK_VALIDATION_NETWORK": "enabled",
             }
+            for name in ('ASSISTANT_RUN_ID','ASSISTANT_ATTEMPT'):
+                if os.environ.get(name):environment[name]=os.environ[name]
             try:
                 completed = subprocess.run(
                     command, cwd=str(overlay), env=environment,
@@ -405,26 +407,14 @@ class ValidationRunner:
         self, path: Path, relative: str, issues: list[dict[str, str]]
     ) -> None:
         try:
-            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        except yaml.YAMLError as exc:
-            self._issue(issues, "schedule_yaml", relative, f"invalid YAML: {exc}")
-            return
-        if not isinstance(data, dict):
-            self._issue(issues, "schedule_type", relative, "Schedule must be an object")
-            return
-        for key in ("schedule_id", "timezone", "trigger", "target"):
-            if not data.get(key):
-                self._issue(issues, f"schedule_{key}", relative, f"{key} is required")
-        execution = data.get("execution") or {}
-        if execution and not isinstance(execution, dict):
-            self._issue(issues, "schedule_execution", relative, "execution must be an object")
-            return
-        overlap = str(execution.get("overlap_policy") or "") if execution else ""
-        if overlap and overlap not in {"skip", "queue-one", "replace"}:
-            self._issue(
-                issues, "schedule_overlap", relative,
-                "overlap_policy must be skip, queue-one, or replace",
-            )
+            from assistant_kernel.services.contracts import contracts
+            from assistant_kernel.services.schedule_time import preview
+            value=yaml.safe_load(path.read_text(encoding='utf-8'))
+            if isinstance(value,dict) and value.get('schema_version')=='kernel-schedule-definition.v1':value=value['payload']
+            contracts().validate('KernelScheduleDefinition',value)
+            preview(value['rule'],value['timezone'])
+        except (ValueError,KeyError,TypeError) as exc:
+            self._issue(issues,'schedule_invalid',relative,str(exc))
 
     def _validate_semantic_map(
         self, path: Path, relative: str, issues: list[dict[str, str]],
@@ -492,7 +482,7 @@ class ValidationRunner:
             self._validate_source_map(path, relative, issues)
         if lowered.endswith("knowledge/map/index.yaml"):
             self._validate_semantic_map(path, relative, issues)
-        if path.suffix.lower() in {".yaml", ".yml"} and (
+        if path.suffix.lower() in {".yaml", ".yml", ".json"} and (
             lowered.startswith("schedules/") or "/schedules/" in f"/{lowered}"
         ):
             self._validate_schedule(path, relative, issues)
@@ -506,6 +496,7 @@ class ValidationRunner:
         self, project_id: str, implementation_run_id: str,
         validation_policy: dict[str, Any] | None = None,
         sealed_bundle: dict[str, Any] | None = None,
+        report_directory: Path | None = None,
     ) -> dict[str, Any]:
         runtime = self.runtime.ensure(project_id)
         live_candidate_root = (
@@ -752,7 +743,9 @@ class ValidationRunner:
                 ) else "passed",
                 "evidence": contract_paths,
             })
-        report_root = runtime.vault_root / "runs" / implementation_run_id / "validation"
+        report_root = report_directory or runtime.vault_root / "runs" / implementation_run_id / "validation"
+        if not report_root.resolve().is_relative_to((runtime.vault_root/'runs'/implementation_run_id).resolve()):
+            raise PermissionError('Validation report directory belongs to another Task')
         report_root.mkdir(parents=True, exist_ok=True)
         policy = dict(validation_policy or {})
         if not sealed_problem:

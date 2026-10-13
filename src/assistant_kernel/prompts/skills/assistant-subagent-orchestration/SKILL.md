@@ -19,6 +19,10 @@ metadata:
 
 每个子Agent只有一个目标，明确输入引用、验收标准和声明写集。最多三个并行，第一版不再创建孙Agent。写集重叠时串行执行；Turn结束由PM核对candidate diff。完整权限继承自PM，外部效果必须进入回执，无法精确归属时诚实标记为父PM Run或unattributed native child。
 
+子Agent仅为当前阶段的临时任务，不直接与用户交互、发卡、选择阶段或维护长期业务身份。
+需用户决定的问题随 Result 返回给父 Agent，由 PM/Supervisor 按 Kernel 合同提出。必需
+结果未结算前不得切换阶段；阶段内独立生成物仍可并行，不能借此建立并行 PM 主线。
+
 ## 返回
 
 每个原生子Agent完成后，PM必须在本Turn最终JSON的`delegation_results`中返回稳定

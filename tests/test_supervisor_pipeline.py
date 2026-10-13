@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -37,14 +38,14 @@ def _sample_decision() -> dict:
     return {
         "decision": "continue_current_stage",
         "reason": ["build turn settled", "no gate change"],
-        "evidence_refs": ["message:1"],
+        "evidence_refs": ["message:m1"],
         "missing_evidence": [],
         "progress_made": True,
         "intent_hypothesis": [
             {
                 "statement": "定义第一套正式策略及其交易场所",
                 "confidence": "medium",
-                "evidence_refs": ["message:1"],
+                "evidence_refs": ["message:m1"],
             }
         ],
         "insufficient_evidence": False,
@@ -65,6 +66,7 @@ class FakeSupervisor:
         self.decision = decision or _sample_decision()
         self.current = CurrentArtifactService(settings)
         self.memory = InteractionMemory(settings)
+        self.settings = settings
 
     def configuration(self, project_id: str) -> dict:
         return {
@@ -80,7 +82,8 @@ class FakeSupervisor:
         return {
             "meta": {"task_id": kwargs.get("task_id"), "trigger": kwargs.get("trigger")},
             "interaction_delta": kwargs.get("current_message") and [
-                {"message_id": "m1", "direction": "inbound", "text": "继续任务"}
+                {"message_id": "m1", "direction": "inbound", "text": "继续任务",
+                 "created_at": datetime.now(timezone.utc).isoformat()}
             ] or [],
             "task_state": {"state": {"next_action": "等待场所确认"}},
             "memory_hits": [],
@@ -91,8 +94,14 @@ class FakeSupervisor:
         return {"schema_version": "supervisor-intent-panel.v1", "hypotheses": []}
 
     async def run_consultation(self, **kwargs) -> dict:
+        brief = GoalSupervisorService(self.settings, SimpleNamespace())._supervisor_brief(
+            project_id=kwargs["project_id"], task_id=kwargs["task_id"],
+            snapshot=kwargs["snapshot"], intent_panel=kwargs.get("intent_panel"), decision=self.decision,
+        )
         return {
             **self.decision,
+            "project_assessment": brief["project_assessment"],
+            "user_intent_context": brief["user_intent_context"],
             "handoff_ref": {
                 "uri": "vault://p/runs/t/supervisor/handoff-x.json",
                 "sha256": "a" * 64, "size": 10,
@@ -108,6 +117,11 @@ class FakeRepository:
         self.supervisor_input_tokens = 0
         self.supervisor_output_tokens = 0
         self.degraded: list[dict] = []
+        self.paused: list[dict] = []
+
+    async def pause_supervision(self, **kwargs):
+        self.paused.append(kwargs)
+        return {"run_id": kwargs["task_id"], "status": "waiting_supervisor"}
 
     async def project_usage_rollup(self, project_id: str) -> dict:
         return {
@@ -199,7 +213,11 @@ def test_parse_decision_v2_bounds_hypotheses_and_clarifications(tmp_path):
         {"question_id": "a", "question_text": "one"},
         {"question_id": "b", "question_text": "two"},
     ]
-    with pytest.raises(ValueError, match="one question"):
+    assert len(service.parse_decision_v2(json.dumps(payload))["clarifications"]) == 2
+    payload["clarifications"] = [
+        {"question_id": str(index), "question_text": f"Question {index}"} for index in range(11)
+    ]
+    with pytest.raises(ValueError, match="ten questions"):
         service.parse_decision_v2(json.dumps(payload))
 
 
@@ -425,7 +443,9 @@ async def test_supervisor_invalid_contract_finishes_degraded_without_retry(tmp_p
     )
     result = await processor.process(_consultation_run(), "worker-1")
     assert result["outcome"] == "degraded_invalid_decision"
-    assert repository.degraded[0]["task_id"] == "t1"
+    assert repository.paused[0]["task_id"] == "t1"
+    assert repository.degraded == []
+    assert result["task_resumed"] is False
     assert repository.finished[0][1] == "succeeded"
     assert repository.cards[0]["confirmation_class"] == "invalid"
     assert repository.cards[0]["decision"] == "degraded_invalid_decision"
@@ -444,7 +464,8 @@ async def test_supervisor_processor_skips_over_budget(tmp_path):
     _project_yaml(settings, "p", enabled=True)
     result = await processor.process(_consultation_run(), "worker-1")
     assert result["outcome"] == "skipped_due_to_budget"
-    assert repository.cards[0]["decision"] == "skipped_due_to_budget"
+    assert repository.paused[0]["reason"] == "Supervisor budget gate: daily_input_tokens"
+    assert repository.degraded == []
 
 
 @pytest.mark.asyncio
@@ -487,7 +508,11 @@ async def test_supervisor_processor_full_path_persists_decision_and_action_plan(
     assert "```text" in card["text"]
 
     hits = InteractionMemory(settings).retrieve("p", ["策略 场所"])
-    assert hits and hits[0]["status"] == "proposed"
+    assert hits == []
+    intent = state["user_intent_context"]
+    assert intent["scope"] == "project_only"
+    hypothesis = intent["hypotheses"][0]
+    assert datetime.fromisoformat(hypothesis["expires_at"]) - datetime.fromisoformat(hypothesis["observed_at"]) == timedelta(days=7)
 
 
 @pytest.mark.asyncio

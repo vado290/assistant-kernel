@@ -12,10 +12,12 @@ def task_lifecycle_view(run: dict[str, Any]) -> dict[str, Any]:
     audit_mode = bool(request.get("audit_mode"))
     approval_kind = str(request.get("approval_kind") or "") or None
 
-    if status == "waiting_supervisor":
+    if request.get("task_activation") == "suspended":
+        lifecycle = "Suspended"
+    elif request.get("task_activation") == "queued":
+        lifecycle = "Queued"
+    elif status == "waiting_supervisor":
         lifecycle = "Supervisor"
-    elif status == "waiting_children":
-        lifecycle = "Delegation"
     elif status == "reconciling" or phase == "publication_reconciling":
         lifecycle = "Reconciliation"
     elif status in {"failed", "dead_letter", "cancelled"}:
@@ -30,6 +32,10 @@ def task_lifecycle_view(run: dict[str, Any]) -> dict[str, Any]:
         lifecycle = "Verify/Audit"
     elif current_stage == "build":
         lifecycle = "Build"
+    elif current_stage == "design":
+        lifecycle = "Design"
+    elif current_stage == "operate":
+        lifecycle = "Operation"
     else:
         lifecycle = "Requirements"
 
@@ -42,4 +48,7 @@ def task_lifecycle_view(run: dict[str, Any]) -> dict[str, Any]:
         "task_phase": phase,
         "audit_mode": audit_mode,
         "approval_kind": approval_kind,
+        "pending_supervision_turn": request.get("pending_supervision_turn"),
+        "pending_interaction_ref": request.get("pending_interaction_ref"),
+        "task_activation": request.get("task_activation", "active"),
     }

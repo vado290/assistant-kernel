@@ -20,8 +20,7 @@ from assistant_kernel.services.reconciliation import ReconciliationService
 
 
 class RecoveryService:
-    # T1 v1 ships supervisor consultations only; butler stays on the card
-    # path until its proposal/project-creation idempotency is verified.
+    # Only side-effect-free consultations use T1; other active Runs use cards.
     T1_INTERACTION_KINDS = {"supervisor_consultation"}
     def __init__(self, settings: KernelSettings, repository: CoreRepository):
         self.settings = settings
@@ -30,6 +29,11 @@ class RecoveryService:
 
     def _tier(self, run: dict[str, Any], diagnostic: dict[str, Any]) -> int:
         request = dict(run.get("request_json") or {})
+        # A v1.2 Supervisor has the shared file package and real MCP tools.
+        # Its role name no longer proves that replay has no external effects.
+        if ((run.get('executor_json') or {}).get('resolved_supervisor_configuration')
+                or (run.get('executor_json') or {}).get('file_agreement_revision') == '1.2'):
+            return 3
         if request.get("interaction_kind") in self.T1_INTERACTION_KINDS:
             return 1
         return 3

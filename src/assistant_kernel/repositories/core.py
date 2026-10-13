@@ -9,11 +9,15 @@ from typing import Any, Callable
 
 from psycopg.errors import UniqueViolation
 from psycopg.types.json import Jsonb
+from assistant_kernel.services.run_scheduling import run_scheduling
 import yaml
 
 from assistant_kernel.config import KernelSettings
 from assistant_kernel.repositories.database import AssistantDatabase
 from assistant_kernel.storage import ProjectRuntimeManager
+from assistant_kernel.services.questionnaire import (
+    advance_questionnaire, is_questionnaire, make_questionnaire, questionnaire_eligible,
+)
 
 
 def json_compatible(value: Any) -> Any:
@@ -111,45 +115,10 @@ def conversation_key(project_id: str, agent_key: str, channel: str, chat_id: str
     return "conversation:" + canonical_sha256([project_id, agent_key, channel, chat_id])
 
 
-def scheduling_lane(run_type: str, agent_key: str) -> str:
-    """Keep interactive chats out of the Project execution serialization set.
-
-    v6.1: supervisor/operator chats are classified as conversation runs.
-    Conversation runs serialize per conversation_key only; the historical
-    cross-agent same-lane project exclusion was removed (see
-    migrations/upgrade_core5_v5.sql). Keep this classification in sync with
-    the SQL function assistant.run_lane used by the partial unique indexes.
-    """
-    if run_type == "chat" and (
-        agent_key == "system-butler"
-        or agent_key.endswith(":manager")
-        or agent_key.endswith(":supervisor")
-        or agent_key.endswith(":operator")
-    ):
-        return "conversation"
-    return "execution"
 
 
-def review_rework_stage(stage_plan: list[str]) -> str:
-    """Return the stage immediately preceding Review in the pinned task plan."""
-    try:
-        review_index = stage_plan.index("review")
-    except ValueError as exc:
-        raise ValueError("Review rework requires a Review stage") from exc
-    if review_index <= 0 or stage_plan[review_index - 1] not in {
-        "requirements", "implementation",
-    }:
-        raise ValueError("Review rework requires Requirements or Implementation before Review")
-    return stage_plan[review_index - 1]
 
 
-def stage_executor(request: dict[str, Any], stage: str) -> dict[str, Any]:
-    executor = {
-        **dict(request.get("task_executor") or {}),
-        **dict((request.get("stage_bindings") or {}).get(stage) or {}),
-    }
-    executor["scheduling_lane"] = "execution"
-    return json_compatible(executor)
 
 
 class CoreRepository:
@@ -160,22 +129,20 @@ class CoreRepository:
         self.database = AssistantDatabase(settings)
 
     def _single_agent_project(self, project_id: str) -> bool:
-        vault = ProjectRuntimeManager(self.settings.data_root).describe(project_id).vault_root
-        project_file = vault / "project.yaml"
-        if not project_file.is_file():
-            return False
-        project = yaml.safe_load(project_file.read_text(encoding="utf-8")) or {}
-        if not isinstance(project, dict):
-            raise ValueError("Project configuration is invalid")
+        from assistant_kernel.services.published_agents import PublishedAgentService
+        project=PublishedAgentService(self.settings).project_policy(project_id)
         return project.get("task_protocol") == "single-agent.v2"
 
     def _retired_stage(self, project_id: str, run: dict[str, Any]) -> bool:
-        """A cut-over Project must not resume its historical Stage chain."""
-        return (
-            str(run.get("run_type") or "") == "stage"
-            and self._single_agent_project(project_id)
-            and (run.get("request_json") or {}).get("task_protocol") != "single-agent.v2"
-        )
+        return str(run.get("run_type") or "") == "stage"
+
+
+    async def _require_active_run(self, connection, run_id):
+        from assistant_kernel.services.kernel_management import require_active_identity
+        row = await (await connection.execute(
+            'SELECT project_id,agent_key FROM assistant.runs WHERE run_id=%s', (run_id,))).fetchone()
+        if row:
+            require_active_identity(row['project_id'], row['agent_key'])
 
     async def schema_version(self) -> str | None:
         async with self.database.connection() as connection:
@@ -209,11 +176,20 @@ class CoreRepository:
         auto_reply_to_unambiguous: bool = False,
         before_resume: Callable[[], Any] | None = None,
     ) -> dict[str, Any]:
+        from assistant_kernel.services.kernel_management import require_active_identity
+        require_active_identity(project_id, agent_key)
+        if agent_key.endswith((":child", ":operator")):
+            raise ValueError("child Run and Operator Agent are retired")
         message_id = str(uuid.uuid4())
         run_id = str(uuid.uuid4())
         superseded_run_ids: list[str] = []
         single_agent_project = self._single_agent_project(project_id)
         async with self.database.connection() as connection:
+            if single_agent_project and agent_key.endswith((":manager", ":supervisor")):
+                await connection.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",
+                    (f"project-mainline:{project_id}",),
+                )
             if reply_to_message_id:
                 await connection.execute(
                     "SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",
@@ -295,13 +271,21 @@ class CoreRepository:
                     SELECT * FROM assistant.runs
                     WHERE project_id=%s
                       AND request_json->>'task_protocol'='single-agent.v2'
-                      AND status IN ('queued','running','waiting_user','waiting_supervisor','waiting_children','blocked','reconciling')
+                      AND COALESCE(request_json->>'task_activation','active')='active'
+                      AND status IN ('queued','running','waiting_user','waiting_supervisor','blocked','reconciling')
                     ORDER BY created_at,run_id LIMIT 1
                     FOR UPDATE
                     """,
                     (project_id,),
                 )).fetchone()
                 if task is not None:
+                    if self._five_stage_task(task):
+                        content = {**content, "task_id": str(task["run_id"]), "task_input_status": "pending"}
+                        await connection.execute(
+                            "UPDATE assistant.messages SET content_json=%s WHERE message_id=%s",
+                            (Jsonb(json_compatible(content)), message_id),
+                        )
+                        message["content_json"] = content
                     await self._advance_supervisor_context_epoch_locked(
                         connection, task=task,
                         reason=(
@@ -318,6 +302,7 @@ class CoreRepository:
             decision = None
             partial_answer = False
             correction_run = False
+            deferred_approval_reply = False
             run = None
             question = None
             if (
@@ -448,6 +433,17 @@ class CoreRepository:
                         or current_question
                     )
                 )
+                if current_interaction and question["message_type"] == "approval" and await (await connection.execute("SELECT 1 FROM assistant.messages WHERE run_id=%s AND content_json->>'task_input_status'='pending' LIMIT 1",(question["run_id"],))).fetchone():
+                    run = await self._requeue_pending_inputs(connection, {"run_id":question["run_id"]})
+                    if (question["run_request_json"] or {}).get('protocol_revision') == '1.2':
+                        # The new semantic input belongs to this Task. An old
+                        # approval must neither replay PM nor create new work.
+                        await connection.execute('UPDATE assistant.messages SET run_id=%s WHERE message_id=%s',
+                            (question['run_id'], message_id))
+                        run = await self._supervise_answer_locked(connection, run, message_id)
+                        deferred_approval_reply = True
+                    current_interaction = False
+                    stale_reply = True
                 if before_resume is not None:
                     if not current_interaction:
                         raise PermissionError("interaction is no longer current")
@@ -473,11 +469,12 @@ class CoreRepository:
                         current_request = dict(question["run_request_json"] or {})
                         single_requirements = bool(
                             current_request.get("task_protocol") == "single-agent.v2"
-                            and current_request.get("approval_kind") == "requirements"
+                            and current_request.get("approval_kind") in {"requirements", "design"}
                         )
                         if single_requirements:
+                            is_design = current_request.get("approval_kind") == "design"
                             task_contract_ref = dict(
-                                current_request.get("task_contract_ref") or {}
+                                current_request.get("solution_design_ref" if is_design else "task_contract_ref") or {}
                             )
                             if not task_contract_ref:
                                 raise RuntimeError("Requirements approval has no Task Contract")
@@ -487,14 +484,33 @@ class CoreRepository:
                             contract = TaskDocumentService(self.settings).read(
                                 project_id, task_contract_ref
                             )
-                            expected = str(current_request.get("task_contract_sha256") or "")
+                            expected = str(current_request.get("solution_design_sha256" if is_design else "task_contract_sha256") or "")
                             if (
                                 str(task_contract_ref.get("sha256") or "") != expected
-                                or not list((contract.get("payload") or {}).get("requirements") or [])
+                                or (not is_design and not list((contract.get("payload") or {}).get("requirements") or []))
                             ):
                                 raise RuntimeError(
                                     "Task Contract changed after the approval card was created"
                                 )
+                            if is_design and (
+                                not current_request.get("requirements_approval")
+                                or (contract.get("payload") or {}).get("task_contract_sha256")
+                                   != (current_request.get("task_contract_ref") or {}).get("sha256")
+                            ):
+                                raise ValueError("Design approval does not match the current approved requirements")
+                            next_mode = "build" if is_design or not self._five_stage_project(project_id) else "design"
+                            approval_patch = {
+                                "current_stage": next_mode, "work_mode": next_mode, "task_phase": "working",
+                                "execution_plan_variant": next_mode, "approval_kind": None,
+                                "answer_message_id": message_id,
+                                ("design_sha256" if is_design else "requirements_sha256"): expected,
+                                ("design_approval" if is_design else "requirements_approval"): {
+                                    "message_id": message_id, "approved_document_sha256": expected,
+                                    ("solution_design_ref" if is_design else "task_contract_ref"): task_contract_ref,
+                                },
+                            }
+                            if not is_design:
+                                approval_patch["design_approval"] = None
                             run = await (await connection.execute(
                                 """
                                 UPDATE assistant.runs SET status='queued',available_at=now(),
@@ -512,22 +528,11 @@ class CoreRepository:
                                 WHERE run_id=%s AND status='waiting_user' RETURNING *
                                 """,
                                 (
-                                    Jsonb({
-                                        "current_stage": "build", "task_phase": "working",
-                                        "execution_plan_variant": "build",
-                                        "approval_kind": None,
-                                        "answer_message_id": message_id,
-                                        "requirements_sha256": expected,
-                                        "requirements_approval": {
-                                            "message_id": message_id,
-                                            "approved_document_sha256": expected,
-                                            "task_contract_ref": task_contract_ref,
-                                        },
-                                    }),
+                                    Jsonb(approval_patch),
                                     Jsonb({
                                         "approval": "approved",
                                         "approval_message_id": message_id,
-                                        "transition": "requirements_to_build",
+                                        "transition": f"{'design' if is_design else 'requirements'}_to_{next_mode}",
                                     }),
                                     question["run_id"],
                                 ),
@@ -538,6 +543,7 @@ class CoreRepository:
                                 "UPDATE assistant.messages SET run_id=%s WHERE message_id=%s",
                                 (run["run_id"], message_id),
                             )
+                            run = await self._supervise_answer_locked(connection, run, message_id)
                             await connection.execute(
                                 """
                                 INSERT INTO assistant.messages(
@@ -552,7 +558,7 @@ class CoreRepository:
                                     str(uuid.uuid4()), project_id, run["run_id"], channel,
                                     chat_id, user_id, message_id,
                                     Jsonb({
-                                        "text": "Requirements已批准；同一Task已切换到Build模式。",
+                                        "text": f"{'Design' if is_design else 'Requirements'}已批准；进入{next_mode}前完成Supervisor评估。",
                                         "origin": "kernel", "context_visibility": "ui_only",
                                     }),
                                     f"single-requirements-approved:{question['run_id']}:{message_id}",
@@ -567,6 +573,49 @@ class CoreRepository:
                                 "partial_answer": False, "correction_run": False,
                                 "superseded_run_ids": [],
                             }
+                        if current_request.get("task_protocol") == "single-agent.v2" and current_request.get("approval_kind") == "operation":
+                            prepared = dict(current_request.get("operation_approval_request") or {})
+                            card_request = dict((question.get("content_json") or {}).get("operation_approval_request") or {})
+                            for key in ("action_id", "action_definition_sha256", "baseline_sha256", "input_sha256"):
+                                if not prepared.get(key) or prepared.get(key) != card_request.get(key):
+                                    raise ValueError("Operation approval no longer matches this card")
+                            approved_actions = dict(current_request.get("approved_actions") or {})
+                            approved_actions[str(prepared["action_id"])] = {
+                                "approval_message_id": message_id,
+                                **{key: prepared[key] for key in ("action_definition_sha256", "baseline_sha256", "input_sha256")},
+                            }
+                            run = await (await connection.execute(
+                                """UPDATE assistant.runs SET status='queued',available_at=now(),
+                                    waiting_question_message_id=NULL,request_json=request_json || %s,
+                                    updated_at=now() WHERE run_id=%s AND status='waiting_user' RETURNING *""",
+                                (Jsonb({"approved_actions": approved_actions, "approval_kind": None,
+                                        "operation_approval_request": None, "answer_message_id": message_id}),
+                                 question["run_id"]),
+                            )).fetchone()
+                            if run is None:
+                                raise RuntimeError("Operation is no longer waiting")
+                            await connection.execute("UPDATE assistant.messages SET run_id=%s WHERE message_id=%s", (run["run_id"], message_id))
+                            run = await self._supervise_answer_locked(connection, run, message_id)
+                            await connection.commit()
+                            return {"message": message, "run": run, "duplicate": False, "resumed": True,
+                                    "stale_reply": False, "approval_decision": "approve", "decision_required": False,
+                                    "partial_answer": False, "correction_run": False, "superseded_run_ids": []}
+                        if current_request.get('protocol_revision')=='1.2' and current_request.get('approval_kind')=='release':
+                            from assistant_kernel.services.prompt_protocol import PromptProtocol
+                            root=await (await connection.execute('SELECT * FROM assistant.runs WHERE run_id=%s FOR UPDATE',(question['run_id'],))).fetchone()
+                            compiler=PromptProtocol(self.settings,self)
+                            if (question['content_json'].get('publication_bundle_ref')!=current_request.get('sealed_candidate_bundle')
+                                    or question['content_json'].get('review_ref')!=(current_request.get('accepted_documents') or {}).get('review_report')
+                                    or await compiler.input_head_locked(connection,root)!=current_request.get('publication_input_head_ref')):
+                                raise PermissionError('Specific publication approval is stale; sealed bytes, Review or source inputs changed')
+                            publication=await self._queue_approved_publication_locked(connection,root,message_id,authorization_kind='final')
+                            await connection.execute("UPDATE assistant.runs SET waiting_question_message_id=NULL,request_json=request_json || %s WHERE run_id=%s",
+                                (Jsonb({'approval_kind':None}),root['run_id']))
+                            await connection.execute('UPDATE assistant.messages SET run_id=%s WHERE message_id=%s',(root['run_id'],message_id))
+                            await connection.commit()
+                            return {'message':message,'run':publication['publication_run'],'duplicate':False,'resumed':True,
+                                'stale_reply':False,'approval_decision':'approve','decision_required':False,'partial_answer':False,
+                                'correction_run':False,'superseded_run_ids':[]}
                         single_release = bool(
                             current_request.get("task_protocol") == "single-agent.v2"
                             and current_request.get("approval_kind") == "release"
@@ -602,209 +651,123 @@ class CoreRepository:
                                 question["run_id"],
                             ),
                         )
-                        if stage_index + 1 < len(stage_plan):
-                            next_stage = stage_plan[stage_index + 1]
-                            next_run_id = str(uuid.uuid4())
-                            root_id = str(current_request.get("task_root_run_id") or question["run_id"])
-                            next_request = {
+                        publish_run = None
+                        candidate = next((
+                                item for item in reversed(approved_refs)
+                                if item.get("kind") == "candidate_manifest"
+                                or str(item.get("uri") or "").endswith("/candidate/manifest.json")
+                            ), None)
+                        if single_release and candidate is None:
+                            raise ValueError("release approval has no candidate manifest")
+                        if (
+                            question["run_stage"] == "review"
+                            or (
+                                current_request.get("task_protocol") == "single-agent.v2"
+                                and current_request.get("approval_kind") == "release"
+                            )
+                        ) and (
+                            candidate is not None
+                            or current_request.get("task_kind") == "skill_change"
+                        ):
+                            if candidate is None:
+                                raise ValueError("approved Skill Review has no candidate manifest")
+                            publish_request = {
                                 **current_request,
-                                "stage_index": stage_index + 1,
-                                "task_root_run_id": root_id,
-                                "prior_artifacts": json_compatible(
-                                    list(current_request.get("prior_artifacts") or [])
-                                    + approved_refs
-                                ),
+                                "candidate_manifest_uri": candidate["uri"],
+                                "candidate_bundle_uri": str(
+                                    (current_request.get("sealed_candidate_bundle") or {}).get("uri")
+                                    or (current_request.get("sealed_candidate_bundle") or {}).get("bundle_uri")
+                                    or ""
+                                ) or None,
+                                "candidate_bundle_file_sha256": (
+                                    current_request.get("sealed_candidate_bundle") or {}
+                                ).get("sha256"),
+                                "implementation_run_id": candidate.get("producer_run_id"),
+                                "review_run_id": str(question["run_id"]),
+                                "approval_message_id": message_id,
+                                "approved_artifacts": approved_refs,
                             }
-                            if (
-                                question["run_stage"] == "requirements"
-                                or current_request.get("task_protocol") == "task.v1"
-                            ) and approved_refs:
-                                approved_requirement = next(
+                            target_skill = str(
+                                (current_request.get("capability_change") or {}).get("target_skill") or ""
+                            )
+                            publish_kind = "skill" if target_skill else "files"
+                            publish_run = await (
+                                await connection.execute(
+                                    """
+                                    INSERT INTO assistant.runs(
+                                        run_id,project_id,agent_key,trigger_message_id,parent_run_id,
+                                        run_type,stage,status,conversation_key,request_json,
+                                        executor_json,idempotency_key
+                                    ) VALUES (%s,%s,%s,%s,%s,'publish','publish','queued',%s,%s,'{}'::jsonb,%s)
+                                    ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL
+                                    DO UPDATE SET idempotency_key=EXCLUDED.idempotency_key RETURNING *
+                                    """,
                                     (
-                                        item for item in reversed(approved_refs)
-                                        if "/submissions/" in str(item.get("uri") or "")
+                                        str(uuid.uuid4()), project_id,
+                                        f"project:{project_id}:publisher", message_id,
+                                        question["run_id"], f"publish:{project_id}:{target_skill or 'files'}",
+                                        Jsonb(json_compatible(publish_request)),
+                                        f"{publish_kind}-publish:{question['run_id']}:{message_id}",
                                     ),
-                                    approved_refs[-1],
                                 )
-                                next_request["requirements_approval"] = {
-                                    "requirements_run_id": str(question["run_id"]),
-                                    "approval_message_id": message_id,
-                                    "artifact_uri": approved_requirement.get("uri"),
-                                    "artifact_sha256": approved_requirement.get("sha256"),
-                                }
-                                if current_request.get("task_protocol") == "task.v1":
-                                    next_request["work_order_approval"] = dict(
-                                        next_request["requirements_approval"]
-                                    )
-                            cursor = await connection.execute(
+                            ).fetchone()
+                        if single_release:
+                            if publish_run is None:
+                                raise RuntimeError("release approval did not create a Publisher Run")
+                            await connection.execute(
                                 """
-                                INSERT INTO assistant.runs(
-                                    run_id,project_id,agent_key,trigger_message_id,parent_run_id,
-                                    run_type,stage,status,conversation_key,request_json,
-                                    executor_json,idempotency_key
-                                ) VALUES (%s,%s,%s,%s,%s,'stage',%s,'queued',%s,%s,%s,%s)
-                                ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL
-                                DO UPDATE SET idempotency_key=EXCLUDED.idempotency_key RETURNING *
+                                UPDATE assistant.runs SET
+                                    request_json=request_json || %s,
+                                    updated_at=now()
+                                WHERE run_id=%s AND status='waiting_user'
                                 """,
                                 (
-                                    next_run_id, project_id, f"project:{project_id}:{next_stage}",
-                                    message_id, question["run_id"], next_stage,
-                                    conversation_key(
-                                        project_id, f"project:{project_id}:{next_stage}",
-                                        str(question["channel"]), str(question["chat_id"]),
-                                    ),
-                                    Jsonb(next_request),
-                                    Jsonb(stage_executor(next_request, next_stage)),
-                                    f"task-stage:{root_id}:{stage_index + 1}:{next_stage}",
+                                    Jsonb({
+                                        "task_phase": "publishing",
+                                        "publish_run_id": str(publish_run["run_id"]),
+                                    }),
+                                    question["run_id"],
                                 ),
                             )
-                            run = await cursor.fetchone()
+                        run = publish_run or await (
                             await connection.execute(
-                                "UPDATE assistant.messages SET run_id=%s WHERE message_id=%s",
-                                (run["run_id"], message_id),
+                                "SELECT * FROM assistant.runs WHERE run_id=%s",
+                                (question["run_id"],),
                             )
+                        ).fetchone()
+                        await connection.execute(
+                            "UPDATE assistant.messages SET run_id=%s WHERE message_id=%s",
+                            (run["run_id"], message_id),
+                        )
+                        if publish_run is None:
                             await connection.execute(
                                 """
                                 INSERT INTO assistant.messages(
                                     message_id,project_id,run_id,channel,chat_id,user_id,direction,
                                     message_type,reply_to_message_id,content_json,delivery_status,
                                     idempotency_key
-                                ) VALUES (%s,%s,%s,%s,%s,%s,'outbound','kernel_notice',%s,%s,'pending',%s)
+                                ) VALUES (%s,%s,%s,%s,%s,%s,'outbound','reply',%s,%s,'pending',%s)
                                 ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL
                                 DO NOTHING
                                 """,
                                 (
-                                    str(uuid.uuid4()), project_id, run["run_id"], channel,
+                                    str(uuid.uuid4()), project_id, question["run_id"], channel,
                                     chat_id, user_id, message_id,
                                     Jsonb({
-                                        "text": (
-                                            f"已批准 {question['run_stage'] or 'work_order'}，已创建下一阶段 "
-                                            f"{next_stage}。\nRun ID：{run['run_id']}\n"
-                                            f"当前状态：{run['status']}"
-                                        ),
+                                        "text": "已记录最终批准，任务阶段链已完成。",
                                         "origin": "kernel",
                                         "context_visibility": "ui_only",
-                                        "transition": {
-                                            "from_run_id": str(question["run_id"]),
-                                            "from_stage": str(question["run_stage"] or "plan"),
-                                            "to_run_id": str(run["run_id"]),
-                                            "to_stage": next_stage,
-                                        },
                                     }),
-                                    f"stage-transition:{question['run_id']}:{message_id}:{next_stage}",
+                                    f"approval-receipt:{question['run_id']}:{message_id}",
                                 ),
                             )
-                        else:
-                            publish_run = None
-                            candidate = next((
-                                    item for item in reversed(approved_refs)
-                                    if item.get("kind") == "candidate_manifest"
-                                    or str(item.get("uri") or "").endswith("/candidate/manifest.json")
-                                ), None)
-                            if single_release and candidate is None:
-                                raise ValueError("release approval has no candidate manifest")
-                            if (
-                                question["run_stage"] == "review"
-                                or (
-                                    current_request.get("task_protocol") == "single-agent.v2"
-                                    and current_request.get("approval_kind") == "release"
-                                )
-                            ) and (
-                                candidate is not None
-                                or current_request.get("task_kind") == "skill_change"
-                            ):
-                                if candidate is None:
-                                    raise ValueError("approved Skill Review has no candidate manifest")
-                                publish_request = {
-                                    **current_request,
-                                    "candidate_manifest_uri": candidate["uri"],
-                                    "candidate_bundle_uri": str(
-                                        (current_request.get("sealed_candidate_bundle") or {}).get("uri")
-                                        or (current_request.get("sealed_candidate_bundle") or {}).get("bundle_uri")
-                                        or ""
-                                    ) or None,
-                                    "candidate_bundle_file_sha256": (
-                                        current_request.get("sealed_candidate_bundle") or {}
-                                    ).get("sha256"),
-                                    "implementation_run_id": candidate.get("producer_run_id"),
-                                    "review_run_id": str(question["run_id"]),
-                                    "approval_message_id": message_id,
-                                    "approved_artifacts": approved_refs,
-                                }
-                                target_skill = str(
-                                    (current_request.get("capability_change") or {}).get("target_skill") or ""
-                                )
-                                publish_kind = "skill" if target_skill else "files"
-                                publish_run = await (
-                                    await connection.execute(
-                                        """
-                                        INSERT INTO assistant.runs(
-                                            run_id,project_id,agent_key,trigger_message_id,parent_run_id,
-                                            run_type,stage,status,conversation_key,request_json,
-                                            executor_json,idempotency_key
-                                        ) VALUES (%s,%s,%s,%s,%s,'publish','publish','queued',%s,%s,'{}'::jsonb,%s)
-                                        ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL
-                                        DO UPDATE SET idempotency_key=EXCLUDED.idempotency_key RETURNING *
-                                        """,
-                                        (
-                                            str(uuid.uuid4()), project_id,
-                                            f"project:{project_id}:publisher", message_id,
-                                            question["run_id"], f"publish:{project_id}:{target_skill or 'files'}",
-                                            Jsonb(json_compatible(publish_request)),
-                                            f"{publish_kind}-publish:{question['run_id']}:{message_id}",
-                                        ),
-                                    )
-                                ).fetchone()
-                            if single_release:
-                                if publish_run is None:
-                                    raise RuntimeError("release approval did not create a Publisher Run")
-                                await connection.execute(
-                                    """
-                                    UPDATE assistant.runs SET
-                                        request_json=request_json || %s,
-                                        updated_at=now()
-                                    WHERE run_id=%s AND status='waiting_user'
-                                    """,
-                                    (
-                                        Jsonb({
-                                            "task_phase": "publishing",
-                                            "publish_run_id": str(publish_run["run_id"]),
-                                        }),
-                                        question["run_id"],
-                                    ),
-                                )
-                            run = publish_run or await (
-                                await connection.execute(
-                                    "SELECT * FROM assistant.runs WHERE run_id=%s",
-                                    (question["run_id"],),
-                                )
-                            ).fetchone()
-                            await connection.execute(
-                                "UPDATE assistant.messages SET run_id=%s WHERE message_id=%s",
-                                (run["run_id"], message_id),
-                            )
-                            if publish_run is None:
-                                await connection.execute(
-                                    """
-                                    INSERT INTO assistant.messages(
-                                        message_id,project_id,run_id,channel,chat_id,user_id,direction,
-                                        message_type,reply_to_message_id,content_json,delivery_status,
-                                        idempotency_key
-                                    ) VALUES (%s,%s,%s,%s,%s,%s,'outbound','reply',%s,%s,'pending',%s)
-                                    ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL
-                                    DO NOTHING
-                                    """,
-                                    (
-                                        str(uuid.uuid4()), project_id, question["run_id"], channel,
-                                        chat_id, user_id, message_id,
-                                        Jsonb({
-                                            "text": "已记录最终批准，任务阶段链已完成。",
-                                            "origin": "kernel",
-                                            "context_visibility": "ui_only",
-                                        }),
-                                        f"approval-receipt:{question['run_id']}:{message_id}",
-                                    ),
-                                )
+                        resumed = True
+                    elif decision == 'revise' and (question['run_request_json'] or {}).get('protocol_revision') == '1.2':
+                        run = await (await connection.execute('SELECT * FROM assistant.runs WHERE run_id=%s',
+                            (question['run_id'],))).fetchone()
+                        await connection.execute('UPDATE assistant.messages SET run_id=%s WHERE message_id=%s',
+                            (question['run_id'], message_id))
+                        run = await self._supervise_answer_locked(connection, run, message_id)
                         resumed = True
                     elif (
                         decision == "revise"
@@ -840,64 +803,6 @@ class CoreRepository:
                         )).fetchone()
                         if run is None:
                             raise RuntimeError("Requirements Task is no longer waiting")
-                        await connection.execute(
-                            "UPDATE assistant.messages SET run_id=%s WHERE message_id=%s",
-                            (run["run_id"], message_id),
-                        )
-                        resumed = True
-                    elif decision == "revise" and question["run_stage"] == "review":
-                        current_request = dict(question["run_request_json"] or {})
-                        stage_plan = [str(item) for item in current_request.get("stage_plan") or []]
-                        target_stage = review_rework_stage(stage_plan)
-                        round_number = int(current_request.get("stage_round") or 1) + 1
-                        await connection.execute(
-                            """
-                            UPDATE assistant.runs SET status='succeeded',waiting_question_message_id=NULL,
-                                result_json=COALESCE(result_json,'{}'::jsonb) || %s,
-                                ended_at=now(),updated_at=now()
-                            WHERE run_id=%s AND status='waiting_user'
-                            """,
-                            (
-                                Jsonb({"approval": "revision_requested",
-                                       "approval_message_id": message_id}),
-                                question["run_id"],
-                            ),
-                        )
-                        root_id = str(current_request.get("task_root_run_id") or question["run_id"])
-                        next_request = {
-                            **current_request,
-                            "stage_index": stage_plan.index(target_stage),
-                            "stage_round": round_number,
-                            "review_feedback": {
-                                "source_review_run_id": str(question["run_id"]),
-                                "user_revision_request": json_compatible(content),
-                            },
-                        }
-                        run = await (
-                            await connection.execute(
-                                """
-                                INSERT INTO assistant.runs(
-                                    run_id,project_id,agent_key,trigger_message_id,parent_run_id,
-                                    run_type,stage,status,conversation_key,request_json,
-                                    executor_json,idempotency_key
-                                ) VALUES (%s,%s,%s,%s,%s,'stage',%s,'queued',%s,%s,%s,%s)
-                                ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL
-                                DO UPDATE SET idempotency_key=EXCLUDED.idempotency_key RETURNING *
-                                """,
-                                (
-                                    str(uuid.uuid4()), project_id,
-                                    f"project:{project_id}:{target_stage}", message_id,
-                                    question["run_id"], target_stage,
-                                    conversation_key(
-                                        project_id, f"project:{project_id}:{target_stage}",
-                                        str(question["channel"]), str(question["chat_id"]),
-                                    ),
-                                    Jsonb(json_compatible(next_request)),
-                                    Jsonb(stage_executor(next_request, target_stage)),
-                                    f"task-rework:{root_id}:{round_number}:{target_stage}",
-                                ),
-                            )
-                        ).fetchone()
                         await connection.execute(
                             "UPDATE assistant.messages SET run_id=%s WHERE message_id=%s",
                             (run["run_id"], message_id),
@@ -1051,6 +956,7 @@ class CoreRepository:
                                     "UPDATE assistant.messages SET run_id=%s WHERE message_id=%s",
                                     (run["run_id"], message_id),
                                 )
+                                run = await self._supervise_answer_locked(connection, run, message_id)
                 else:
                     stale_reply = True
 
@@ -1127,7 +1033,7 @@ class CoreRepository:
                 )
             if (
                 stale_reply and question is not None and not detached_by_reset
-                and not retired_stage_reply and not closed_release_reply
+                and not retired_stage_reply and not closed_release_reply and not deferred_approval_reply
             ):
                 correction_agent = (
                     "system-butler" if project_id == "system"
@@ -1162,7 +1068,6 @@ class CoreRepository:
                             Jsonb(json_compatible(correction_request)),
                             Jsonb(json_compatible({
                                 **dict(executor or {}),
-                                "scheduling_lane": "conversation",
                             })),
                             f"run:correction:{message_id}",
                         ),
@@ -1175,10 +1080,10 @@ class CoreRepository:
                 correction_run = True
 
             if not resumed and not stale_reply and not reply_to_message_id:
-                lane = scheduling_lane("chat", agent_key)
                 if (
                     message_type == "text"
                     and agent_key == f"project:{project_id}:manager"
+                    and single_agent_project
                 ):
                     # Only PM-manager texts can open a second Task; supervisor
                     # and operator conversation messages always flow through.
@@ -1186,18 +1091,14 @@ class CoreRepository:
                         await connection.execute(
                             """
                             SELECT * FROM assistant.runs
-                            WHERE project_id=%s
-                              AND request_json->>'task_protocol'='single-agent.v2'
-                              AND (
-                                status IN ('queued','running','reconciling')
-                                OR (status IN ('waiting_user','waiting_supervisor','waiting_children','blocked') AND
-                                    request_json->>'task_phase' IN
-                                    ('publishing','publication_reconciling'))
-                              )
+                            WHERE project_id=%s AND agent_key=%s AND run_type='chat'
+                              AND mutex_key=%s
+                              AND COALESCE(request_json->>'task_activation','active')='active'
+                              AND status IN ('queued','running','reconciling','waiting_user','waiting_supervisor','blocked')
                             ORDER BY created_at,run_id LIMIT 1
                             FOR UPDATE
                             """,
-                            (project_id,),
+                            (project_id,agent_key,f"engineering:{project_id}"),
                         )
                     ).fetchone()
                     if active_task is not None:
@@ -1208,7 +1109,7 @@ class CoreRepository:
                                 active_task["run_id"],
                                 Jsonb({
                                     **json_compatible(content),
-                                    "deferred_task_message": True,
+                                    "task_input_status": "pending",
                                     "task_id": str(active_task["run_id"]),
                                 }),
                                 message_id,
@@ -1229,8 +1130,7 @@ class CoreRepository:
                                     channel, chat_id, user_id, message_id,
                                     Jsonb({
                                         "text": (
-                                            "当前Task正在执行；本消息已记录但不会中断或创建新Task。"
-                                            "请等待当前Turn结束；需要改变目标时先取消当前Task。\n"
+                                            "补充消息已绑定当前Task，将在后续Turn处理；审批和恢复条件保持有效。\n"
                                             f"Task ID：{active_task['run_id']}\n"
                                             f"状态：{active_task['status']}"
                                         ),
@@ -1253,44 +1153,6 @@ class CoreRepository:
                             "active_task": active_task, "outbound": notice,
                             "superseded_run_ids": [],
                         }
-                input_fingerprint = canonical_sha256({
-                    "text": str(content.get("text") or "").strip(),
-                    "attachments": list(
-                        (content.get("discord") or {}).get("attachments") or []
-                    ),
-                })
-                if (
-                    lane == "conversation" and message_type == "text"
-                    and not agent_key.endswith(":supervisor")
-                ):
-                    duplicate_cursor = await connection.execute(
-                        """
-                        UPDATE assistant.runs prior
-                        SET status='cancelled',ended_at=now(),updated_at=now(),
-                            error_json=COALESCE(error_json,'{}'::jsonb) || %s
-                        FROM assistant.messages trigger
-                        WHERE prior.trigger_message_id=trigger.message_id
-                          AND prior.project_id=%s AND prior.agent_key=%s
-                          AND prior.conversation_key=%s
-                          AND prior.run_type='chat' AND prior.status='queued'
-                          AND trigger.user_id IS NOT DISTINCT FROM %s
-                          AND prior.request_json->>'input_fingerprint'=%s
-                        RETURNING prior.run_id
-                        """,
-                        (
-                            Jsonb({
-                                "type": "SupersededDuplicate",
-                                "message": "a newer identical conversation input replaced this queued Run",
-                                "superseded_by_message_id": message_id,
-                            }),
-                            project_id, agent_key,
-                            conversation_key(project_id, agent_key, channel, chat_id),
-                            user_id, input_fingerprint,
-                        ),
-                    )
-                    superseded_run_ids = [
-                        str(item["run_id"]) for item in await duplicate_cursor.fetchall()
-                    ]
                 if not agent_key.endswith(":supervisor"):
                     cursor = await connection.execute(
                         """
@@ -1305,10 +1167,9 @@ class CoreRepository:
                             conversation_key(project_id, agent_key, channel, chat_id),
                             Jsonb({
                                 "message_id": message_id,
-                                "input_fingerprint": input_fingerprint,
                             }),
                             Jsonb(json_compatible({
-                                **dict(executor or {}), "scheduling_lane": lane,
+                                **dict(executor or {}),
                             })),
                             f"run:message:{message_id}",
                         ),
@@ -1318,6 +1179,8 @@ class CoreRepository:
                         "UPDATE assistant.messages SET run_id=%s WHERE message_id=%s",
                         (run_id, message_id),
                     )
+            if run is not None:
+                run = await self._persist_scheduling(connection, run)
             await connection.commit()
             message["run_id"] = run["run_id"] if run else None
             return {
@@ -1338,6 +1201,7 @@ class CoreRepository:
         if not user_id:
             raise PermissionError("a card choice requires an identified user")
         async with self.database.connection() as connection:
+            await self._require_active_run(connection, run_id)
             question = await (await connection.execute(
                 """
                 SELECT m.*,r.status AS run_status,r.request_json AS run_request_json,
@@ -1498,6 +1362,10 @@ class CoreRepository:
                 """,
                 (run_id, Jsonb({"choice_status": "recorded"}), incoming["message_id"]),
             )
+            if resumed:
+                current = await (await connection.execute("SELECT * FROM assistant.runs WHERE run_id=%s", (run_id,))).fetchone()
+                if current:
+                    await self._supervise_answer_locked(connection, current, str(incoming["message_id"]))
             await connection.commit()
             return {
                 "choice_status": "recorded", "duplicate": False,
@@ -1509,7 +1377,12 @@ class CoreRepository:
             cursor = await connection.execute(
                 "SELECT * FROM assistant.messages WHERE message_id=%s", (message_id,)
             )
-            return await cursor.fetchone()
+            row = await cursor.fetchone()
+            if row:
+                from assistant_kernel.services.question_groups import QuestionGroupService, projection_ref, REFRESH_SCHEMA
+                if projection_ref(row['content_json'] or {}) or (row['content_json'] or {}).get('schema_version')==REFRESH_SCHEMA:
+                    row = await QuestionGroupService(self.settings,self).hydrate(connection,row)
+            return row
 
     async def delivery_reply_external_id(self, outbound_message_id: str) -> str | None:
         """Resolve the Feishu message that an outbound message should quote."""
@@ -1545,6 +1418,145 @@ class CoreRepository:
             ).fetchone()
             return str(source["external_message_id"]) if source and source["external_message_id"] else None
 
+    async def record_questionnaire_action(
+        self, *, message_id: str, project_id: str, channel: str, chat_id: str,
+        user_id: str, external_event_id: str, revision: int, page: int,
+        action: str, value: str | None = None,
+    ) -> dict[str, Any]:
+        """Persist drafts; atomically accept a final answer and resume once."""
+        if not user_id:
+            raise PermissionError("questionnaire requires an identified user")
+        from assistant_kernel.services.question_groups import QuestionGroupService, projection_ref
+        async with self.database.connection() as lookup:
+            projection = await (await lookup.execute('SELECT content_json,run_id FROM assistant.messages WHERE message_id=%s',
+                (message_id,))).fetchone()
+            if projection and projection['run_id']:
+                await self._require_active_run(lookup, str(projection['run_id']))
+        if projection and projection_ref(projection['content_json'] or {}):
+            return await QuestionGroupService(self.settings,self).record_action(message_id=message_id,
+                project_id=project_id,channel=channel,chat_id=chat_id,user_id=user_id,
+                external_event_id=external_event_id,revision=revision,page=page,action=action,value=value)
+        event_request = {
+            "message_id": message_id, "revision": revision, "page": page,
+            "action": action, "value": value,
+        }
+        event_key = f"questionnaire:{channel}:{external_event_id}"
+        async with self.database.connection() as connection:
+            await connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",
+                (f"conversation-command:{project_id}:{channel}:{chat_id}",),
+            )
+            row = await (await connection.execute(
+                """
+                SELECT m.*,r.status AS run_status,r.run_type,r.request_json AS run_request_json,
+                       r.result_json AS run_result_json,r.interaction_seq AS run_interaction_seq,
+                       r.waiting_question_message_id
+                FROM assistant.messages m JOIN assistant.runs r ON r.run_id=m.run_id
+                WHERE m.message_id=%s AND m.project_id=%s AND m.channel=%s AND m.chat_id=%s
+                  AND m.user_id IS NOT DISTINCT FROM %s
+                  AND m.direction='outbound' AND m.message_type='question'
+                FOR UPDATE OF r,m
+                """,
+                (message_id, project_id, channel, chat_id, user_id),
+            )).fetchone()
+            if row is None:
+                raise PermissionError("questionnaire belongs to another user or conversation")
+            body = dict(row["content_json"] or {})
+            if not is_questionnaire(body):
+                raise ValueError("message is not a questionnaire")
+            existing = await (await connection.execute(
+                "SELECT * FROM assistant.messages WHERE idempotency_key=%s", (event_key,),
+            )).fetchone()
+            if existing:
+                if (
+                    str(existing["user_id"]) != user_id
+                    or (existing["content_json"] or {}).get("event_request") != event_request
+                ):
+                    raise ValueError("questionnaire event ID was reused with different content")
+                await connection.commit()
+                return {"message": dict(row), "duplicate": True, "resumed": False}
+            current_ids = {
+                str(item) for item in (row["run_result_json"] or {}).get("question_message_ids") or []
+            }
+            if not current_ids:
+                current_ids = {str(row["waiting_question_message_id"])}
+            reset = await (await connection.execute(
+                """
+                SELECT 1 FROM assistant.messages
+                WHERE project_id=%s AND channel=%s AND chat_id=%s
+                  AND direction='system' AND message_type='conversation_reset'
+                  AND created_at>%s LIMIT 1
+                """, (project_id, channel, chat_id, row["created_at"]),
+            )).fetchone()
+            if (
+                row["run_status"] != "waiting_user" or message_id not in current_ids
+                or int(body["interaction_seq"]) != int(row["run_interaction_seq"])
+                or reset or self._retired_stage(project_id, {
+                    "run_type": row["run_type"], "request_json": row["run_request_json"],
+                })
+            ):
+                raise PermissionError("questionnaire is no longer current")
+            if action != "reply" and int(body["questionnaire"]["revision"]) != revision:
+                raise ValueError("页面已更新，请刷新卡片后重试。")
+            if action == "reply":
+                page = int(body["questionnaire"]["cursor"])
+            effective_action = (
+                "additional" if page == len(body["questions"]) else "text"
+            ) if action == "reply" else action
+            updated = advance_questionnaire(body, action=effective_action, page=page, value=value)
+            submitted = action == "submit"
+            state = updated["questionnaire"]
+            answer_payload = {
+                "answers": dict(state["answers"]), "questions": body["questions"],
+                "choice_ids": dict(state["choices"]),
+                "additional_text": state["additional_text"],
+            }
+            incoming_id = str(uuid.uuid4())
+            event_content = {
+                "schema_version": "questionnaire-answer.v1" if submitted else "questionnaire-action.v1",
+                "context_visibility": "semantic" if submitted else "ui_only",
+                "event_request": event_request,
+                **(answer_payload if submitted else {}),
+            }
+            await connection.execute(
+                """
+                INSERT INTO assistant.messages(
+                    message_id,project_id,session_id,run_id,channel,chat_id,user_id,
+                    external_event_id,direction,message_type,reply_to_message_id,
+                    content_json,delivery_status,idempotency_key
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'inbound',%s,%s,%s,'received',%s)
+                """,
+                (incoming_id, project_id, row["session_id"], row["run_id"], channel,
+                 chat_id, user_id, external_event_id, "answer" if submitted else "action",
+                 message_id, Jsonb(json_compatible(event_content)), event_key),
+            )
+            await connection.execute(
+                "UPDATE assistant.messages SET content_json=%s,updated_at=now() WHERE message_id=%s",
+                (Jsonb(json_compatible(updated)), message_id),
+            )
+            if submitted:
+                resumed_run = await (await connection.execute(
+                    """
+                    UPDATE assistant.runs
+                    SET status='queued',available_at=now(),waiting_question_message_id=NULL,
+                        request_json=jsonb_set(
+                          COALESCE(request_json,'{}'::jsonb),'{answer_history}',
+                          COALESCE(request_json->'answer_history','[]'::jsonb) || %s
+                        ) || %s,updated_at=now()
+                    WHERE run_id=%s AND status='waiting_user' RETURNING *
+                    """,
+                    (Jsonb([{"answer_message_id": incoming_id, "answer": answer_payload}]),
+                     Jsonb({"answer_message_id": incoming_id, "answer": answer_payload,
+                            "answer_state": state["answers"]}), row["run_id"]),
+                )).fetchone()
+                if resumed_run is not None:
+                    await self._supervise_answer_locked(connection, resumed_run, incoming_id)
+            await connection.commit()
+            return {
+                "message": {**dict(row), "content_json": updated},
+                "duplicate": False, "resumed": submitted,
+            }
+
     async def list_messages(
         self, project_id: str, channel: str | None = None,
         chat_id: str | None = None, limit: int = 100,
@@ -1565,6 +1577,12 @@ class CoreRepository:
                 values,
             )
             return list(await cursor.fetchall())
+
+    def _filter_revoked_context(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        from assistant_kernel.services.public_background import PublicBackgroundService
+        revoked = PublicBackgroundService(self.settings.data_root,self.settings).revoked_source_message_ids()
+        return [row for row in rows if str(row["message_id"]) not in revoked
+                and str(row.get("reply_to_message_id") or "") not in revoked]
 
     async def list_recent_history(
         self, *, project_id: str, lookback_days: int = 365,
@@ -1605,7 +1623,9 @@ class CoreRepository:
                 )
             ).fetchall())
         has_more = len(rows) > limit
-        selected = rows[:limit]
+        # Advance over the raw page even when every visible source was revoked.
+        page = rows[:limit]
+        selected = self._filter_revoked_context(page)
         items = []
         for row in selected:
             content = dict(row["content_json"] or {})
@@ -1627,8 +1647,8 @@ class CoreRepository:
                 "created_at": row["created_at"].isoformat(),
             })
         next_cursor = None
-        if has_more and selected:
-            last = selected[-1]
+        if has_more and page:
+            last = page[-1]
             next_cursor = _encode_history_cursor(
                 last["created_at"], str(last["message_id"])
             )
@@ -1684,7 +1704,7 @@ class CoreRepository:
                     boundary_message_id, min(max(limit, 1), 500),
                 ),
             )
-            return list(await cursor.fetchall())
+            return self._filter_revoked_context(list(await cursor.fetchall()))
 
     async def current_conversation_goal(
         self, project_id: str, channel: str, chat_id: str,
@@ -1799,12 +1819,21 @@ class CoreRepository:
                     JOIN assistant.messages trigger ON trigger.message_id=r.trigger_message_id
                     WHERE r.project_id=%s AND trigger.channel=%s AND trigger.chat_id=%s
                       AND r.status IN ('queued','running')
+                      AND COALESCE(r.request_json->>'protocol_revision','')<>'1.2'
                       AND (r.run_type='chat' OR (r.run_type='stage' AND r.stage='requirements'))
                     FOR UPDATE OF r
                     """,
                     (project_id, channel, chat_id),
                 )
             ).fetchall())
+            from assistant_kernel.services.question_groups import QuestionGroupService
+            owners=await (await connection.execute("""SELECT DISTINCT run_id FROM assistant.messages
+                WHERE project_id=%s AND channel=%s AND chat_id=%s AND direction='outbound'
+                AND content_json->>'schema_version'='question-group-projection.v1' AND run_id IS NOT NULL""",
+                (project_id,channel,chat_id))).fetchall()
+            for owner in owners:
+                await QuestionGroupService(self.settings,self).withdraw_views_locked(connection,owner_id=str(owner['run_id']),
+                    source_message_id=source_message_id,channel=channel,chat_id=chat_id)
             cancelled = [str(item["run_id"]) for item in runs if item["status"] == "queued"]
             cancel_requested = [
                 str(item["run_id"]) for item in runs if item["status"] == "running"
@@ -1919,13 +1948,30 @@ class CoreRepository:
                     LEFT JOIN assistant.messages question
                       ON question.message_id=r.waiting_question_message_id
                     WHERE r.project_id=%s AND trigger.channel=%s AND trigger.chat_id=%s
-                      AND r.status IN ('waiting_user','waiting_supervisor','waiting_children','blocked')
+                      AND r.status IN ('waiting_user','waiting_supervisor','blocked')
                       AND (trigger.user_id IS NULL OR trigger.user_id IS NOT DISTINCT FROM %s)
                     ORDER BY r.updated_at DESC,r.run_id DESC LIMIT %s
                     """,
                     (project_id, channel, chat_id, user_id, min(max(limit, 1), 25)),
                 )
             ).fetchall())
+            from assistant_kernel.services.question_groups import QuestionGroupService
+            projections=await (await connection.execute("""SELECT DISTINCT ON(g.message_id) r.run_id,r.project_id,r.agent_key,
+                r.run_type,r.stage,r.status,r.created_at,r.updated_at,p.message_id AS waiting_question_message_id,
+                p.message_type AS question_message_type,g.content_json->>'task_id' AS logical_task_id
+                FROM assistant.messages p JOIN assistant.runs r ON r.run_id=p.run_id
+                JOIN assistant.messages g ON g.message_id::text=p.content_json#>>'{question_projection,group_ref,id}'
+                WHERE p.project_id=%s AND p.channel=%s AND p.chat_id=%s AND p.user_id IS NOT DISTINCT FROM %s
+                AND p.direction='outbound' AND p.message_type='question' AND p.content_json->>'schema_version'='question-group-projection.v1'
+                AND g.content_json#>>'{group,status}'='open' AND r.status NOT IN ('succeeded','failed','cancelled','dead_letter')
+                ORDER BY g.message_id,p.created_at DESC LIMIT %s""",(project_id,channel,chat_id,user_id,min(max(limit,1),25)))).fetchall()
+            logical={row['logical_task_id'] for row in projections if row['logical_task_id']}
+            replaced={row['run_id'] for row in projections}
+            rows=[row for row in rows if row['run_id'] not in replaced and not (str(row['run_id']) in logical and not row.get('question_content'))]
+            for row in projections:
+                message=await (await connection.execute('SELECT * FROM assistant.messages WHERE message_id=%s',(row['waiting_question_message_id'],))).fetchone()
+                hydrated=await QuestionGroupService(self.settings,self).hydrate(connection,message)
+                rows.append({**row,'question_content':hydrated['content_json']})
         return [
             {
                 **dict(row),
@@ -1956,7 +2002,7 @@ class CoreRepository:
                       AND (trigger.user_id IS NULL OR trigger.user_id IS NOT DISTINCT FROM %s)
                     ORDER BY
                       CASE WHEN r.status IN (
-                        'queued','running','waiting_user','waiting_supervisor','waiting_children','blocked','reconciling'
+                        'queued','running','waiting_user','waiting_supervisor','blocked','reconciling'
                       ) THEN 0 ELSE 1 END,
                       r.updated_at DESC,r.run_id DESC
                     LIMIT %s
@@ -1975,6 +2021,7 @@ class CoreRepository:
     ) -> dict[str, Any]:
         """Re-surface a detached waiting interaction in the current chat generation."""
         async with self.database.connection() as connection:
+            await self._require_active_run(connection, run_id)
             await connection.execute(
                 "SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",
                 (f"resume-run:{run_id}",),
@@ -1995,6 +2042,21 @@ class CoreRepository:
                 raise ValueError("Run不存在")
             if self._retired_stage(project_id, run):
                 raise PermissionError("旧阶段任务已退役；请提交新的Task请求")
+            projection=await (await connection.execute("""SELECT p.* FROM assistant.messages p
+                JOIN assistant.messages g ON g.message_id=(p.content_json#>>'{question_projection,group_ref,id}')::uuid
+                WHERE p.run_id=%s AND p.project_id=%s AND p.channel=%s AND p.chat_id=%s
+                AND p.user_id IS NOT DISTINCT FROM %s AND p.direction='outbound' AND p.message_type='question'
+                AND p.content_json->>'schema_version'='question-group-projection.v1'
+                AND g.content_json#>>'{group,status}'='open' ORDER BY p.created_at DESC LIMIT 1""",
+                (run_id,project_id,channel,chat_id,user_id))).fetchone()
+            if projection:
+                if run.get('cancel_requested_at') or run['status'] in {'succeeded','failed','cancelled','dead_letter'}:
+                    raise PermissionError('Question owner is no longer active')
+                from assistant_kernel.services.question_groups import QuestionGroupService
+                restored=await QuestionGroupService(self.settings,self).restore_view_locked(connection,owner=run,projection=projection,
+                    source_message_id=source_message_id,key=idempotency_key)
+                await connection.commit()
+                return {'run':run,'message':restored,'blocked':False,'duplicate':False}
             if (
                 str(run["project_id"]) != project_id
                 or str(run["channel"]) != channel
@@ -2138,7 +2200,7 @@ class CoreRepository:
                 ORDER BY created_at,message_id LIMIT %s""",
                 (session_id, min(max(limit, 1), 5000)),
             )
-            return list(await cursor.fetchall())
+            return self._filter_revoked_context(list(await cursor.fetchall()))
 
     async def list_session_runs(
         self, session_id: str, limit: int = 1000,
@@ -2287,6 +2349,8 @@ class CoreRepository:
         bound_by_user_id: str, source_message_id: str, project_routing_hash: str,
         idempotency_key: str,
     ) -> dict[str, Any]:
+        from assistant_kernel.services.kernel_management import require_active_identity
+        require_active_identity(project_id, agent_key)
         """Bind one chat to one Project; many chats may bind the same Project."""
         content = {
             "schema_version": "route-binding.v4",
@@ -2508,6 +2572,8 @@ class CoreRepository:
         project_id: str, agent_key: str, reason: str,
         idempotency_key: str, source_message_id: str | None = None,
     ) -> dict[str, Any]:
+        from assistant_kernel.services.kernel_management import require_active_identity
+        require_active_identity(project_id, agent_key)
         """Atomically append one durable channel-to-Agent route binding."""
         content = {
             "schema_version": "route-binding.v2",
@@ -2548,8 +2614,39 @@ class CoreRepository:
         request: dict[str, Any], stage: str | None = None,
         parent_run_id: str | None = None, trigger_message_id: str | None = None,
         executor: dict[str, Any] | None = None, idempotency_key: str | None = None,
+        max_attempts: int | None = None,
     ) -> dict[str, Any]:
-        if run_type not in {"chat", "stage", "python"}:
+        async with self.database.connection() as connection:
+            row = await self.create_run_locked(connection, project_id=project_id, agent_key=agent_key,
+                run_type=run_type, request=request, stage=stage, parent_run_id=parent_run_id,
+                trigger_message_id=trigger_message_id, executor=executor, idempotency_key=idempotency_key,
+                max_attempts=max_attempts)
+            await connection.commit()
+            return row
+
+    async def create_run_locked(
+        self, connection, *, project_id: str, agent_key: str, run_type: str,
+        request: dict[str, Any], stage: str | None = None,
+        parent_run_id: str | None = None, trigger_message_id: str | None = None,
+        executor: dict[str, Any] | None = None, idempotency_key: str | None = None,
+        max_attempts: int | None = None,
+    ) -> dict[str, Any]:
+        from assistant_kernel.services.kernel_management import require_active_identity
+        require_active_identity(project_id, agent_key)
+        if max_attempts is not None and (isinstance(max_attempts,bool) or not isinstance(max_attempts,int) or max_attempts<1):
+            raise ValueError('max_attempts must be a positive fixed integer')
+        if request.get("interaction_kind") == "child_task" or agent_key.endswith((":child", ":operator")):
+            raise ValueError("child Run and Operator Agent are retired")
+        if run_type == "stage":
+            raise PermissionError("Stage execution is retired; use single-agent.v2")
+        if run_type == "python":
+            request = {"shared_write": False, **request}
+        if parent_run_id:
+            parent_run_id = str(uuid.UUID(str(parent_run_id)))
+        if trigger_message_id:
+            trigger_message_id = str(uuid.UUID(str(trigger_message_id)))
+        run_scheduling(project_id,agent_key,run_type,request)
+        if run_type not in {"chat", "python"}:
             raise ValueError("run_type must be chat, stage, or python")
         if run_type != "python" and not trigger_message_id:
             raise ValueError("chat and stage runs require trigger_message_id")
@@ -2557,69 +2654,74 @@ class CoreRepository:
         key = idempotency_key or f"run:{run_id}"
         resolved_executor = {
             **dict(executor or {}),
-            "scheduling_lane": scheduling_lane(run_type, agent_key),
         }
-        async with self.database.connection() as connection:
-            if trigger_message_id:
-                trigger = await (
-                    await connection.execute(
-                        "SELECT project_id,channel,chat_id FROM assistant.messages WHERE message_id=%s",
-                        (trigger_message_id,),
-                    )
-                ).fetchone()
-                if trigger is None or str(trigger["project_id"]) != project_id:
-                    raise ValueError("trigger_message_id must belong to the same project")
-            if parent_run_id:
-                parent = await (
-                    await connection.execute(
-                        "SELECT project_id FROM assistant.runs WHERE run_id=%s",
-                        (parent_run_id,),
-                    )
-                ).fetchone()
-                if parent is None or str(parent["project_id"]) != project_id:
-                    raise ValueError("parent_run_id must belong to the same project")
-            run_conversation_key = (
-                "supervisor-task:" + canonical_sha256([
-                    project_id, agent_key, str(request.get("task_id") or ""),
-                ])
-                if (
-                    agent_key.endswith(":supervisor")
-                    and request.get("interaction_kind") == "supervisor_consultation"
-                    and request.get("task_id")
+        if trigger_message_id:
+            trigger = await (
+                await connection.execute(
+                    "SELECT project_id,channel,chat_id FROM assistant.messages WHERE message_id=%s",
+                    (trigger_message_id,),
                 )
-                else conversation_key(
-                    project_id, agent_key,
-                    str(trigger["channel"]), str(trigger["chat_id"]),
+            ).fetchone()
+            if trigger is None or str(trigger["project_id"]) != project_id:
+                raise ValueError("trigger_message_id must belong to the same project")
+        if parent_run_id:
+            parent = await (
+                await connection.execute(
+                    "SELECT project_id FROM assistant.runs WHERE run_id=%s",
+                    (parent_run_id,),
                 )
-                if trigger_message_id else f"python:{project_id}:{run_id}"
-            )
-            cursor = await connection.execute(
-                """
-                INSERT INTO assistant.runs(
-                    run_id,project_id,agent_key,trigger_message_id,parent_run_id,run_type,
-                    stage,status,conversation_key,request_json,executor_json,idempotency_key
-                ) VALUES (%s,%s,%s,%s,%s,%s,%s,'queued',%s,%s,%s,%s)
-                ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL
-                DO UPDATE SET idempotency_key=EXCLUDED.idempotency_key RETURNING *
-                """,
-                (
-                    run_id, project_id, agent_key, trigger_message_id, parent_run_id,
-                    run_type, stage,
-                    run_conversation_key,
-                    Jsonb(json_compatible(request)),
-                    Jsonb(json_compatible(resolved_executor)), key,
-                ),
-            )
-            row = await cursor.fetchone()
+            ).fetchone()
+            if parent is None or str(parent["project_id"]) != project_id:
+                raise ValueError("parent_run_id must belong to the same project")
+        run_conversation_key = f"python:{project_id}:{run_id}" if run_type == "python" else (
+            "supervisor-task:" + canonical_sha256([
+                project_id, agent_key, str(request.get("task_id") or ""),
+            ])
             if (
-                str(row["project_id"]) != project_id
-                or str(row["agent_key"]) != agent_key
-                or str(row["run_type"]) != run_type
-                or (row["request_json"] or {}) != json_compatible(request)
-            ):
-                raise ValueError("idempotency_key was reused for a different run")
-            await connection.commit()
-            return row
+                agent_key.endswith(":supervisor")
+                and request.get("interaction_kind") == "supervisor_consultation"
+                and request.get("task_id")
+            )
+            else conversation_key(
+                project_id, agent_key,
+                str(trigger["channel"]), str(trigger["chat_id"]),
+            )
+            if trigger_message_id else f"python:{project_id}:{run_id}"
+        )
+        cursor = await connection.execute(
+            """
+            INSERT INTO assistant.runs(
+                run_id,project_id,agent_key,trigger_message_id,parent_run_id,run_type,
+                stage,status,conversation_key,request_json,executor_json,idempotency_key
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,'queued',%s,%s,%s,%s)
+            ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL
+            DO UPDATE SET idempotency_key=EXCLUDED.idempotency_key RETURNING *
+            """,
+            (
+                run_id, project_id, agent_key, trigger_message_id, parent_run_id,
+                run_type, stage,
+                run_conversation_key,
+                Jsonb(json_compatible(request)),
+                Jsonb(json_compatible(resolved_executor)), key,
+            ),
+        )
+        row = await cursor.fetchone()
+        if (
+            str(row["project_id"]) != project_id
+            or str(row["agent_key"]) != agent_key
+            or str(row["run_type"]) != run_type
+            or str(row.get("parent_run_id") or "") != str(parent_run_id or "")
+            or str(row.get("trigger_message_id") or "") != str(trigger_message_id or "")
+            or {k:v for k,v in (row["request_json"] or {}).items()
+                if k not in {"capacity_reservation", "capacity_wait"}} != json_compatible(request)
+        ):
+            raise ValueError("idempotency_key was reused for a different run")
+        if max_attempts is not None and row['max_attempts']!=max_attempts:
+            if row['status']!='queued' or row['attempt']!=0:raise ValueError('Retry policy differs from an already attempted binding')
+            row=await (await connection.execute('UPDATE assistant.runs SET max_attempts=%s WHERE run_id=%s RETURNING *',
+                (max_attempts,row['run_id']))).fetchone()
+        row = await self._persist_scheduling(connection, row)
+        return row
 
     async def start_task_from_claim(
         self, *, source_run_id: str, worker_instance_id: str, claim_token: str,
@@ -2629,205 +2731,7 @@ class CoreRepository:
         supersede_run_id: str | None = None,
         supersede_reason: str | None = None,
     ) -> dict[str, Any]:
-        if not goal.strip():
-            raise ValueError("task goal is required")
-        if not stages or len(stages) > 8:
-            raise ValueError("a task requires between one and eight stages")
-        allowed = {"requirements", "implementation", "review"}
-        if any(stage not in allowed for stage in stages) or len(set(stages)) != len(stages):
-            raise ValueError("task stages must be unique supported stage names")
-        if change_class not in {"minor", "major"}:
-            raise ValueError("change_class must be minor or major")
-        new_run_id = str(uuid.uuid4())
-        async with self.database.connection() as connection:
-            source = await (
-                await connection.execute(
-                    """
-                    SELECT r.*,m.channel,m.chat_id,m.user_id
-                    FROM assistant.runs r
-                    JOIN assistant.messages m ON m.message_id=r.trigger_message_id
-                    WHERE r.run_id=%s AND r.worker_instance_id=%s AND r.claim_token=%s
-                      AND r.status='running' AND r.cancel_requested_at IS NULL
-                    FOR UPDATE OF r
-                    """,
-                    (source_run_id, worker_instance_id, claim_token),
-                )
-            ).fetchone()
-            if source is None:
-                raise PermissionError("the scoped source run is no longer leased")
-            if self._single_agent_project(str(source["project_id"])):
-                raise PermissionError(
-                    "Stage Task creation is retired for single-agent.v2 Projects"
-                )
-            existing_open = await (
-                await connection.execute(
-                    """
-                    SELECT run_id,status,stage,run_type FROM assistant.runs r
-                    WHERE r.project_id=%s
-                      AND (
-                        (
-                          COALESCE(r.request_json->>'task_protocol','') IN ('task.v1','single-agent.v2')
-                          AND r.status IN ('queued','running','waiting_user','waiting_supervisor','waiting_children','blocked','reconciling')
-                        ) OR (
-                          r.status IN ('queued','running','reconciling')
-                          AND assistant.run_lane(
-                                r.run_type, r.agent_key,
-                                r.executor_json->>'scheduling_lane'
-                              )='execution'
-                        )
-                      )
-                    ORDER BY r.created_at,r.run_id LIMIT 1
-                    FOR UPDATE OF r
-                    """,
-                    (source["project_id"],),
-                )
-            ).fetchone()
-            if (
-                existing_open is not None
-                and str(existing_open["run_id"]) != str(supersede_run_id or "")
-            ):
-                raise RuntimeError(
-                    "Project already has an open execution task: "
-                    f"{existing_open['run_id']} ({existing_open['status']}); "
-                    "query its status or explicitly supersede it"
-                )
-            supersession: dict[str, Any] | None = None
-            if supersede_run_id:
-                if not str(supersede_reason or "").strip():
-                    raise ValueError("supersede_reason is required when supersede_run_id is set")
-                target = await (
-                    await connection.execute(
-                        "SELECT * FROM assistant.runs WHERE run_id=%s FOR UPDATE",
-                        (supersede_run_id,),
-                    )
-                ).fetchone()
-                if target is None or str(target["project_id"]) != str(source["project_id"]):
-                    raise FileNotFoundError("superseded Run was not found in the current Project")
-                if target["run_type"] != "stage":
-                    raise ValueError("only a Stage Run can be superseded by a Project task")
-                target_request = dict(target.get("request_json") or {})
-                target_root = str(
-                    target_request.get("task_root_run_id") or target["run_id"]
-                )
-                supersession = {
-                    "schema_version": "task-supersession.v1",
-                    "replacement_run_id": new_run_id,
-                    "requested_by_run_id": source_run_id,
-                    "reason": str(supersede_reason).strip(),
-                    "requested_at": datetime.utcnow().isoformat() + "Z",
-                }
-                target_executor = dict(target.get("executor_json") or {})
-                target_executor["supersession"] = supersession
-                if target["status"] in {
-                    "queued", "waiting_user", "waiting_supervisor",
-                    "waiting_children", "blocked",
-                }:
-                    await connection.execute(
-                        """
-                        UPDATE assistant.runs
-                        SET status='cancelled',executor_json=%s,cancel_requested_at=now(),
-                            ended_at=now(),updated_at=now(),waiting_question_message_id=NULL
-                        WHERE run_id=%s
-                        """,
-                        (Jsonb(json_compatible(target_executor)), target["run_id"]),
-                    )
-                elif target["status"] == "running":
-                    await connection.execute(
-                        """
-                        UPDATE assistant.runs
-                        SET executor_json=%s,cancel_requested_at=now(),updated_at=now()
-                        WHERE run_id=%s
-                        """,
-                        (Jsonb(json_compatible(target_executor)), target["run_id"]),
-                    )
-                elif target["status"] == "reconciling":
-                    await connection.execute(
-                        "UPDATE assistant.runs SET executor_json=%s,updated_at=now() WHERE run_id=%s",
-                        (Jsonb(json_compatible(target_executor)), target["run_id"]),
-                    )
-                await connection.execute(
-                    """
-                    UPDATE assistant.runs
-                    SET status='cancelled',cancel_requested_at=now(),ended_at=now(),updated_at=now(),
-                        result_json=COALESCE(result_json,'{}'::jsonb) || %s
-                    WHERE project_id=%s AND run_id<>%s
-                      AND request_json->>'task_root_run_id'=%s
-                      AND status IN ('queued','waiting_user','waiting_supervisor','waiting_children','blocked')
-                    """,
-                    (
-                        Jsonb({"superseded_by_run_id": new_run_id}),
-                        source["project_id"], target["run_id"], target_root,
-                    ),
-                )
-            first_stage = stages[0]
-            identity = {
-                "goal": goal.strip(), "stage_plan": stages,
-                "change_class": change_class, "source_run_id": source_run_id,
-                "task_executor": json_compatible(executor or {}),
-                **json_compatible(task_metadata or {}),
-            }
-            if supersession is not None:
-                identity["supersedes_run_id"] = supersede_run_id
-                identity["supersede_reason"] = supersession["reason"]
-            key = f"task:{source_run_id}:{canonical_sha256(identity)}"
-            task_message_id = str(uuid.uuid4())
-            task_message = await (
-                await connection.execute(
-                    """
-                    INSERT INTO assistant.messages(
-                        message_id,project_id,channel,chat_id,user_id,direction,message_type,
-                        content_json,delivery_status,idempotency_key
-                    ) VALUES (%s,%s,%s,%s,%s,'system','task',%s,'received',%s)
-                    ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL
-                    DO UPDATE SET idempotency_key=EXCLUDED.idempotency_key RETURNING *
-                    """,
-                    (
-                        task_message_id, source["project_id"], source["channel"],
-                        source["chat_id"], source["user_id"], Jsonb(identity),
-                        f"task-trigger:{key}",
-                    ),
-                )
-            ).fetchone()
-            request = {
-                "goal": goal.strip(), "stage_plan": stages, "stage_index": 0,
-                "stage_round": 1,
-                "task_root_run_id": new_run_id, "source_run_id": source_run_id,
-                "change_class": change_class,
-                "task_executor": identity["task_executor"],
-                **json_compatible(task_metadata or {}),
-            }
-            if supersession is not None:
-                request["supersedes_run_id"] = supersede_run_id
-                request["supersede_reason"] = supersession["reason"]
-            row = await (
-                await connection.execute(
-                    """
-                    INSERT INTO assistant.runs(
-                        run_id,project_id,agent_key,trigger_message_id,parent_run_id,
-                        run_type,stage,status,conversation_key,request_json,executor_json,idempotency_key
-                    ) VALUES (%s,%s,%s,%s,%s,'stage',%s,'queued',%s,%s,%s,%s)
-                    ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL
-                    DO UPDATE SET idempotency_key=EXCLUDED.idempotency_key RETURNING *
-                    """,
-                    (
-                        new_run_id, source["project_id"],
-                        f"project:{source['project_id']}:{first_stage}",
-                        task_message["message_id"], source_run_id, first_stage,
-                        conversation_key(
-                            str(source["project_id"]),
-                            f"project:{source['project_id']}:{first_stage}",
-                            str(source["channel"]), str(source["chat_id"]),
-                        ),
-                        Jsonb(request), Jsonb(stage_executor(request, first_stage)), key,
-                    ),
-                )
-            ).fetchone()
-            await connection.execute(
-                "UPDATE assistant.messages SET run_id=%s WHERE message_id=%s",
-                (row["run_id"], task_message["message_id"]),
-            )
-            await connection.commit()
-            return row
+        raise PermissionError("Stage execution is retired; use single-agent.v2")
 
     async def pin_plan_work_order(
         self, *, run_id: str, worker_instance_id: str, claim_token: str,
@@ -2881,6 +2785,7 @@ class CoreRepository:
             ).fetchone()
             if row is None:
                 raise PermissionError("the Task Run is no longer leased")
+            row = await self._persist_scheduling(connection, row)
             await connection.commit()
             return row
 
@@ -2897,7 +2802,7 @@ class CoreRepository:
             locked = await (
                 await connection.execute(
                     """
-                    SELECT run_id FROM assistant.runs
+                    SELECT * FROM assistant.runs
                     WHERE run_id=%s AND worker_instance_id=%s AND claim_token=%s
                       AND status='running' AND cancel_requested_at IS NULL
                     FOR UPDATE
@@ -2907,6 +2812,14 @@ class CoreRepository:
             ).fetchone()
             if locked is None:
                 raise RuntimeError("Task lease was lost before continuation")
+            pending_inputs = await self._settle_turn_inputs(connection, locked)
+            if pending_inputs:
+                request_patch = {**request_patch,'task_phase':'working','pending_validation_supervisor_turn':None,'validation_supervisor_approved_turn':None,'audit_complete':False}
+            prior_reply = await (await connection.execute(
+                "SELECT 1 FROM assistant.messages WHERE direction='outbound' AND message_type='reply' AND reply_to_message_id=%s LIMIT 1",
+                (source_message_id,),
+            )).fetchone()
+            reply_parent = None if prior_reply else source_message_id
             reply = await (
                 await connection.execute(
                     """
@@ -2920,9 +2833,10 @@ class CoreRepository:
                     """,
                     (
                         str(uuid.uuid4()), project_id, run_id, channel, chat_id,
-                        user_id, source_message_id,
+                        user_id, reply_parent,
                         Jsonb({
                             "text": summary,
+                            "source_message_id": source_message_id,
                             "origin": "agent",
                             "task_continues": True,
                             "context_visibility": "semantic",
@@ -2965,14 +2879,27 @@ class CoreRepository:
                     ),
                 )
             ).fetchone()
+            updated = await self._persist_scheduling(connection, updated)
+            if wait_for_supervisor and self._five_stage_task(updated):
+                updated = await (await connection.execute(
+                    "UPDATE assistant.runs SET request_json=request_json || %s WHERE run_id=%s RETURNING *",
+                    (Jsonb({"pending_supervision_turn": int((updated.get("request_json") or {}).get("task_turn_count") or 0),
+                            "pending_supervision_source_id": str(reply["message_id"])}), run_id),
+                )).fetchone()
+                await self._queue_supervision_locked(connection, updated, str(reply["message_id"]), reason="after_agent_turn")
             await connection.commit()
             return {"run": updated, "reply": reply}
 
     async def resume_supervision_degraded(
         self, *, task_id: str, turn_number: int, reason: str,
     ) -> dict[str, Any] | None:
-        """Fail open for one PM Turn without applying a partial Supervisor result."""
+        """Read compatibility for pre-migration Tasks; modern Tasks never fail open."""
         async with self.database.connection() as connection:
+            task = await (await connection.execute(
+                "SELECT * FROM assistant.runs WHERE run_id=%s FOR UPDATE", (task_id,),
+            )).fetchone()
+            if task and self._five_stage_task(task):
+                raise PermissionError("five-stage Tasks require successful supervision")
             row = await (await connection.execute(
                 """
                 UPDATE assistant.runs
@@ -3018,6 +2945,8 @@ class CoreRepository:
         session_action: str = "keep",
     ) -> dict[str, Any]:
         """Accept one Action Plan and settle its Supervisor Run atomically."""
+        if any(d.get("executor") != "native_subagent" for d in delegations):
+            raise ValueError("Kernel child Run is retired; only native_subagent delegation is supported")
         if confirmation_class not in {"safe", "user_required", "invalid"}:
             raise ValueError("unsupported Supervisor confirmation class")
         async with self.database.connection() as connection:
@@ -3038,7 +2967,15 @@ class CoreRepository:
             )).fetchone()
             if task is None or str(task["project_id"]) != str(supervisor["project_id"]):
                 raise PermissionError("Supervisor Action Plan Task is unavailable")
+            if task["status"] in {"running", "reconciling", "succeeded", "failed", "dead_letter", "cancelled"} or task.get("cancel_requested_at"):
+                raise PermissionError("Supervisor can only change a Task at a settled safe boundary")
             request = dict(task.get("request_json") or {})
+            if request.get('protocol_revision')=='1.2':
+                raise PermissionError('v1.2 requires the typed Prompt compiler and specific confirmation; legacy Action Plans cannot dispatch')
+            if request.get("task_phase") in {"publishing", "publication_reconciling"}:
+                raise PermissionError("Publication must settle before a mainline change")
+            if request.get("task_activation", "active") != "active":
+                raise PermissionError("Supervisor cannot activate a suspended Task")
             if int(request.get("supervisor_context_epoch") or 0) != int(source_context_epoch):
                 raise PermissionError("Supervisor Action Plan belongs to a stale context")
             current_turn = int(request.get("task_turn_count") or 0)
@@ -3046,6 +2983,13 @@ class CoreRepository:
                 raise PermissionError("Supervisor Action Plan belongs to a stale Turn")
             accepted = dict(request.get("accepted_documents") or {})
             accepted["current_action_plan"] = json_compatible(action_ref)
+            brief_ref = result.get("brief_ref")
+            if isinstance(brief_ref, dict):
+                from assistant_kernel.services.document_runtime import TaskDocumentService
+                brief = TaskDocumentService(self.settings).read(str(task["project_id"]), brief_ref)
+                if brief.get("schema_version") != "supervisor-brief.v1" or brief.get("task_id") != task_id:
+                    raise PermissionError("Supervisor Brief belongs to another Task or schema")
+                accepted["supervisor_brief"] = json_compatible(brief_ref)
             active_delegations = list(accepted.get("active_delegations") or [])
             for delegation in delegations:
                 ref = delegation.get("request_ref")
@@ -3055,16 +2999,13 @@ class CoreRepository:
             state_revision = int(request.get("state_revision") or 0) + 1
             task_status = str(task["status"])
             if task_status == "waiting_supervisor":
-                task_status = "waiting_user" if confirmation_class == "user_required" else (
-                    "waiting_children" if any(
-                        item.get("executor") == "kernel_child_run"
-                        for item in delegations
-                    ) else "queued"
-                )
+                task_status = "waiting_user" if confirmation_class == "user_required" else "queued"
             request_patch = {
                 "accepted_documents": accepted,
                 "state_revision": state_revision,
                 "degraded_supervision": False,
+                "pending_supervision_turn": None,
+                "supervision_failure": None,
                 "supervisor_action_status": (
                     "auto_applied" if confirmation_class == "safe"
                     else "waiting_user" if confirmation_class == "user_required"
@@ -3087,13 +3028,22 @@ class CoreRepository:
                 request.get("work_mode") or request.get("current_stage") or "requirements"
             )
             requested_mode = str(target_work_mode or current_mode)
-            allowed_modes = {"requirements", "build", "audit", "operate", "repair"}
+            from assistant_kernel.services.agent_results import normalize_phase
+            current_mode = normalize_phase(current_mode)
+            requested_mode = normalize_phase(requested_mode)
+            allowed_modes = {"requirements", "design", "build", "audit", "operate"}
             if requested_mode not in allowed_modes:
                 raise ValueError("Supervisor selected an unknown Work Mode")
             if requested_mode == "build" and not request.get("requirements_approval"):
                 requested_mode = current_mode
+            if requested_mode == "design" and not request.get("requirements_approval"):
+                requested_mode = "requirements"
+            if requested_mode == "build" and self._five_stage_task(task) and not request.get("design_approval"):
+                requested_mode = "design" if request.get("requirements_approval") else "requirements"
             if requested_mode == "audit" and not request.get("validation_artifact"):
                 requested_mode = current_mode
+            if requested_mode == "audit" and request.get("design_required") and request.get("validation_design_sha256") != (request.get("design_approval") or {}).get("approved_document_sha256"):
+                requested_mode = "build"
             if requested_mode == "operate" and not (
                 request.get("publication_state") == "published"
                 or request.get("task_phase") == "published"
@@ -3103,19 +3053,38 @@ class CoreRepository:
                 "work_mode": requested_mode,
                 "current_stage": requested_mode,
                 "execution_plan_variant": requested_mode,
+                "audit_mode": requested_mode == "audit",
             })
-            if session_action == "rotate":
+            selected = result.get("selected_skills") or (
+                result.get("decision", {}).get("selected_skills")
+                if isinstance(result.get("decision"), dict) else []
+            ) or []
+            if selected and self._five_stage_task(task):
+                from assistant_kernel.services.agent_files import AgentFileLoader
+                loader = AgentFileLoader(self.settings)
+                profile_path = ProjectRuntimeManager(self.settings.data_root).describe(str(task["project_id"])).vault_root / "agents" / "pm" / "profiles" / f"{requested_mode}.yaml"
+                loader.apply_phase_profile(loader.load(str(task["project_id"]), str(task["agent_key"])),
+                                           yaml.safe_load(profile_path.read_text(encoding="utf-8")) or {},
+                                           requested_skills=selected)
+            request_patch["selected_skills"] = selected
+            if request.get("supervision_autoretry_paused"):
+                task_status = str(task["status"])
+            if requested_mode != current_mode:
+                request_patch["force_session_rotation"] = {"reason": "phase_changed", "from": current_mode, "to": requested_mode}
+                request_patch["pending_auto_publish"] = None
+            if session_action == "rotate" and requested_mode == current_mode:
                 request_patch["force_session_rotation"] = {
                     "reason": "supervisor_action_plan",
                     "source_action_plan_ref": json_compatible(action_ref),
                 }
-            elif session_action != "keep":
+            elif session_action not in {"keep", "rotate"}:
                 raise ValueError("Supervisor selected an unknown Session action")
             updated_task = await (await connection.execute(
                 """
                 UPDATE assistant.runs
                 SET status=%s,available_at=CASE WHEN %s='queued' THEN now() ELSE available_at END,
                     request_json=COALESCE(request_json,'{}'::jsonb) || %s,
+                    error_json=NULL,
                     executor_json=CASE WHEN %s='queued' THEN
                       executor_json - 'resolved_plan_uri' - 'resolved_plan_sha256'
                         - 'prompt_bundle_uri' - 'prompt_bundle_sha256'
@@ -3128,49 +3097,35 @@ class CoreRepository:
                     task_status, task_id,
                 ),
             )).fetchone()
-            created_children: list[dict[str, Any]] = []
-            for delegation in delegations:
-                if delegation.get("executor") != "kernel_child_run":
-                    continue
-                delegation_id = str(delegation.get("delegation_id") or "")
-                if not delegation_id:
-                    raise ValueError("Kernel child delegation requires delegation_id")
-                child_id = str(uuid.uuid4())
-                child_request = {
-                    "schema_version": "child-task.v1",
-                    "interaction_kind": "child_task",
-                    "parent_task_id": task_id,
-                    "delegation": json_compatible(delegation),
-                    "delivery_mode": "parent_only",
-                }
-                child = await (await connection.execute(
-                    """
-                    INSERT INTO assistant.runs(
-                        run_id,project_id,agent_key,trigger_message_id,parent_run_id,
-                        run_type,status,conversation_key,request_json,executor_json,
-                        idempotency_key
-                    ) VALUES (%s,%s,%s,%s,%s,'chat','queued',%s,%s,%s,%s)
-                    ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL
-                    DO UPDATE SET idempotency_key=EXCLUDED.idempotency_key RETURNING *
-                    """,
-                    (
-                        child_id, task["project_id"],
-                        f"project:{task['project_id']}:child",
-                        supervisor["trigger_message_id"], task_id,
-                        "child-task:" + canonical_sha256([
-                            str(task["project_id"]), task_id, delegation_id,
-                        ]),
-                        Jsonb(child_request),
-                        Jsonb({"scheduling_lane": "execution", "may_write_shared": True}),
-                        f"child-task:{task_id}:{delegation_id}",
-                    ),
-                )).fetchone()
-                if (
-                    str(child["project_id"]) != str(task["project_id"])
-                    or str((child["request_json"] or {}).get("parent_task_id") or "") != task_id
-                ):
-                    raise ValueError("child Task idempotency key was reused")
-                created_children.append(child)
+            if confirmation_class == "safe" and not request.get("supervision_autoretry_paused"):
+                if request.get("pending_auto_publish") and requested_mode == "audit" and not task.get("waiting_question_message_id"):
+                    publication = await self._queue_approved_publication_locked(
+                        connection, updated_task, str(supervisor["trigger_message_id"]), authorization_kind="design",
+                    )
+                    updated_task = publication["task"]
+                elif request.get("pending_task_completion") and requested_mode == "operate" and not task.get("waiting_question_message_id"):
+                    if not accepted.get("operation_report"):
+                        raise ValueError("Operation completion requires the accepted report")
+                    unfinished = list(await (await connection.execute(
+                        """SELECT run_id,status FROM assistant.runs WHERE parent_run_id=%s
+                            AND request_json ? 'operation_action'
+                            AND status NOT IN ('succeeded','cancelled')""", (task_id,),
+                    )).fetchall())
+                    if unfinished:
+                        updated_task = await (await connection.execute(
+                            """UPDATE assistant.runs SET status='waiting_supervisor',request_json=request_json || %s,
+                                updated_at=now() WHERE run_id=%s RETURNING *""",
+                            (Jsonb({"pending_task_completion": False,
+                                    "pending_operation_runs": [str(row["run_id"]) for row in unfinished],
+                                    "pm_instruction": "Wait for the registered action receipts; never repeat the effect to obtain a receipt."}), task_id),
+                        )).fetchone()
+                    else:
+                        updated_task = await (await connection.execute(
+                        """UPDATE assistant.runs SET status='succeeded',ended_at=now(),
+                            request_json=request_json || %s,updated_at=now() WHERE run_id=%s RETURNING *""",
+                        (Jsonb({"pending_task_completion": False, "task_phase": "completed",
+                                "task_activation": "closed"}), task_id),
+                        )).fetchone()
             finished = await (await connection.execute(
                 """
                 UPDATE assistant.runs
@@ -3185,168 +3140,14 @@ class CoreRepository:
                     Jsonb(json_compatible(artifact_refs)), supervisor_run_id,
                 ),
             )).fetchone()
+            updated_task = await self._persist_scheduling(connection, updated_task)
             await connection.commit()
             return {
                 "task": updated_task, "supervisor_run": finished,
                 "state_revision": state_revision,
-                "children": created_children,
             }
 
-    async def finalize_child_task(
-        self, *, run_id: str, worker_instance_id: str, claim_token: str,
-        result: dict[str, Any], result_ref: dict[str, Any],
-        artifact_refs: list[Any],
-    ) -> dict[str, Any]:
-        """Finish one parent-only child and resume its parent when the batch settles."""
-        async with self.database.connection() as connection:
-            child = await (await connection.execute(
-                """
-                SELECT * FROM assistant.runs
-                WHERE run_id=%s AND worker_instance_id=%s AND claim_token=%s
-                  AND status='running' AND request_json->>'interaction_kind'='child_task'
-                FOR UPDATE
-                """,
-                (run_id, worker_instance_id, claim_token),
-            )).fetchone()
-            if child is None or not child.get("parent_run_id"):
-                raise RuntimeError("child Task lease or parent was lost")
-            parent_id = str(child["parent_run_id"])
-            parent = await (await connection.execute(
-                "SELECT * FROM assistant.runs WHERE run_id=%s FOR UPDATE",
-                (parent_id,),
-            )).fetchone()
-            if parent is None or str(parent["project_id"]) != str(child["project_id"]):
-                raise RuntimeError("child Task parent is unavailable")
-            await connection.execute(
-                """
-                UPDATE assistant.runs
-                SET status='succeeded',result_json=%s,artifact_refs=%s,
-                    worker_id=NULL,worker_instance_id=NULL,claim_token=NULL,
-                    lease_until=NULL,process_pid=NULL,process_start_ticks=NULL,
-                    ended_at=now(),updated_at=now()
-                WHERE run_id=%s
-                """,
-                (
-                    Jsonb(json_compatible({**result, "result_ref": result_ref})),
-                    Jsonb(json_compatible(artifact_refs)), run_id,
-                ),
-            )
-            accepted = dict((parent.get("request_json") or {}).get("accepted_documents") or {})
-            active_delegations = list(accepted.get("active_delegations") or [])
-            request_ref = dict(
-                ((child.get("request_json") or {}).get("delegation") or {}).get(
-                    "request_ref"
-                ) or {}
-            )
-            if request_ref:
-                active_delegations = [
-                    item for item in active_delegations if item != request_ref
-                ]
-            accepted["active_delegations"] = active_delegations
-            child_results = list(accepted.get("child_results") or [])
-            if result_ref not in child_results:
-                child_results.append(json_compatible(result_ref))
-            accepted["child_results"] = child_results
-            pending = await (await connection.execute(
-                """
-                SELECT count(*) AS count FROM assistant.runs
-                WHERE parent_run_id=%s AND request_json->>'interaction_kind'='child_task'
-                  AND status IN ('queued','running','reconciling')
-                  AND run_id<>%s
-                """,
-                (parent_id, run_id),
-            )).fetchone()
-            parent_status = "queued" if int(pending["count"] or 0) == 0 else "waiting_children"
-            updated_parent = await (await connection.execute(
-                """
-                UPDATE assistant.runs
-                SET status=%s,available_at=CASE WHEN %s='queued' THEN now() ELSE available_at END,
-                    request_json=COALESCE(request_json,'{}'::jsonb) || %s,
-                    executor_json=CASE WHEN %s='queued' THEN
-                      executor_json - 'resolved_plan_uri' - 'resolved_plan_sha256'
-                        - 'prompt_bundle_uri' - 'prompt_bundle_sha256'
-                      ELSE executor_json END,
-                    updated_at=now(),ended_at=NULL
-                WHERE run_id=%s AND status='waiting_children' RETURNING *
-                """,
-                (
-                    parent_status, parent_status,
-                    Jsonb({
-                        "accepted_documents": accepted,
-                        "state_revision": int(
-                            (parent.get("request_json") or {}).get("state_revision") or 0
-                        ) + 1,
-                    }),
-                    parent_status, parent_id,
-                ),
-            )).fetchone()
-            await connection.commit()
-            return {"child_run_id": run_id, "parent": updated_parent}
 
-    async def settle_terminal_child_failure(self, run_id: str) -> dict[str, Any] | None:
-        """Release a parent waiting on a child that reached terminal failure."""
-        async with self.database.connection() as connection:
-            child = await (await connection.execute(
-                """
-                SELECT * FROM assistant.runs
-                WHERE run_id=%s AND request_json->>'interaction_kind'='child_task'
-                  AND status IN ('failed','cancelled','dead_letter')
-                FOR UPDATE
-                """,
-                (run_id,),
-            )).fetchone()
-            if child is None or not child.get("parent_run_id"):
-                await connection.commit()
-                return None
-            parent_id = str(child["parent_run_id"])
-            parent = await (await connection.execute(
-                "SELECT * FROM assistant.runs WHERE run_id=%s FOR UPDATE",
-                (parent_id,),
-            )).fetchone()
-            if parent is None:
-                await connection.commit()
-                return None
-            pending = await (await connection.execute(
-                """
-                SELECT count(*) AS count FROM assistant.runs
-                WHERE parent_run_id=%s AND request_json->>'interaction_kind'='child_task'
-                  AND status IN ('queued','running','reconciling')
-                """,
-                (parent_id,),
-            )).fetchone()
-            failures = list((parent.get("request_json") or {}).get("child_failures") or [])
-            if run_id not in failures:
-                failures.append(run_id)
-            accepted = dict((parent.get("request_json") or {}).get("accepted_documents") or {})
-            request_ref = dict(
-                ((child.get("request_json") or {}).get("delegation") or {}).get(
-                    "request_ref"
-                ) or {}
-            )
-            if request_ref:
-                accepted["active_delegations"] = [
-                    item for item in accepted.get("active_delegations") or []
-                    if item != request_ref
-                ]
-            next_status = "queued" if int(pending["count"] or 0) == 0 else "waiting_children"
-            updated = await (await connection.execute(
-                """
-                UPDATE assistant.runs
-                SET status=%s,available_at=CASE WHEN %s='queued' THEN now() ELSE available_at END,
-                    request_json=COALESCE(request_json,'{}'::jsonb) || %s,
-                    updated_at=now(),ended_at=NULL
-                WHERE run_id=%s AND status='waiting_children' RETURNING *
-                """,
-                (
-                    next_status, next_status,
-                    Jsonb({
-                        "child_failures": failures,
-                        "accepted_documents": accepted,
-                    }), parent_id,
-                ),
-            )).fetchone()
-            await connection.commit()
-            return updated
 
     async def revoke_project_grant_from_claim(
         self, *, source_run_id: str, worker_instance_id: str,
@@ -3385,14 +3186,14 @@ class CoreRepository:
             affected = list(await (await connection.execute(
                 """
                 UPDATE assistant.runs SET
-                    status=CASE WHEN status IN ('queued','waiting_user','waiting_supervisor','waiting_children','blocked')
+                    status=CASE WHEN status IN ('queued','waiting_user','waiting_supervisor','blocked')
                         THEN 'cancelled' ELSE status END,
                     cancel_requested_at=COALESCE(cancel_requested_at,now()),
-                    ended_at=CASE WHEN status IN ('queued','waiting_user','waiting_supervisor','waiting_children','blocked')
+                    ended_at=CASE WHEN status IN ('queued','waiting_user','waiting_supervisor','blocked')
                         THEN now() ELSE ended_at END,
                     updated_at=now()
                 WHERE project_id=%s AND run_id<>%s
-                  AND status IN ('queued','running','waiting_user','waiting_supervisor','waiting_children','blocked')
+                  AND status IN ('queued','running','waiting_user','waiting_supervisor','blocked')
                   AND COALESCE(executor_json->'active_file_grant_ids','[]'::jsonb) ? %s
                 RETURNING run_id,status
                 """,
@@ -3416,6 +3217,8 @@ class CoreRepository:
         target_chat_id: str | None = None,
         target_user_id: str | None = None,
     ) -> dict[str, Any]:
+        from assistant_kernel.services.kernel_management import require_active_identity
+        require_active_identity(target_project_id, target_agent_key or "project:"+target_project_id+":manager")
         if not handoff_summary.strip():
             raise ValueError("handoff_summary is required")
         target_agent_key = target_agent_key or (
@@ -3538,6 +3341,7 @@ class CoreRepository:
                 "UPDATE assistant.messages SET run_id=%s WHERE message_id=%s",
                 (target_run["run_id"], message["message_id"]),
             )
+            target_run = await self._persist_scheduling(connection, target_run)
             await connection.commit()
             return {"message": message, "run": target_run, "route_binding": route_binding}
 
@@ -3563,117 +3367,675 @@ class CoreRepository:
             raise PermissionError("the scoped source run is no longer leased")
         return row
 
-    async def claim_run(
-        self, worker_id: str, worker_instance_id: str, lease_seconds: int
-    ) -> dict[str, Any] | None:
-        claim_token = str(uuid.uuid4())
+    async def _persist_scheduling(self, connection, row: dict[str, Any]) -> dict[str, Any]:
+        row=await self._admit_v12_foreground_locked(connection,row)
+        from assistant_kernel.services.runtime_admission import declared_resource_keys,finite_demand,RuntimeAdmission
+        declared_resource_keys(row['request_json'] or {})
+        if row['run_type']=='python' and 'runtime_resources' in (row['request_json'] or {}):
+            if not isinstance(row['request_json']['runtime_resources'],dict):raise ValueError('runtime_resources must be an object')
+            _,defaults,_=await RuntimeAdmission(self.settings).configuration_locked(connection)
+            finite_demand(row['request_json'],defaults)
+        queue, mutex = run_scheduling(str(row['project_id']),str(row['agent_key']),str(row['run_type']),dict(row['request_json'] or {}), engineering_main=self._single_agent_project(str(row['project_id'])) or (row['request_json'] or {}).get('task_protocol') == 'single-agent.v2')
+        row = await (await connection.execute(
+            "UPDATE assistant.runs SET queue_kind=%s,mutex_key=%s WHERE run_id=%s RETURNING *",
+            (queue,mutex,row['run_id']))).fetchone()
+        if mutex == f"engineering:{row['project_id']}" and str(row["agent_key"]).endswith(":manager"):
+            if self._five_stage_task(row):
+                row = await (await connection.execute(
+                    "UPDATE assistant.runs SET request_json=request_json || %s WHERE run_id=%s RETURNING *",
+                    (Jsonb({"design_required": True, "phase_protocol": "five-stage.v1"}), row["run_id"]),
+                )).fetchone()
+            if (row.get("request_json") or {}).get("task_activation", "active") == "active" and row["status"] not in {"succeeded", "failed", "dead_letter", "cancelled"}:
+                await connection.execute(
+                    """INSERT INTO assistant.kernel_meta(key,value) VALUES (%s,%s)
+                       ON CONFLICT(key) DO UPDATE SET value=assistant.kernel_meta.value || EXCLUDED.value,updated_at=now()""",
+                    (f"project-runtime:{row['project_id']}", Jsonb({"active_task_id": str(row["run_id"])})),
+                )
+            elif row["status"] in {"succeeded", "cancelled"} or (row.get("request_json") or {}).get("task_activation") == "closed":
+                await connection.execute(
+                    """UPDATE assistant.kernel_meta SET value=value || '{"active_task_id":null}'::jsonb,updated_at=now()
+                       WHERE key=%s AND value->>'active_task_id'=%s""",
+                    (f"project-runtime:{row['project_id']}", str(row["run_id"])),
+                )
+        return row
+
+    async def _admit_v12_foreground_locked(self,connection,row):
+        """A complete adopted protocol starts with supervision, never a naked PM call."""
+        if (row['run_type']!='chat' or not str(row['agent_key']).endswith(':manager')
+                or row['status']!='queued' or (row.get('request_json') or {}).get('protocol_revision')=='1.2'):
+            return row
+        from assistant_kernel.services.published_agents import PublishedAgentService
+        admitted=await PublishedAgentService(self.settings).foreground_package_locked(connection,row)
+        if not admitted:return row
+        ref,_=admitted;request=dict(row.get('request_json') or {});executor=dict(row.get('executor_json') or {})
+        source_id=str(request.get('answer_message_id') or request.get('source_message_id') or row['trigger_message_id'])
+        source=await (await connection.execute('SELECT * FROM assistant.messages WHERE message_id=%s',(source_id,))).fetchone()
+        if not source or source['project_id']!=row['project_id'] or not source.get('user_id'):
+            raise PermissionError('New foreground protocol needs its actual identified user source')
+        from assistant_kernel.services.agent_results import normalize_phase
+        mode=normalize_phase(request.get('current_stage') or request.get('work_mode') or 'requirements')
+        if mode not in {'requirements','design','build','audit','operate'}:mode='requirements'
+        request.update(protocol_revision='1.2',task_protocol='single-agent.v2',phase_protocol='five-stage.v1',
+            design_required=True,current_stage=mode,work_mode=mode,pending_runtime_package_ref=ref)
+        request.setdefault('state_revision',0);request.setdefault('supervisor_context_epoch',0)
+        request.setdefault('task_turn_count',0);request.setdefault('task_goal',str((source['content_json'] or {}).get('text') or ''))
+        request.setdefault('accepted_documents',{})
+        # New Tasks inherit the already-approved Project publication. Existing
+        # legacy Tasks keep their old execution binding until an exact Prompt is confirmed.
+        if not executor.get('project_policy_ref'):executor['task_runtime_package_ref']=ref
+        row=await (await connection.execute("UPDATE assistant.runs SET status='waiting_supervisor',request_json=%s,executor_json=%s WHERE run_id=%s RETURNING *",
+            (Jsonb(request),Jsonb(executor),row['run_id']))).fetchone()
+        await self._queue_supervision_locked(connection,row,source_id,reason='prepare_confirm_dispatch')
+        return row
+
+    async def pin_turn_inputs(self, run_id: str, worker_instance_id: str, claim_token: str) -> list[dict[str, Any]]:
+        async with self.database.connection() as connection:
+            row = await (await connection.execute("SELECT * FROM assistant.runs WHERE run_id=%s AND worker_instance_id=%s AND claim_token=%s AND status='running' AND cancel_requested_at IS NULL FOR UPDATE",(run_id,worker_instance_id,claim_token))).fetchone()
+            if row is None:
+                raise PermissionError("Turn input lease was lost")
+            inputs = list(await (await connection.execute("SELECT * FROM assistant.messages WHERE (run_id=%s OR content_json->>'task_id'=%s) AND direction='inbound' AND content_json->>'task_input_status'='pending' ORDER BY created_at,message_id LIMIT 100",(run_id,run_id))).fetchall())
+            await connection.execute("UPDATE assistant.runs SET executor_json=executor_json || %s WHERE run_id=%s",(Jsonb({'turn_input_message_ids':[str(m['message_id']) for m in inputs]}),run_id))
+            await connection.commit()
+            return self._filter_revoked_context(inputs)
+
+    async def clear_publisher_process(self, run_id: str, pid: int, start_ticks: int | None) -> None:
+        """A finished thread must not retain the reusable worker process as its own."""
+        async with self.database.connection() as connection:
+            await connection.execute("""UPDATE assistant.runs SET process_pid=NULL,process_start_ticks=NULL
+                WHERE run_id=%s AND run_type='publish' AND process_pid=%s
+                AND process_start_ticks IS NOT DISTINCT FROM %s""", (run_id, pid, start_ticks))
+            await connection.commit()
+
+    async def _settle_turn_inputs(self, connection, row: dict[str, Any]) -> bool:
+        ids = list((row.get('executor_json') or {}).get('turn_input_message_ids') or [])
+        await connection.execute("""UPDATE assistant.messages SET content_json=content_json || %s,updated_at=now()
+            WHERE (run_id=%s OR content_json->>'task_id'=%s) AND message_id=ANY(%s::uuid[]) AND direction='inbound'
+              AND content_json->>'task_input_status'='pending'""",(Jsonb({'task_input_status':'consumed','consumed_attempt':int(row.get('attempt') or 0)}),row['run_id'],str(row['run_id']),ids))
+        return bool(await (await connection.execute("SELECT 1 FROM assistant.messages WHERE (run_id=%s OR content_json->>'task_id'=%s) AND content_json->>'task_input_status'='pending' LIMIT 1",(row['run_id'],str(row['run_id'])))).fetchone())
+
+    async def has_late_turn_inputs(self, run_id: str) -> bool:
+        async with self.database.connection() as connection:
+            return bool(await (await connection.execute("""SELECT 1 FROM assistant.messages m
+                JOIN assistant.runs r ON (r.run_id=m.run_id OR m.content_json->>'task_id'=r.run_id::text) WHERE r.run_id=%s
+                AND m.content_json->>'task_input_status'='pending'
+                AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements_text(
+                    COALESCE(r.executor_json->'turn_input_message_ids','[]'::jsonb)) pinned(id)
+                    WHERE pinned.id=m.message_id::text) LIMIT 1""",(run_id,))).fetchone())
+
+    async def _requeue_pending_inputs(self, connection, row: dict[str, Any]) -> dict[str, Any]:
+        task = await (await connection.execute('SELECT * FROM assistant.runs WHERE run_id=%s FOR UPDATE',
+            (row['run_id'],))).fetchone()
+        if task and (task['request_json'] or {}).get('protocol_revision') == '1.2':
+            source = await (await connection.execute("""SELECT message_id FROM assistant.messages
+                WHERE (run_id=%s OR content_json->>'task_id'=%s) AND direction='inbound'
+                  AND content_json->>'task_input_status'='pending'
+                ORDER BY created_at DESC,message_id DESC LIMIT 1""",
+                (task['run_id'], str(task['run_id'])))).fetchone()
+            if not source:
+                raise RuntimeError('Pending-input continuation has no durable source')
+            return await self._supervise_answer_locked(connection, task, str(source['message_id']))
+        return await (await connection.execute("""UPDATE assistant.runs SET status='queued',available_at=now(),
+            worker_id=NULL,worker_instance_id=NULL,claim_token=NULL,lease_until=NULL,
+            process_pid=NULL,process_start_ticks=NULL,ended_at=NULL,waiting_question_message_id=NULL,
+            interaction_seq=interaction_seq+1,request_json=request_json || %s,
+            executor_json=executor_json - 'resolved_plan_uri' - 'resolved_plan_sha256' - 'prompt_bundle_uri' - 'prompt_bundle_sha256',updated_at=now()
+            WHERE run_id=%s RETURNING *""",(Jsonb({'task_phase':'working','approval_kind':None,'audit_complete':False,'pending_validation_supervisor_turn':None,'validation_supervisor_approved_turn':None}),row['run_id']))).fetchone()
+
+    async def claim_run(self, worker_id: str, worker_instance_id: str, lease_seconds: int,
+                        *, queue_kind: str = "interactive") -> dict[str, Any] | None:
+        if queue_kind not in {"interactive", "runtime"}:
+            raise ValueError("invalid worker queue")
         try:
             async with self.database.connection() as connection:
-                cursor = await connection.execute(
-                """
-                WITH candidate AS (
-                    SELECT r.run_id FROM assistant.runs r
-                    WHERE r.status='queued' AND r.available_at<=now()
-                      AND NOT EXISTS (
-                          SELECT 1 FROM assistant.runs active
-                          WHERE active.conversation_key=r.conversation_key
-                            AND active.status IN ('running','reconciling')
-                      )
-                      AND NOT EXISTS (
-                          SELECT 1 FROM assistant.runs parent
-                          WHERE parent.run_id=r.parent_run_id
-                            AND parent.status IN ('running','reconciling')
-                      )
-                      AND NOT EXISTS (
-                          SELECT 1 FROM assistant.runs project_active
-                          WHERE project_active.project_id=r.project_id
-                            AND project_active.status IN ('running','reconciling')
-                            AND assistant.run_lane(
-                                  project_active.run_type,
-                                  project_active.agent_key,
-                                  project_active.executor_json->>'scheduling_lane'
-                                )='execution'
-                            AND assistant.run_lane(
-                                  r.run_type, r.agent_key,
-                                  r.executor_json->>'scheduling_lane'
-                                )='execution'
-                      )
-                    ORDER BY
-                        assistant.run_lane(
-                            r.run_type, r.agent_key,
-                            r.executor_json->>'scheduling_lane'
-                        )='conversation' DESC,
-                        r.created_at
-                    FOR UPDATE SKIP LOCKED LIMIT 1
-                )
-                UPDATE assistant.runs r
-                SET status='running',attempt=attempt+1,worker_id=%s,worker_instance_id=%s,
-                    claim_token=%s,process_pid=NULL,process_start_ticks=NULL,
-                    lease_until=now()+(%s*interval '1 second'),
-                    started_at=COALESCE(started_at,now()),updated_at=now()
-                FROM candidate c WHERE r.run_id=c.run_id RETURNING r.*
-                """,
-                (worker_id, worker_instance_id, claim_token, lease_seconds),
-            )
-                row = await cursor.fetchone()
+                from assistant_kernel.services.runtime_admission import RuntimeAdmission
+                admission=RuntimeAdmission(self.settings)
+                await admission.lock(connection)
+                limits,defaults,config_ref=await admission.configuration_locked(connection)
+                occupied=await admission.occupied_locked(connection)
+                candidates=await (await connection.execute("""
+                        SELECT r.* FROM assistant.runs r
+                        WHERE r.status='queued' AND r.available_at<=now() AND r.queue_kind=%s
+                          AND (r.run_type<>'chat' OR r.agent_key NOT LIKE '%%:manager'
+                            OR COALESCE(r.request_json->>'task_activation','active')='active')
+                          AND r.run_type<>'stage'
+                          AND NOT EXISTS (SELECT 1 FROM assistant.runs a
+                            WHERE a.conversation_key=r.conversation_key AND a.status IN ('running','reconciling'))
+                          AND NOT EXISTS (SELECT 1 FROM assistant.runs a
+                            WHERE r.mutex_key IS NOT NULL AND a.mutex_key=r.mutex_key
+                              AND a.status IN ('running','reconciling'))
+                          AND (r.run_type='python' OR NOT EXISTS (SELECT 1 FROM assistant.runs p
+                            WHERE p.run_id=r.parent_run_id AND p.status IN ('running','reconciling')))
+                        ORDER BY (SELECT count(*) FROM assistant.runs load WHERE load.project_id=r.project_id
+                            AND load.status IN ('running','reconciling')),r.created_at,r.run_id
+                        FOR UPDATE OF r SKIP LOCKED
+                    """,(queue_kind,))).fetchall()
+                row=None
+                for candidate in candidates:
+                    from assistant_kernel.services.kernel_management import retired_identity
+                    if retired_identity(candidate["project_id"], candidate["agent_key"]):
+                        continue
+                    from assistant_kernel.services.schedule_support import authorize_claim
+                    if not await authorize_claim(connection,candidate):continue
+                    reservation=await admission.finite_reservation_locked(connection,candidate,occupied,limits,defaults,config_ref)
+                    if reservation is None:continue
+                    row=await (await connection.execute("""UPDATE assistant.runs SET status='running',attempt=attempt+1,
+                      worker_id=%s,worker_instance_id=%s,claim_token=%s,
+                      process_pid=NULL,process_start_ticks=NULL,
+                      lease_until=now()+(%s*interval '1 second'),
+                      started_at=COALESCE(started_at,now()),updated_at=now(),request_json=request_json || %s
+                      WHERE run_id=%s AND status='queued' RETURNING *""",
+                      (worker_id,worker_instance_id,str(uuid.uuid4()),lease_seconds,Jsonb({'capacity_reservation':reservation,
+                        **({'schedule_dispatch_permit':candidate['request_json']['schedule_dispatch_permit']}
+                           if candidate['request_json'].get('schedule_dispatch_permit') else {})}),candidate['run_id']))).fetchone()
+                    break
                 await connection.commit()
                 return row
-        except UniqueViolation:
-            # Another worker won the Project/conversation active-run race.
+        except UniqueViolation as exc:
+            if exc.diag.constraint_name not in {"runs_one_active_conversation", "runs_one_active_mutex"}:
+                raise
             return None
 
-    async def active_execution_blocker(self, project_id: str) -> dict[str, Any] | None:
-        """Return the oldest active execution-lane Run without blocking PM chat."""
+
+    async def active_execution_blocker(self, project_id: str, target_run_id: str | None = None) -> dict[str, Any] | None:
         async with self.database.connection() as connection:
-            return await (
-                await connection.execute(
-                    """
-                    SELECT * FROM assistant.runs r
-                    WHERE r.project_id=%s AND r.status IN ('running','reconciling')
-                      AND assistant.run_lane(
-                            r.run_type, r.agent_key,
-                            r.executor_json->>'scheduling_lane'
-                          )='execution'
-                    ORDER BY r.created_at,r.run_id LIMIT 1
-                    """,
-                    (project_id,),
-                )
-            ).fetchone()
+            return await (await connection.execute("""
+                SELECT a.* FROM assistant.runs a
+                WHERE a.status IN ('running','reconciling') AND (
+                  (%s::uuid IS NULL AND a.mutex_key=%s) OR EXISTS (
+                    SELECT 1 FROM assistant.runs target WHERE target.run_id=%s::uuid
+                      AND a.run_id<>target.run_id AND (
+                        a.conversation_key=target.conversation_key OR
+                        (target.mutex_key IS NOT NULL AND a.mutex_key=target.mutex_key))))
+                ORDER BY a.created_at,a.run_id LIMIT 1
+                """,(target_run_id,f"engineering:{project_id}",target_run_id))).fetchone()
+
 
     async def current_project_task(self, project_id: str) -> dict[str, Any] | None:
-        """Return the single current task, including queued and human-waiting states."""
         async with self.database.connection() as connection:
-            return await (
-                await connection.execute(
-                    """
-                    SELECT * FROM assistant.runs r
-                    WHERE r.project_id=%s
-                      AND (
-                        (
-                          COALESCE(r.request_json->>'task_protocol','') IN ('task.v1','single-agent.v2')
-                          AND r.status IN ('queued','running','waiting_user','waiting_supervisor','waiting_children','blocked','reconciling')
-                        ) OR (
-                          r.status IN ('queued','running','reconciling')
-                          AND assistant.run_lane(
-                                r.run_type, r.agent_key,
-                                r.executor_json->>'scheduling_lane'
-                              )='execution'
-                        )
-                      )
-                    ORDER BY
-                      CASE r.status
-                        WHEN 'reconciling' THEN 0 WHEN 'running' THEN 1
-                        WHEN 'waiting_user' THEN 2
-                        WHEN 'waiting_supervisor' THEN 3
-                        WHEN 'waiting_children' THEN 4
-                        WHEN 'blocked' THEN 5 ELSE 6
-                      END,
-                      r.created_at,r.run_id
-                    LIMIT 1
-                    """,
-                    (project_id,),
+            return await (await connection.execute("""
+                SELECT * FROM assistant.runs WHERE project_id=%s AND run_type='chat'
+                  AND agent_key=%s AND mutex_key=%s
+                  AND COALESCE(request_json->>'task_activation','active')='active'
+                  AND status IN ('queued','running','waiting_user','waiting_supervisor','blocked','reconciling')
+                ORDER BY created_at,run_id LIMIT 1
+                """,(project_id,f"project:{project_id}:manager",f"engineering:{project_id}"))).fetchone()
+
+    def _five_stage_project(self, project_id: str, task: dict[str, Any] | None = None) -> bool:
+        from assistant_kernel.services.published_agents import PublishedAgentService
+        project=PublishedAgentService(self.settings).project_policy(project_id,task=task)
+        return bool(project.get("phase_protocol") == "five-stage.v1"
+                    or (project.get("single_agent") or {}).get("design_required")
+                    or (project.get("work_modes") or {}).get("design"))
+
+    def _five_stage_task(self, task: dict[str, Any]) -> bool:
+        request = task.get("request_json") or {}
+        return bool(request.get('protocol_revision')=='1.2' or request.get("design_required") or request.get("phase_protocol") == "five-stage.v1"
+                    or self._five_stage_project(str(task["project_id"]),task))
+
+    async def list_pending_task_inputs(self, task_id: str) -> list[dict[str, Any]]:
+        async with self.database.connection() as connection:
+            rows = list(await (await connection.execute(
+                """SELECT * FROM assistant.messages WHERE direction='inbound'
+                    AND (run_id=%s OR content_json->>'task_id'=%s)
+                    AND content_json->>'task_input_status'='pending'
+                    ORDER BY created_at,message_id LIMIT 100""", (task_id, task_id),
+            )).fetchall())
+            return self._filter_revoked_context(rows)
+
+    async def _queue_supervision_locked(self, connection, task: dict[str, Any], source_message_id: str, *, reason: str) -> dict[str, Any] | None:
+        """Queue under the Task transaction; coalesce an already-open evaluation."""
+        request = dict(task.get("request_json") or {})
+        project_id = str(task["project_id"])
+        source = await (await connection.execute(
+            "SELECT * FROM assistant.messages WHERE message_id=%s", (source_message_id,),
+        )).fetchone()
+        if source is None:
+            source = await (await connection.execute(
+                "SELECT * FROM assistant.messages WHERE message_id=%s", (task["trigger_message_id"],),
+            )).fetchone()
+        if source is None:
+            raise RuntimeError("Supervisor has no durable source Message")
+        epoch = int(request.get("supervisor_context_epoch") or 0)
+        turn = int(request.get("task_turn_count") or 0)
+        agent = f"project:{project_id}:supervisor"
+        key = "supervisor-task:" + canonical_sha256([project_id, agent, str(task["run_id"])])
+        body = {
+            "interaction_kind": "supervisor_consultation", "schema_version": "supervisor-consultation.v3",
+            "task_id": str(task["run_id"]), "trigger": reason,
+            "turn_number": turn, "source_turn_number": turn, "source_context_epoch": epoch,
+            "source_message_id": str(source["message_id"]), "source_actor_type": "kernel",
+            "source_agent_key": str(task["agent_key"]), "source_run_id": str(task["run_id"]),
+            "source_interface_role": "pm", "source_channel": str(source["channel"]),
+            "source_chat_id": str(source["chat_id"]), "channel": str(source["channel"]),
+            "chat_id": str(source["chat_id"]), "user_id": source.get("user_id"),
+            "agent_turn_report": {
+                "outcome": (task.get("result_json") or {}).get("outcome"),
+                "summary": (task.get("result_json") or {}).get("summary"),
+                "usage": (task.get("result_json") or {}).get("token_usage") or {},
+            },
+        }
+        existing = await (await connection.execute(
+            """SELECT * FROM assistant.runs WHERE conversation_key=%s
+                AND status IN ('queued','running','waiting_user','reconciling')
+                ORDER BY created_at DESC LIMIT 1 FOR UPDATE""", (key,),
+        )).fetchone()
+        if existing:
+            if existing["status"] == "queued" and (
+                int((existing.get("request_json") or {}).get("source_context_epoch") or 0) < epoch
+                or int((existing.get("request_json") or {}).get("source_turn_number") or 0) < turn
+            ):
+                existing = await (await connection.execute(
+                    """UPDATE assistant.runs SET
+                        request_json=(request_json-'turn_handoff_ref'-'turn_handoff_sha256') || %s,
+                        trigger_message_id=%s,updated_at=now() WHERE run_id=%s RETURNING *""",
+                    (Jsonb(body), source["message_id"], existing["run_id"]),
+                )).fetchone()
+            return existing
+        supervision_key=f"supervisor-state:{task['run_id']}:{turn}:{epoch}"
+        if request.get('protocol_revision')=='1.2':
+            body['protocol_revision']='1.2'
+            body['source_state_revision']=int(request.get('state_revision') or 0)
+            supervision_key+=':'+str(body['source_state_revision'])+':'+str(source['message_id'])
+        row = await (await connection.execute(
+            """INSERT INTO assistant.runs(
+                run_id,project_id,agent_key,trigger_message_id,parent_run_id,run_type,
+                status,conversation_key,request_json,executor_json,idempotency_key,max_attempts)
+                VALUES (%s,%s,%s,%s,%s,'chat','queued',%s,%s,'{}'::jsonb,%s,4)
+                ON CONFLICT DO NOTHING RETURNING *""",
+            (str(uuid.uuid4()), project_id, agent, source["message_id"], task["run_id"], key,
+             Jsonb(body), supervision_key),
+        )).fetchone()
+        if row is not None:
+            return await self._persist_scheduling(connection, row)
+        existing = await (await connection.execute(
+            """SELECT * FROM assistant.runs WHERE conversation_key=%s
+                AND status IN ('queued','running','waiting_user','reconciling')
+                ORDER BY created_at DESC LIMIT 1 FOR UPDATE""", (key,),
+        )).fetchone()
+        if existing and existing["status"] == "queued" and (
+            int((existing.get("request_json") or {}).get("source_context_epoch") or 0) < epoch
+            or int((existing.get("request_json") or {}).get("source_turn_number") or 0) < turn
+        ):
+            existing = await (await connection.execute(
+                """UPDATE assistant.runs SET
+                    request_json=(request_json-'turn_handoff_ref'-'turn_handoff_sha256') || %s,
+                    trigger_message_id=%s,updated_at=now() WHERE run_id=%s RETURNING *""",
+                (Jsonb(body), source["message_id"], existing["run_id"]),
+            )).fetchone()
+        return existing
+
+    async def attach_supervision_handoff(self, task_id: str, request: dict[str, Any]) -> dict[str, Any] | None:
+        async with self.database.connection() as connection:
+            task = await (await connection.execute("SELECT * FROM assistant.runs WHERE run_id=%s FOR UPDATE", (task_id,),)).fetchone()
+            if not task:
+                return None
+            row = await self._queue_supervision_locked(
+                connection, task, str(request.get("interaction_head", {}).get("pm_reply_message_id") or task["trigger_message_id"]),
+                reason="after_agent_turn",
+            )
+            if row and row["status"] == "queued":
+                row = await (await connection.execute(
+                    "UPDATE assistant.runs SET request_json=request_json || %s WHERE run_id=%s RETURNING *",
+                    (Jsonb(json_compatible(request)), row["run_id"]),
+                )).fetchone()
+            await connection.commit()
+            return row
+
+    async def reconcile_pending_supervision(self) -> int:
+        """Fill interrupted enqueue gaps without creating a recovery subsystem."""
+        async with self.database.connection() as connection:
+            failures = list(await (await connection.execute(
+                """SELECT run_id FROM assistant.runs
+                   WHERE status IN ('waiting_supervisor','reconciling')
+                   AND agent_key LIKE '%%:manager' AND run_type='chat'
+                   AND COALESCE((request_json->>'design_required')::boolean,false)
+                   AND error_json IS NOT NULL AND cancel_requested_at IS NULL
+                   AND COALESCE(request_json->>'failure_settlement_key','') <>
+                     'failed-attempt:' || run_id::text || ':' || attempt::text
+                   LIMIT 30""",
+            )).fetchall())
+        for failure in failures:
+            await self.settle_failed_pm_turn(str(failure["run_id"]), "PM failure recovered from durable Run facts")
+        async with self.database.connection() as connection:
+            tasks = list(await (await connection.execute(
+                """SELECT * FROM assistant.runs WHERE status='waiting_supervisor'
+                    AND agent_key LIKE '%%:manager' AND request_json->>'task_protocol'='single-agent.v2'
+                    AND request_json->'pending_operation_runs' IS NULL
+                    AND COALESCE(request_json->>'supervision_failure','')=''
+                    AND COALESCE(request_json->>'task_activation','active')='active'
+                    AND cancel_requested_at IS NULL LIMIT 30 FOR UPDATE SKIP LOCKED""",
+            )).fetchall())
+            for task in tasks:
+                request = dict(task.get("request_json") or {})
+                await self._queue_supervision_locked(
+                    connection, task, str(request.get("pending_supervision_source_id") or task["trigger_message_id"]),
+                    reason="recover_pending_supervision",
                 )
-            ).fetchone()
+            await connection.commit()
+            return len(tasks)
+
+    async def _queue_approved_publication_locked(self, connection, task, source_message_id, *, authorization_kind):
+        request = dict(task.get("request_json") or {})
+        if not request.get("audit_complete") or request.get("reviewed_bundle_sha256") != (request.get("sealed_candidate_bundle") or {}).get("bundle_sha256"):
+            raise ValueError("Publication requires Review of this sealed bundle")
+        if request.get("design_required") and request.get("reviewed_design_sha256") != (request.get("design_approval") or {}).get("approved_document_sha256"):
+            raise ValueError("Publication Review does not cover the current Design")
+        if authorization_kind == "design":
+            if request.get("review_requires_final_approval"):
+                raise PermissionError("Review requires separate final publication approval")
+            from assistant_kernel.services.document_runtime import TaskDocumentService
+            design_ref = dict((request.get("accepted_documents") or {}).get("solution_design") or {})
+            approval = dict(request.get("design_approval") or {})
+            if approval.get("approved_document_sha256") != design_ref.get("sha256") or not design_ref:
+                raise PermissionError("Automatic publication has no current Design approval")
+            design = TaskDocumentService(self.settings).read(str(task["project_id"]), design_ref)["payload"]
+            if design.get("risk_class") != "low" or design.get("release_policy") != "automatic_low_risk" or str(task["project_id"]) in {"kernel", "butler-maintenance"} or request.get("capability_change"):
+                raise PermissionError("This change requires final publication approval")
+            from assistant_kernel.services.agent_results import publication_requires_final_approval
+            from assistant_kernel.services.workspace_scope import WorkspaceScopeService
+            scope = WorkspaceScopeService(self.settings)
+            roots = scope.resolve(str(task["project_id"]), str(task["run_id"]), "implementation")
+            sealed = dict(request.get("sealed_candidate_bundle") or {})
+            if not sealed.get("uri"):
+                raise PermissionError("Automatic publication requires the reviewed bundle")
+            prefix = f"vault://{task['project_id']}/"
+            if not str(sealed["uri"]).startswith(prefix):
+                raise PermissionError("Reviewed bundle belongs to another Project")
+            path = ProjectRuntimeManager(self.settings.data_root).resolve_vault_file(str(task["project_id"]), sealed["uri"][len(prefix):])
+            raw = path.read_bytes()
+            if hashlib.sha256(raw).hexdigest() != sealed.get("sha256"):
+                raise PermissionError("Reviewed bundle file changed")
+            bundle = json.loads(raw)
+            targets = {item['target_uri'] if isinstance(item,dict) else item for item in design.get('publish_targets') or []}
+            files = bundle.get("files") or []
+            if not targets or any(item.get("target_uri") not in targets for item in files) or publication_requires_final_approval(self.settings, str(task["project_id"]), files, roots):
+                raise PermissionError("This target requires final publication approval")
+        manifest = request.get('candidate_manifest_ref') or next((item for item in reversed(task.get("artifact_refs") or [])
+                         if isinstance(item, dict) and (item.get("kind") == "candidate_manifest"
+                         or str(item.get("uri") or "").endswith("/candidate/manifest.json"))), None)
+        if not manifest:
+            raise ValueError("Publication requires a candidate manifest")
+        publish_request = {
+            **request, "candidate_manifest_uri": manifest["uri"],
+            "candidate_bundle_uri": (request.get("sealed_candidate_bundle") or {}).get("uri"),
+            "candidate_bundle_file_sha256": (request.get("sealed_candidate_bundle") or {}).get("sha256"),
+            "implementation_run_id": str(task["run_id"]), "review_run_id": str(task["run_id"]),
+            "approval_message_id": (request.get("design_approval") or {}).get("message_id") if authorization_kind=='design' else source_message_id,
+            "publication_authorization_kind": authorization_kind,
+            "approved_artifacts": list(task.get("artifact_refs") or []),
+        }
+        publication = await (await connection.execute(
+            """INSERT INTO assistant.runs(run_id,project_id,agent_key,trigger_message_id,parent_run_id,
+                run_type,stage,status,conversation_key,request_json,executor_json,idempotency_key)
+                VALUES (%s,%s,%s,%s,%s,'publish','publish','queued',%s,%s,'{}'::jsonb,%s)
+                ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL
+                DO UPDATE SET idempotency_key=EXCLUDED.idempotency_key RETURNING *""",
+            (str(uuid.uuid4()), task["project_id"], f"project:{task['project_id']}:publisher",
+             source_message_id, task["run_id"], f"publish:{task['project_id']}:files", Jsonb(publish_request),
+             f"design-publish:{task['run_id']}:{(request.get('sealed_candidate_bundle') or {}).get('bundle_sha256')}"),
+        )).fetchone()
+        publication = await self._persist_scheduling(connection, publication)
+        task = await (await connection.execute(
+            """UPDATE assistant.runs SET status='waiting_user',request_json=request_json || %s,
+                updated_at=now() WHERE run_id=%s RETURNING *""",
+            (Jsonb({"task_phase": "publishing", "publication_state": "queued",
+                    "pending_auto_publish": False, "publish_run_id": str(publication["run_id"])}), task["run_id"]),
+        )).fetchone()
+        return {"task": task, "publication_run": publication}
+
+    async def _supervise_answer_locked(self, connection, run: dict[str, Any], source_message_id: str) -> dict[str, Any]:
+        """Accept the answer without granting permission to start the next PM Turn."""
+        request = dict(run.get("request_json") or {})
+        owner_is_supervisor = request.get("interaction_kind") == "supervisor_consultation"
+        if owner_is_supervisor and not request.get("task_id"):
+            return await (await connection.execute(
+                "UPDATE assistant.runs SET max_attempts=attempt+4 WHERE run_id=%s RETURNING *",
+                (run["run_id"],),
+            )).fetchone()
+        root_id = str(request.get("task_id") or run["run_id"])
+        root = await (await connection.execute(
+            "SELECT * FROM assistant.runs WHERE run_id=%s FOR UPDATE", (root_id,),
+        )).fetchone()
+        if root is not None:root=await self._admit_v12_foreground_locked(connection,root)
+        if root is None or not self._five_stage_task(root):
+            return run
+        if root['status'] in {'succeeded','failed','cancelled','dead_letter'} or root.get('cancel_requested_at'):
+            return run # Preserve the input; a correction cannot resurrect a closed Task.
+        await connection.execute(
+            "UPDATE assistant.messages SET content_json=content_json || %s WHERE message_id=%s",
+            (Jsonb({"task_id": root_id, "task_input_status": "pending"}), source_message_id),
+        )
+        seen = await (await connection.execute(
+            "SELECT content_json FROM assistant.messages WHERE idempotency_key=%s",
+            (f"supervisor-context-event:{root_id}:{canonical_sha256(source_message_id)}",),
+        )).fetchone()
+        # Text replies may already have advanced this exact physical input at
+        # ingress. Final acceptance must not count the same Message twice.
+        if seen is None:
+            await self._advance_supervisor_context_epoch_locked(
+                connection, task=root, reason="semantic_answer", source_id=source_message_id,
+            )
+        elif (seen["content_json"].get("task_id") != root_id
+              or seen["content_json"].get("source_id") != source_message_id):
+            raise ValueError("Answer context event belongs to another source")
+        root = await (await connection.execute(
+            """UPDATE assistant.runs SET status=CASE WHEN status IN ('running','reconciling') THEN status ELSE 'waiting_supervisor' END,
+                request_json=request_json || %s,updated_at=now(),ended_at=NULL
+                WHERE run_id=%s RETURNING *""",
+            (Jsonb({"pending_supervision_turn": int((root["request_json"] or {}).get("task_turn_count") or 0),
+                    "pending_supervision_source_id": source_message_id, "pending_interaction_ref": None}), root_id),
+        )).fetchone()
+        if root['status'] in {'running','reconciling'}:
+            # New input is durable, but it must not revoke a live lease or
+            # declare unresolved execution settled. Its Turn settlement queues supervision.
+            return root
+        if owner_is_supervisor:
+            return await (await connection.execute(
+                """UPDATE assistant.runs SET
+                    request_json=(request_json-'turn_handoff_ref'-'turn_handoff_sha256') || %s,
+                    max_attempts=attempt+4,updated_at=now() WHERE run_id=%s RETURNING *""",
+                (Jsonb({"source_context_epoch": int(root["request_json"].get("supervisor_context_epoch") or 0),
+                        "source_turn_number": int(root["request_json"].get("task_turn_count") or 0),
+                        "turn_number": 0, "trigger": "user_consultation"}), run["run_id"]),
+            )).fetchone()
+        await self._queue_supervision_locked(connection, root, source_message_id, reason="user_answer")
+        return root
+
+    async def pause_supervision(self, *, task_id: str, turn_number: int, reason: str, retry_run_id: str | None = None, retry_at: str | None = None) -> dict[str, Any] | None:
+        async with self.database.connection() as connection:
+            task = await (await connection.execute(
+                "SELECT * FROM assistant.runs WHERE run_id=%s FOR UPDATE", (task_id,),
+            )).fetchone()
+            if task is None or task["status"] in {"succeeded", "cancelled"} or (task.get("request_json") or {}).get("task_activation") == "suspended":
+                return None
+            if task["status"] != "running":
+                task = await (await connection.execute(
+                    """UPDATE assistant.runs SET
+                        status=CASE WHEN waiting_question_message_id IS NOT NULL THEN 'waiting_user'
+                            WHEN status='reconciling' THEN status ELSE 'waiting_supervisor' END,
+                        request_json=request_json || %s,updated_at=now(),ended_at=NULL
+                        WHERE run_id=%s RETURNING *""",
+                    (Jsonb({"pending_supervision_turn": turn_number, "supervision_failure": str(reason),
+                            "supervision_retry_run_id": retry_run_id, "supervision_retry_at": retry_at,
+                            "degraded_supervision": False}), task_id),
+                )).fetchone()
+            source = await (await connection.execute(
+                "SELECT * FROM assistant.messages WHERE message_id=%s", (task["trigger_message_id"],),
+            )).fetchone()
+            if source is None:
+                return task
+            content = {
+                "schema_version": "supervision-recovery.v1", "interaction_kind": "supervision_recovery",
+                "origin": "kernel", "context_visibility": "ui_only", "action_status": "waiting",
+                "text": "PM主线已暂停，等待有效Supervisor评估。已批准后台程序按原政策运行。\n" + str(reason),
+                "task_id": task_id, "supervisor_run_id": retry_run_id, "turn_number": turn_number,
+                "phase": (task["request_json"] or {}).get("current_stage"),
+                "context_epoch": int((task["request_json"] or {}).get("supervisor_context_epoch") or 0),
+                "actions": [{"id": "retry", "label": "重试监督"}, {"id": "wait", "label": "停止自动重试"},
+                            {"id": "cancel", "label": "取消主线"}],
+            }
+            card = await (await connection.execute(
+                """INSERT INTO assistant.messages(message_id,project_id,run_id,channel,chat_id,user_id,
+                    direction,message_type,reply_to_message_id,content_json,delivery_status,idempotency_key)
+                    VALUES (%s,%s,%s,%s,%s,%s,'outbound','kernel_notice',%s,%s,'pending',%s)
+                    ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL
+                    DO UPDATE SET idempotency_key=EXCLUDED.idempotency_key RETURNING *""",
+                (str(uuid.uuid4()), task["project_id"], task_id, source["channel"], source["chat_id"],
+                 source.get("user_id"), source["message_id"], Jsonb(content),
+                 f"supervision-recovery:{task_id}:{turn_number}:{retry_run_id or 'none'}:{content['context_epoch']}"),
+            )).fetchone()
+            await connection.commit()
+            return {"task": task, "card": card}
+
+    async def bind_supervisor_interaction(self, task_id: str, supervisor_run_id: str, message_id: str) -> None:
+        async with self.database.connection() as connection:
+            task = await (await connection.execute("SELECT * FROM assistant.runs WHERE run_id=%s FOR UPDATE", (task_id,),)).fetchone()
+            message = await (await connection.execute(
+                "SELECT * FROM assistant.messages WHERE message_id=%s AND run_id=%s", (message_id, supervisor_run_id),
+            )).fetchone()
+            if not task or not message or task["project_id"] != message["project_id"]:
+                raise PermissionError("Supervisor interaction is not in this Task")
+            if task.get("waiting_question_message_id") or (task.get("request_json") or {}).get("pending_interaction_ref"):
+                raise ValueError("Task already has a business interaction")
+            await connection.execute(
+                """UPDATE assistant.runs SET status='waiting_user',request_json=request_json || %s,
+                    updated_at=now() WHERE run_id=%s""",
+                (Jsonb({"pending_interaction_ref": {"message_id": message_id, "owner_run_id": supervisor_run_id}}), task_id),
+            )
+            await connection.commit()
+
+    async def defer_supervisor_questions(self, task_id: str, supervisor_run_id: str, questions: list[dict], decision_ref: Any = None) -> None:
+        async with self.database.connection() as connection:
+            await connection.execute(
+                """UPDATE assistant.runs SET request_json=request_json || %s,updated_at=now()
+                    WHERE run_id=%s AND status IN ('waiting_user','waiting_supervisor','blocked')""",
+                (Jsonb({"pending_supervisor_questions": questions, "pending_questions_source_run_id": supervisor_run_id,
+                        "pending_questions_decision_ref": json_compatible(decision_ref)}), task_id),
+            )
+            await connection.commit()
+
+    async def record_supervision_recovery(self, *, card_message_id: str, external_event_id: str, actor_user_id: str, action: str) -> dict[str, Any]:
+        if action not in {"retry", "wait", "cancel"}:
+            raise ValueError("Unknown supervision recovery action")
+        async with self.database.connection() as connection:
+            card = await (await connection.execute("SELECT * FROM assistant.messages WHERE message_id=%s FOR UPDATE", (card_message_id,),)).fetchone()
+            if not card or str(card.get("user_id") or "") != actor_user_id:
+                raise PermissionError("Recovery card belongs to another user")
+            body = dict(card.get("content_json") or {})
+            if body.get("interaction_kind") != "supervision_recovery":
+                raise ValueError("Not a supervision recovery card")
+            event_key = f"supervision-recovery-action:{card_message_id}:{external_event_id}"
+            if await (await connection.execute("SELECT 1 FROM assistant.messages WHERE idempotency_key=%s", (event_key,),)).fetchone():
+                return {"duplicate": True, "action": action}
+            if body.get("action_status") != "waiting":
+                raise PermissionError("Recovery card is already resolved")
+            task = await (await connection.execute("SELECT * FROM assistant.runs WHERE run_id=%s FOR UPDATE", (body.get("task_id"),),)).fetchone() if body.get("task_id") else None
+            supervisor = await (await connection.execute("SELECT * FROM assistant.runs WHERE run_id=%s FOR UPDATE", (body.get("supervisor_run_id"),),)).fetchone() if body.get("supervisor_run_id") else None
+            if task and (task["status"] in {"succeeded", "cancelled"} or (task.get("request_json") or {}).get("task_activation") == "suspended"):
+                raise PermissionError("Task is no longer the paused mainline")
+            if supervisor and supervisor["project_id"] != card["project_id"]:
+                raise PermissionError("Supervisor belongs to another Project")
+            if action == "retry":
+                if supervisor and supervisor["status"] != "running":
+                    patch = {"source_context_epoch": int((task or {}).get("request_json", {}).get("supervisor_context_epoch") or 0),
+                             "source_turn_number": int((task or {}).get("request_json", {}).get("task_turn_count") or 0)}
+                    await connection.execute(
+                        """UPDATE assistant.runs SET status='queued',available_at=now(),ended_at=NULL,
+                            cancel_requested_at=NULL,error_json=NULL,max_attempts=attempt+4,
+                            request_json=(request_json-'turn_handoff_ref'-'turn_handoff_sha256') || %s,
+                            updated_at=now() WHERE run_id=%s""", (Jsonb(patch), supervisor["run_id"]),
+                    )
+                elif task and not supervisor:
+                    await self._queue_supervision_locked(connection, task, str(card["message_id"]), reason="user_recovery")
+            elif action == "wait" and supervisor and supervisor["status"] == "queued":
+                await connection.execute("UPDATE assistant.runs SET status='blocked',updated_at=now() WHERE run_id=%s", (supervisor["run_id"],))
+            elif action == "cancel":
+                target = task or supervisor
+                if target:
+                    await connection.execute(
+                        """UPDATE assistant.runs SET cancel_requested_at=now(),
+                            status=CASE WHEN status IN ('running','reconciling') THEN status ELSE 'cancelled' END,
+                            updated_at=now() WHERE run_id=%s""", (target["run_id"],),
+                    )
+            if task:
+                await connection.execute("UPDATE assistant.runs SET request_json=request_json || %s WHERE run_id=%s",
+                    (Jsonb({"supervision_autoretry_paused": action == "wait"}), task["run_id"]))
+            await connection.execute(
+                """INSERT INTO assistant.messages(message_id,project_id,run_id,channel,chat_id,user_id,
+                    direction,message_type,content_json,delivery_status,idempotency_key)
+                    VALUES (%s,%s,%s,%s,%s,%s,'system','supervision_recovery_action',%s,'received',%s)""",
+                (str(uuid.uuid4()), card["project_id"], card.get("run_id"), card["channel"], card["chat_id"],
+                 actor_user_id, Jsonb({"context_visibility": "structured", "action": action, "card_message_id": card_message_id}), event_key),
+            )
+            body.update({"action_status": "resolved", "resolution_action": action})
+            await connection.execute("UPDATE assistant.messages SET content_json=%s WHERE message_id=%s", (Jsonb(body), card_message_id))
+            await connection.commit()
+            return {"duplicate": False, "action": action, "task_id": body.get("task_id")}
+
+    async def settle_failed_pm_turn(self, task_id: str, reason: str, source_run_id: str | None = None) -> None:
+        async with self.database.connection() as connection:
+            task = await (await connection.execute("SELECT * FROM assistant.runs WHERE run_id=%s FOR UPDATE", (task_id,),)).fetchone()
+            if not task or not self._five_stage_task(task):
+                return
+            request = dict(task.get("request_json") or {})
+            if (request.get("task_protocol") != "single-agent.v2" and not self._single_agent_project(str(task["project_id"]))) or not str(task["agent_key"]).endswith(":manager"):
+                return
+            if task.get("cancel_requested_at") or task["status"] == "cancelled":
+                # A user's cancellation is final; it cannot become a recovery Run.
+                return
+            settlement_key = f"failed-attempt:{task_id}:{int(task.get('attempt') or 0)}"
+            if request.get("failure_settlement_key") == settlement_key:
+                return
+            turn = int(request.get("task_turn_count") or 0) + 1
+            source_id = str(task["trigger_message_id"])
+            from assistant_kernel.services.document_runtime import TaskDocumentService
+            ref = TaskDocumentService(self.settings).write_revision(
+                project_id=str(task["project_id"]), task_id=task_id, document_kind="failed-turn",
+                document_schema="turn-record.v1", payload={"outcome": "failed", "summary": reason, "turn_number": turn,
+                    "trace_ref": (task.get("executor_json") or {}).get("trace_uri"),
+                    "artifact_refs": list(task.get("artifact_refs") or []), "error": task.get("error_json")},
+                status="failed", actor_type="kernel", actor_id="kernel", run_id=source_run_id or task_id,
+                reason="failed PM call settled without claiming success", source_refs=[],
+            )
+            accepted = {**dict(request.get("accepted_documents") or {}), "failed_turn": ref}
+            task = await (await connection.execute(
+                """UPDATE assistant.runs SET status=CASE WHEN status='reconciling' THEN status ELSE 'waiting_supervisor' END,
+                    request_json=request_json || %s,updated_at=now(),ended_at=NULL WHERE run_id=%s RETURNING *""",
+                (Jsonb({"failed_turn_ref": ref, "pending_supervision_turn": turn,
+                        "task_turn_count": turn, "failure_settlement_key": settlement_key,
+                        "accepted_documents": accepted,
+                        "pending_supervision_source_id": source_id, "supervision_failure": reason}), task_id),
+            )).fetchone()
+            await self._queue_supervision_locked(connection, task, source_id, reason="run_failure")
+            await connection.commit()
+
+    async def resume_completed_operation(self, operation_run_id: str) -> None:
+        """Wake a PM waiting for registered receipts, not ordinary background jobs."""
+        async with self.database.connection() as connection:
+            operation = await (await connection.execute("SELECT * FROM assistant.runs WHERE run_id=%s", (operation_run_id,),)).fetchone()
+            if not operation or not (operation.get("request_json") or {}).get("operation_action") or not operation.get("parent_run_id"):
+                return
+            task = await (await connection.execute("SELECT * FROM assistant.runs WHERE run_id=%s FOR UPDATE", (operation["parent_run_id"],),)).fetchone()
+            if not task or task.get("cancel_requested_at") or task["status"] != "waiting_supervisor":
+                return
+            ids = list((task.get("request_json") or {}).get("pending_operation_runs") or [])
+            if operation_run_id not in ids:
+                return
+            remaining = await (await connection.execute(
+                "SELECT 1 FROM assistant.runs WHERE run_id=ANY(%s::uuid[]) AND status IN ('queued','running','reconciling') LIMIT 1", (ids,),
+            )).fetchone()
+            if remaining:
+                return
+            await connection.execute(
+                "UPDATE assistant.runs SET request_json=request_json || %s WHERE run_id=%s",
+                (Jsonb({"pending_operation_runs": [], "pm_instruction": "Registered action receipts are available. Inspect real results and finish or report the failure."}), task["run_id"]),
+            )
+            task = await (await connection.execute("SELECT * FROM assistant.runs WHERE run_id=%s", (task["run_id"],),)).fetchone()
+            await self._advance_supervisor_context_epoch_locked(connection, task=task, reason="operation_receipts", source_id=operation_run_id)
+            task = await (await connection.execute("SELECT * FROM assistant.runs WHERE run_id=%s", (task["run_id"],),)).fetchone()
+            await self._queue_supervision_locked(connection, task, str(operation.get("trigger_message_id") or task["trigger_message_id"]), reason="operation_receipts")
+            await connection.commit()
+
 
     async def validate_current_waiting_message(
         self, *, message_id: str, project_id: str, channel: str, chat_id: str,
@@ -3681,6 +4043,20 @@ class CoreRepository:
     ) -> dict[str, Any]:
         """Fence a user interaction before any external/file-side effect."""
         async with self.database.connection() as connection:
+            from assistant_kernel.services.question_groups import projection_ref
+            projection=await (await connection.execute('SELECT m.*,r.status AS run_status,r.cancel_requested_at FROM assistant.messages m JOIN assistant.runs r ON r.run_id=m.run_id WHERE m.message_id=%s',
+                (message_id,))).fetchone()
+            ref=projection_ref(projection['content_json'] or {}) if projection else None
+            if ref:
+                group=await (await connection.execute('SELECT * FROM assistant.messages WHERE message_id=%s',(ref['id'],))).fetchone()
+                if ((projection['project_id'],projection['channel'],projection['chat_id'],projection['user_id'])!=(project_id,channel,chat_id,user_id)
+                        or not group or group['project_id']!=project_id or group['content_json']['owner_user_id']!=user_id
+                        or group['content_json']['group']['status']!='open'
+                        or projection['content_json']['question_projection']['view_status']!='active'
+                        or projection['content_json']['question_projection']['content_version']!=group['content_json']['group']['content_version']
+                        or projection['run_status'] in {'succeeded','failed','cancelled','dead_letter'} or projection['cancel_requested_at']):
+                    raise PermissionError('Canonical question projection is no longer current or belongs to another owner')
+                return projection
             row = await (
                 await connection.execute(
                     """
@@ -3795,6 +4171,49 @@ class CoreRepository:
             await connection.commit()
             return updated
 
+    async def record_python_attempt(
+        self, run_id: str, worker_instance_id: str, claim_token: str,
+        receipt: dict[str, Any], artifact_refs: list[str],
+    ) -> bool:
+        """Fence Python evidence/identity to this attempt; never publish an old result."""
+        identity = receipt.get("process_identity") or {}
+        async with self.database.connection() as connection:
+            row = await (await connection.execute(
+                """UPDATE assistant.runs
+                   SET executor_json=executor_json || %s, artifact_refs=%s,
+                       result_json=NULL, process_pid=%s,process_start_ticks=%s,updated_at=now()
+                   WHERE run_id=%s AND run_type='python' AND status='running'
+                     AND attempt=%s AND worker_instance_id=%s AND claim_token=%s
+                   RETURNING *""",
+                (Jsonb({"python_attempt": json_compatible(receipt)}), Jsonb(artifact_refs),
+                 identity.get("pid"), identity.get("start_ticks"), run_id,
+                 receipt["attempt"], worker_instance_id, claim_token),
+            )).fetchone()
+            if row and receipt.get('settlement_ref'):
+                from assistant_kernel.services.python_evidence import PythonEvidence
+                await PythonEvidence(self.settings,row).record_documents_locked(connection,self,receipt)
+            if row and receipt.get('ended_at') and receipt.get('stop_reason') not in {None,'CancelledError'}:
+                from assistant_kernel.services.runtime_notifications import RuntimeNotifications
+                await RuntimeNotifications(self.settings,self).failure_locked(connection,row,receipt)
+            await connection.commit()
+            return row is not None
+
+    async def record_python_cleanup(
+        self, run_id: str, attempt: int, cleanup: dict[str, Any],
+    ) -> bool:
+        """Record a fresh reconciliation probe without reopening or completing a Run."""
+        async with self.database.connection() as connection:
+            row = await (await connection.execute(
+                """UPDATE assistant.runs SET executor_json=jsonb_set(
+                       executor_json,'{python_attempt,cleanup}',%s),updated_at=now()
+                   WHERE run_id=%s AND run_type='python' AND status='reconciling'
+                     AND attempt=%s AND executor_json ? 'python_attempt'
+                   RETURNING run_id""",
+                (Jsonb(json_compatible(cleanup)), run_id, attempt),
+            )).fetchone()
+            await connection.commit()
+            return row is not None
+
     async def run_claim_is_active(
         self, run_id: str, worker_instance_id: str, claim_token: str,
     ) -> bool:
@@ -3862,6 +4281,8 @@ class CoreRepository:
         metadata: dict[str, Any] | None = None,
     ) -> None:
         async with self.database.connection() as connection:
+            from assistant_kernel.services.runtime_admission import RuntimeAdmission
+            reservation=await RuntimeAdmission(self.settings).model_reservation_locked(connection,project_id,invocation_id)
             await connection.execute(
                 """
                 INSERT INTO assistant.model_invocations(
@@ -3873,10 +4294,21 @@ class CoreRepository:
                 (
                     invocation_id, project_id, run_id, session_id, actor_role, harness,
                     provider, model, reasoning_effort, auth_mode,
-                    Jsonb(json_compatible(metadata or {})),
+                    Jsonb(json_compatible({**(metadata or {}),'capacity_reservation':reservation})),
                 ),
             )
             await connection.commit()
+
+    async def defer_model_capacity(self,run_id:str,worker_instance_id:str,claim_token:str,reason:str)->bool:
+        """Only a pre-launch claim can wait for capacity without a failed Turn."""
+        async with self.database.connection() as connection:
+            row=await (await connection.execute("""UPDATE assistant.runs SET status='queued',attempt=GREATEST(attempt-1,0),
+                available_at=now()+interval '2 seconds',worker_id=NULL,worker_instance_id=NULL,claim_token=NULL,lease_until=NULL,
+                request_json=request_json || %s,updated_at=now()
+                WHERE run_id=%s AND status='running' AND worker_instance_id=%s AND claim_token=%s
+                  AND process_pid IS NULL AND cancel_requested_at IS NULL RETURNING run_id""",
+                (Jsonb({'capacity_wait':{'resource':'model','reason':reason}}),run_id,worker_instance_id,claim_token))).fetchone()
+            await connection.commit();return row is not None
 
     async def finish_model_invocation(
         self, *, invocation_id: str, status: str,
@@ -3907,6 +4339,14 @@ class CoreRepository:
                     Jsonb(json_compatible(metadata or {})), invocation_id,
                 ),
             )
+            # Auxiliary Python belongs to this actual invocation, not merely to
+            # the longer-lived PM Task. Never detach it when the model returns.
+            await connection.execute("""UPDATE assistant.runs SET cancel_requested_at=COALESCE(cancel_requested_at,now()),
+                status=CASE WHEN status='queued' THEN 'cancelled' ELSE status END,
+                ended_at=CASE WHEN status='queued' THEN now() ELSE ended_at END,updated_at=now()
+                WHERE run_type='python' AND status IN ('queued','running')
+                  AND request_json->>'creating_invocation_id'=%s
+                  AND request_json->>'lifecycle_relation'='invocation_dependent'""",(invocation_id,))
             await connection.commit()
 
     async def record_turn_usage(
@@ -4018,6 +4458,10 @@ class CoreRepository:
             ).fetchone()
             if session is None:
                 raise RuntimeError("active session was not found")
+            if await self._settle_turn_inputs(connection, locked):
+                updated = await self._requeue_pending_inputs(connection, locked)
+                await connection.commit()
+                return {'run':updated,'reply':None,'next_run':None,'input_pending':True}
             reply_id = str(uuid.uuid4())
             idempotency_key = f"reply:{run_id}:{source_message_id}"
             prior_reply = await (
@@ -4059,42 +4503,6 @@ class CoreRepository:
             stage_plan = [str(item) for item in locked_request.get("stage_plan") or []]
             stage_index = int(locked_request.get("stage_index") or 0)
             final_result = dict(result)
-            if advance_stage and locked["run_type"] == "stage" and stage_index + 1 < len(stage_plan):
-                next_stage = stage_plan[stage_index + 1]
-                next_run_id = str(uuid.uuid4())
-                root_id = str(locked_request.get("task_root_run_id") or run_id)
-                next_request = {
-                    **locked_request,
-                    "stage_index": stage_index + 1,
-                    "task_root_run_id": root_id,
-                    "prior_artifacts": json_compatible(
-                        list(locked_request.get("prior_artifacts") or []) + artifact_refs
-                    ),
-                }
-                next_run = await (
-                    await connection.execute(
-                        """
-                        INSERT INTO assistant.runs(
-                            run_id,project_id,agent_key,trigger_message_id,parent_run_id,
-                            run_type,stage,status,conversation_key,request_json,
-                            executor_json,idempotency_key
-                        ) VALUES (%s,%s,%s,%s,%s,'stage',%s,'queued',%s,%s,%s,%s)
-                        ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL
-                        DO UPDATE SET idempotency_key=EXCLUDED.idempotency_key RETURNING *
-                        """,
-                        (
-                            next_run_id, project_id, f"project:{project_id}:{next_stage}",
-                            reply["message_id"], run_id, next_stage,
-                            conversation_key(
-                                project_id, f"project:{project_id}:{next_stage}", channel, chat_id
-                            ),
-                            Jsonb(next_request),
-                            Jsonb(stage_executor(next_request, next_stage)),
-                            f"task-stage:{root_id}:{stage_index + 1}:{next_stage}",
-                        ),
-                    )
-                ).fetchone()
-                final_result["next_run_id"] = str(next_run["run_id"])
             updated = await (
                 await connection.execute(
                     """
@@ -4123,287 +4531,14 @@ class CoreRepository:
         project_id: str, source_message_id: str, summary: str,
         issues: list[dict[str, Any]], artifact_refs: list[Any],
     ) -> dict[str, Any]:
-        """Finish one read-only Review and re-run the preceding pinned stage."""
-        async with self.database.connection() as connection:
-            locked = await (
-                await connection.execute(
-                    """
-                    SELECT r.*,m.channel,m.chat_id,m.user_id
-                    FROM assistant.runs r
-                    JOIN assistant.messages m ON m.message_id=r.trigger_message_id
-                    WHERE r.run_id=%s AND r.worker_instance_id=%s AND r.claim_token=%s
-                      AND r.status='running' AND r.cancel_requested_at IS NULL
-                      AND r.stage='review'
-                    FOR UPDATE OF r
-                    """,
-                    (run_id, worker_instance_id, claim_token),
-                )
-            ).fetchone()
-            if locked is None:
-                raise RuntimeError("Review Run lease was lost before requesting changes")
-            request = dict(locked["request_json"] or {})
-            stage_plan = [str(item) for item in request.get("stage_plan") or []]
-            target_stage = review_rework_stage(stage_plan)
-            root_id = str(request.get("task_root_run_id") or run_id)
-            round_number = int(request.get("stage_round") or 1) + 1
-            reply = await (
-                await connection.execute(
-                    """
-                    INSERT INTO assistant.messages(
-                        message_id,project_id,run_id,channel,chat_id,user_id,direction,
-                        message_type,reply_to_message_id,content_json,delivery_status,idempotency_key
-                    ) VALUES (%s,%s,%s,%s,%s,%s,'outbound','reply',%s,%s,'pending',%s)
-                    ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL
-                    DO UPDATE SET idempotency_key=EXCLUDED.idempotency_key RETURNING *
-                    """,
-                    (
-                        str(uuid.uuid4()), project_id, run_id, locked["channel"],
-                        locked["chat_id"], locked["user_id"], source_message_id,
-                        Jsonb({"text": summary, "issues": json_compatible(issues)}),
-                        f"review-request-changes:{run_id}:{round_number}",
-                    ),
-                )
-            ).fetchone()
-            updated = await (
-                await connection.execute(
-                    """
-                    UPDATE assistant.runs SET status='succeeded',result_json=%s,artifact_refs=%s,
-                        worker_id=NULL,worker_instance_id=NULL,claim_token=NULL,lease_until=NULL,
-                        process_pid=NULL,process_start_ticks=NULL,updated_at=now(),ended_at=now()
-                    WHERE run_id=%s AND worker_instance_id=%s AND claim_token=%s
-                      AND status='running' RETURNING run_id
-                    """,
-                    (
-                        Jsonb({"outcome": "request_changes", "summary": summary,
-                               "issues": json_compatible(issues)}),
-                        Jsonb(json_compatible(artifact_refs)), run_id,
-                        worker_instance_id, claim_token,
-                    ),
-                )
-            ).fetchone()
-            if updated is None:
-                raise RuntimeError("Review Run lease was lost")
-            next_request = {
-                **request,
-                "stage_index": stage_plan.index(target_stage),
-                "stage_round": round_number,
-                "review_feedback": {"source_review_run_id": run_id, "issues": issues},
-                "prior_artifacts": json_compatible(
-                    list(request.get("prior_artifacts") or []) + artifact_refs
-                ),
-            }
-            next_run = await (
-                await connection.execute(
-                    """
-                    INSERT INTO assistant.runs(
-                        run_id,project_id,agent_key,trigger_message_id,parent_run_id,
-                        run_type,stage,status,conversation_key,request_json,
-                        executor_json,idempotency_key
-                    ) VALUES (%s,%s,%s,%s,%s,'stage',%s,'queued',%s,%s,%s,%s)
-                    ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL
-                    DO UPDATE SET idempotency_key=EXCLUDED.idempotency_key RETURNING *
-                    """,
-                    (
-                        str(uuid.uuid4()), project_id, f"project:{project_id}:{target_stage}",
-                        reply["message_id"], run_id, target_stage,
-                        conversation_key(
-                            project_id, f"project:{project_id}:{target_stage}",
-                            str(locked["channel"]), str(locked["chat_id"]),
-                        ),
-                        Jsonb(json_compatible(next_request)),
-                        Jsonb(stage_executor(next_request, target_stage)),
-                        f"task-rework:{root_id}:{round_number}:{target_stage}",
-                    ),
-                )
-            ).fetchone()
-            await connection.execute(
-                "UPDATE assistant.messages SET run_id=%s WHERE message_id=%s",
-                (next_run["run_id"], reply["message_id"]),
-            )
-            await connection.commit()
-            return {
-                "outcome": "request_changes",
-                "reply_message_id": str(reply["message_id"]),
-                "next_run_id": str(next_run["run_id"]),
-                "stage_round": round_number,
-            }
+        raise PermissionError("Stage execution is retired; use single-agent.v2")
 
     async def finalize_implementation_validation_rework(
         self, *, run_id: str, worker_instance_id: str, claim_token: str,
         summary: str, validation_artifact: dict[str, Any],
         artifact_refs: list[Any], max_reworks: int = 2,
     ) -> dict[str, Any]:
-        """Finish an Implementation attempt and create a bounded fresh rework Run."""
-        async with self.database.connection() as connection:
-            locked = await (
-                await connection.execute(
-                    """
-                    SELECT r.*,m.channel,m.chat_id,m.user_id
-                    FROM assistant.runs r
-                    JOIN assistant.messages m ON m.message_id=r.trigger_message_id
-                    WHERE r.run_id=%s AND r.worker_instance_id=%s AND r.claim_token=%s
-                      AND r.status='running' AND r.cancel_requested_at IS NULL
-                      AND r.run_type='stage'
-                      AND r.stage='implementation' FOR UPDATE OF r
-                    """,
-                    (run_id, worker_instance_id, claim_token),
-                )
-            ).fetchone()
-            if locked is None:
-                raise RuntimeError("Implementation Run lease was lost before validation rework")
-            request = dict(locked["request_json"] or {})
-            rework_count = int(request.get("validation_rework_count") or 0)
-            report_status = str(
-                validation_artifact.get("release_gate")
-                or validation_artifact.get("status")
-                or "failed"
-            )
-            result = {
-                "outcome": "validation_failed",
-                "summary": summary,
-                "validation_status": report_status,
-                "validation_artifact": json_compatible(validation_artifact),
-                "validation_rework_count": rework_count,
-            }
-            if rework_count >= max_reworks:
-                reply = await (
-                    await connection.execute(
-                        """
-                        INSERT INTO assistant.messages(
-                            message_id,project_id,run_id,channel,chat_id,user_id,direction,
-                            message_type,reply_to_message_id,content_json,delivery_status,
-                            idempotency_key
-                        ) VALUES (%s,%s,%s,%s,%s,%s,'outbound','reply',%s,%s,'pending',%s)
-                        ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL
-                        DO UPDATE SET idempotency_key=EXCLUDED.idempotency_key RETURNING *
-                        """,
-                        (
-                            str(uuid.uuid4()), locked["project_id"], run_id,
-                            locked["channel"], locked["chat_id"], locked["user_id"],
-                            locked["trigger_message_id"],
-                            Jsonb({
-                                "text": summary,
-                                "outcome": "blocked",
-                                "reason": "validation_rework_limit",
-                            }),
-                            f"validation-blocked-reply:{run_id}",
-                        ),
-                    )
-                ).fetchone()
-                result["outcome"] = "blocked"
-                result["reason"] = "validation_rework_limit"
-                await connection.execute(
-                    """
-                    UPDATE assistant.runs
-                    SET status='blocked',result_json=%s,artifact_refs=%s,error_json=NULL,
-                        worker_id=NULL,worker_instance_id=NULL,claim_token=NULL,
-                        lease_until=NULL,process_pid=NULL,process_start_ticks=NULL,
-                        updated_at=now(),ended_at=NULL
-                    WHERE run_id=%s
-                    """,
-                    (
-                        Jsonb(result), Jsonb(json_compatible(artifact_refs)), run_id,
-                    ),
-                )
-                await connection.commit()
-                return {
-                    "outcome": "blocked",
-                    "status": "blocked",
-                    "reply": reply,
-                    "next_run": None,
-                }
-
-            next_count = rework_count + 1
-            root_id = str(request.get("task_root_run_id") or run_id)
-            handoff_key = f"validation-rework:{root_id}:{next_count}"
-            handoff = await (
-                await connection.execute(
-                    """
-                    INSERT INTO assistant.messages(
-                        message_id,project_id,channel,chat_id,user_id,direction,message_type,
-                        content_json,delivery_status,idempotency_key
-                    ) VALUES (%s,%s,%s,%s,%s,'system','validation_rework',%s,'received',%s)
-                    ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL
-                    DO UPDATE SET idempotency_key=EXCLUDED.idempotency_key RETURNING *
-                    """,
-                    (
-                        str(uuid.uuid4()), locked["project_id"], locked["channel"],
-                        locked["chat_id"], locked["user_id"],
-                        Jsonb({
-                            "source_run_id": run_id,
-                            "validation_artifact": json_compatible(validation_artifact),
-                            "summary": summary,
-                        }),
-                        handoff_key,
-                    ),
-                )
-            ).fetchone()
-            next_request = {
-                **request,
-                "stage_index": int(request.get("stage_index") or 0),
-                "task_root_run_id": root_id,
-                "validation_rework_count": next_count,
-                "validation_issue": json_compatible(validation_artifact),
-                "prior_artifacts": json_compatible(
-                    list(request.get("prior_artifacts") or []) + artifact_refs
-                ),
-            }
-            next_run = await (
-                await connection.execute(
-                    """
-                    INSERT INTO assistant.runs(
-                        run_id,project_id,agent_key,trigger_message_id,parent_run_id,
-                        run_type,stage,status,conversation_key,request_json,
-                        executor_json,idempotency_key
-                    ) VALUES (%s,%s,%s,%s,%s,'stage','implementation','queued',%s,%s,%s,%s)
-                    ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL
-                    DO UPDATE SET idempotency_key=EXCLUDED.idempotency_key RETURNING *
-                    """,
-                    (
-                        str(uuid.uuid4()), locked["project_id"], locked["agent_key"],
-                        handoff["message_id"], run_id,
-                        conversation_key(
-                            str(locked["project_id"]), str(locked["agent_key"]),
-                            str(locked["channel"]), str(locked["chat_id"]),
-                        ),
-                        Jsonb(next_request),
-                        Jsonb(stage_executor(next_request, "implementation")),
-                        f"task-validation-rework:{root_id}:{next_count}:implementation",
-                    ),
-                )
-            ).fetchone()
-            result["next_run_id"] = str(next_run["run_id"])
-            result["validation_rework_count"] = next_count
-            await connection.execute(
-                "UPDATE assistant.messages SET run_id=%s WHERE message_id=%s",
-                (next_run["run_id"], handoff["message_id"]),
-            )
-            updated = await (
-                await connection.execute(
-                    """
-                    UPDATE assistant.runs
-                    SET status='succeeded',result_json=%s,artifact_refs=%s,error_json=NULL,
-                        worker_id=NULL,worker_instance_id=NULL,claim_token=NULL,
-                        lease_until=NULL,process_pid=NULL,process_start_ticks=NULL,
-                        updated_at=now(),ended_at=now()
-                    WHERE run_id=%s AND worker_instance_id=%s AND claim_token=%s
-                      AND status='running' RETURNING run_id
-                    """,
-                    (
-                        Jsonb(result), Jsonb(json_compatible(artifact_refs)),
-                        run_id, worker_instance_id, claim_token,
-                    ),
-                )
-            ).fetchone()
-            if updated is None:
-                raise RuntimeError("Implementation Run lease was lost during validation rework")
-            await connection.commit()
-            return {
-                "outcome": "validation_rework",
-                "status": "succeeded",
-                "reply": None,
-                "next_run": next_run,
-            }
+        raise PermissionError("Stage execution is retired; use single-agent.v2")
 
     async def finalize_agent_waiting(
         self, *, run_id: str, worker_instance_id: str, claim_token: str,
@@ -4416,9 +4551,8 @@ class CoreRepository:
     ) -> dict[str, Any]:
         """Persist one interaction round and release the worker atomically.
 
-        Every free-text question is its own outbound message. A Feishu user can
-        therefore use the native Reply action and the external message ID resolves
-        one exact Run/Session/question tuple, even when several questions are open.
+        Ordinary Discord questions share a durable paged card. Other channels
+        and special inputs retain one message per question for native replies.
         """
         if message_type not in {"question", "approval"}:
             raise ValueError("message_type must be question or approval")
@@ -4426,7 +4560,7 @@ class CoreRepository:
             run = await (
                 await connection.execute(
                     """
-                    SELECT interaction_seq FROM assistant.runs
+                    SELECT * FROM assistant.runs
                     WHERE run_id=%s AND worker_instance_id=%s AND claim_token=%s
                       AND status='running' AND cancel_requested_at IS NULL FOR UPDATE
                     """,
@@ -4451,6 +4585,10 @@ class CoreRepository:
             )
             if await session_update.fetchone() is None:
                 raise RuntimeError("active session was not found while waiting for user")
+            if str(run.get("agent_key") or "").endswith(":manager") and await self._settle_turn_inputs(connection, run):
+                updated = await self._requeue_pending_inputs(connection, run)
+                await connection.commit()
+                return {'run':updated,'reply':None,'next_run':None,'input_pending':True}
             sequence = int(run["interaction_seq"]) + 1
             stage = str(question.get("stage") or "PM")
             correlation = {
@@ -4462,8 +4600,17 @@ class CoreRepository:
                 "user_id": user_id,
             }
             payloads: list[dict[str, Any]] = []
+            disclosed_subjects={}
             if message_type == "question":
-                questions = [dict(item) for item in question.get("questions") or []]
+                questions = [
+                    {**dict(item),
+                     "question_id": str(item.get("question_id") or "").strip(),
+                     "question_text": str(item.get("question_text") or "").strip(),
+                     "required": bool(item.get("required", True))}
+                    for item in question.get("questions") or []
+                ]
+                from assistant_kernel.services.proposal_presentations import enrich_questions
+                questions,disclosed_subjects=enrich_questions(self.settings,project_id,run_id,questions)
                 question_ids = [str(item.get("question_id") or "").strip() for item in questions]
                 if not questions or any(not item for item in question_ids):
                     raise ValueError("a question interaction requires stable question IDs")
@@ -4482,14 +4629,21 @@ class CoreRepository:
                     ]
                     option_text = "\n".join(
                         f"{index}. {str(option.get('label') or '')}"
+                        + ("（推荐）" if option.get("id") == item.get("recommended_option_id") else "")
                         + (f" — {option['description']}" if option.get("description") else "")
                         for index, option in enumerate(options, start=1)
                     )
                     label = "\n\n".join(
                         part for part in (
                             summary if ordinal == 1 else "",
+                            str(item.get("topic") or ""),
                             question_text,
                             option_text,
+                            (
+                                "推荐理由：" + str(item["recommendation_reason"])
+                                if item.get("recommendation_reason") and item.get("recommended_option_id")
+                                in {option.get("id") for option in options} else ""
+                            ),
                             "可点选卡片，也可回复本消息补充自己的答案。" if options else "",
                             (
                                 "有多个待答问题，请回复对应消息。"
@@ -4505,10 +4659,18 @@ class CoreRepository:
                         "options": options,
                         "required": bool(item.get("required", True)),
                         "input_schema": item.get("input_schema"),
+                        "topic": item.get("topic"),
+                        "recommended_option_id": item.get("recommended_option_id"),
+                        "recommendation_reason": item.get("recommendation_reason"),
                         "ordinal": ordinal,
                         "interaction_seq": sequence,
                         "correlation": {**correlation, "question_id": question_id},
                     })
+                if channel == "discord" and user_id and questionnaire_eligible(questions):
+                    payloads = [make_questionnaire(
+                        questions, summary=str(question.get("summary") or ""),
+                        sequence=sequence, correlation=correlation,
+                    )]
             else:
                 payload = dict(question)
                 payload["correlation"] = correlation
@@ -4517,6 +4679,7 @@ class CoreRepository:
 
             messages: list[dict[str, Any]] = []
             for ordinal, payload in enumerate(payloads, start=1):
+                if disclosed_subjects:payload['disclosed_subject_refs']=disclosed_subjects
                 message_id = str(uuid.uuid4())
                 identity = payload.get("question_id") or ordinal
                 key = f"{message_type}:{run_id}:{sequence}:{canonical_sha256(identity)}"
@@ -4547,6 +4710,11 @@ class CoreRepository:
                 str(payload["question_id"]) for payload in payloads
                 if payload.get("question_id") and payload.get("required", True)
             ]
+            if is_questionnaire(payloads[0]):
+                question_ids = [str(item["question_id"]) for item in questions]
+                required_question_ids = [
+                    str(item["question_id"]) for item in questions if item.get("required", True)
+                ]
             result_payload = {
                 "outcome": "needs_approval" if message_type == "approval" else "needs_input",
                 "interaction_seq": sequence,
@@ -4578,6 +4746,14 @@ class CoreRepository:
             ).fetchone()
             if updated is None:
                 raise RuntimeError("run lease was lost before waiting for user")
+            if self._five_stage_task(run) and (run.get("request_json") or {}).get("task_protocol") == "single-agent.v2" and str(run.get("agent_key") or "").endswith(":manager"):
+                task = await (await connection.execute("SELECT * FROM assistant.runs WHERE run_id=%s", (run_id,),)).fetchone()
+                task = await (await connection.execute(
+                    "UPDATE assistant.runs SET request_json=request_json || %s WHERE run_id=%s RETURNING *",
+                    (Jsonb({"pending_supervision_turn": int((task.get("request_json") or {}).get("task_turn_count") or 0),
+                            "pending_supervision_source_id": str(message["message_id"])}), run_id),
+                )).fetchone()
+                await self._queue_supervision_locked(connection, task, str(message["message_id"]), reason="after_agent_turn")
             await connection.commit()
             result = dict(message)
             result["question_message_ids"] = result_payload["question_message_ids"]
@@ -4692,6 +4868,7 @@ class CoreRepository:
             ).fetchone()
             if locked is None:
                 raise RuntimeError("Run lease was lost before recording blocker")
+            await self._settle_turn_inputs(connection, locked)
             reply = await (
                 await connection.execute(
                     """
@@ -4745,115 +4922,13 @@ class CoreRepository:
         permission_receipt_uri: str, permission_receipt_sha256: str,
         approval_message_id: str | None,
     ) -> dict[str, Any]:
-        key = f"permission-resume:{blocked_run_id}:{permission_receipt_sha256}"
-        async with self.database.connection() as connection:
-            await connection.execute(
-                "SELECT pg_advisory_xact_lock(hashtextextended(%s,0))", (key,),
-            )
-            existing = await (
-                await connection.execute(
-                    "SELECT * FROM assistant.runs WHERE idempotency_key=%s", (key,)
-                )
-            ).fetchone()
-            if existing is not None:
-                await connection.commit()
-                return {**existing, "idempotent": True}
-            blocked = await (
-                await connection.execute(
-                    """
-                    SELECT r.*,m.channel,m.chat_id,m.user_id
-                    FROM assistant.runs r
-                    JOIN assistant.messages m ON m.message_id=r.trigger_message_id
-                    WHERE r.run_id=%s AND r.status='blocked' AND r.run_type='stage'
-                    FOR UPDATE OF r
-                    """,
-                    (blocked_run_id,),
-                )
-            ).fetchone()
-            if blocked is None:
-                raise ValueError("permission resume target is not a blocked Stage Run")
-            request = dict(blocked["request_json"] or {})
-            request["permission_resume"] = {
-                "blocked_run_id": blocked_run_id,
-                "permission_run_id": permission_run_id,
-                "permission_receipt_uri": permission_receipt_uri,
-                "permission_receipt_sha256": permission_receipt_sha256,
-                "approval_message_id": approval_message_id,
-            }
-            stage = str(blocked.get("stage") or "")
-            if stage not in {"requirements", "implementation", "review"}:
-                raise ValueError("permission resume target has an unsupported Stage")
-            message_id = str(uuid.uuid4())
-            new_run_id = str(uuid.uuid4())
-            trigger = await (
-                await connection.execute(
-                    """
-                    INSERT INTO assistant.messages(
-                        message_id,project_id,channel,chat_id,user_id,direction,message_type,
-                        content_json,delivery_status,idempotency_key
-                    ) VALUES (%s,%s,%s,%s,%s,'system','task',%s,'received',%s)
-                    RETURNING *
-                    """,
-                    (
-                        message_id, blocked["project_id"], blocked["channel"],
-                        blocked["chat_id"], blocked["user_id"],
-                        Jsonb({
-                            "schema_version": "permission-resume.v1",
-                            "blocked_run_id": blocked_run_id,
-                            "permission_run_id": permission_run_id,
-                            "permission_receipt_uri": permission_receipt_uri,
-                            "permission_receipt_sha256": permission_receipt_sha256,
-                            "goal": str(request.get("goal") or ""),
-                        }),
-                        f"permission-resume-trigger:{blocked_run_id}:{permission_receipt_sha256}",
-                    ),
-                )
-            ).fetchone()
-            resumed = await (
-                await connection.execute(
-                    """
-                    INSERT INTO assistant.runs(
-                        run_id,project_id,agent_key,trigger_message_id,parent_run_id,
-                        run_type,stage,status,conversation_key,request_json,executor_json,
-                        idempotency_key
-                    ) VALUES (%s,%s,%s,%s,%s,'stage',%s,'queued',%s,%s,%s,%s)
-                    RETURNING *
-                    """,
-                    (
-                        new_run_id, blocked["project_id"], blocked["agent_key"],
-                        trigger["message_id"], blocked_run_id, stage,
-                        blocked["conversation_key"], Jsonb(json_compatible(request)),
-                        Jsonb(stage_executor(request, stage)), key,
-                    ),
-                )
-            ).fetchone()
-            await connection.execute(
-                "UPDATE assistant.messages SET run_id=%s WHERE message_id=%s",
-                (resumed["run_id"], trigger["message_id"]),
-            )
-            await connection.execute(
-                """
-                UPDATE assistant.runs
-                SET status='cancelled',ended_at=now(),updated_at=now(),
-                    result_json=COALESCE(result_json,'{}'::jsonb) || %s
-                WHERE run_id=%s AND status='blocked'
-                """,
-                (
-                    Jsonb({
-                        "superseded_by_run_id": str(resumed["run_id"]),
-                        "permission_receipt_uri": permission_receipt_uri,
-                        "permission_receipt_sha256": permission_receipt_sha256,
-                    }),
-                    blocked_run_id,
-                ),
-            )
-            await connection.commit()
-            return {**resumed, "idempotent": False}
+        raise PermissionError("Stage execution is retired; use single-agent.v2")
 
     async def unblock_run(self, run_id: str, note: str) -> str:
         if not note.strip():
             raise ValueError("unblock note is required")
         async with self.database.connection() as connection:
+            await self._require_active_run(connection, run_id)
             locked = await (
                 await connection.execute(
                     "SELECT request_json FROM assistant.runs WHERE run_id=%s AND status='blocked' FOR UPDATE",
@@ -4885,6 +4960,7 @@ class CoreRepository:
         result: dict[str, Any], artifact_refs: list[Any],
     ) -> dict[str, Any]:
         """Commit a deterministic publication and its user-visible receipt atomically."""
+        parent = None
         async with self.database.connection() as connection:
             locked = await (
                 await connection.execute(
@@ -4893,7 +4969,7 @@ class CoreRepository:
                     FROM assistant.runs r
                     JOIN assistant.messages m ON m.message_id=r.trigger_message_id
                     WHERE r.run_id=%s AND r.worker_instance_id=%s AND r.claim_token=%s
-                      AND r.status='running' AND r.run_type='publish'
+                      AND r.status='running' AND r.run_type='publish' AND r.cancel_requested_at IS NULL
                     FOR UPDATE OF r
                     """,
                     (run_id, worker_instance_id, claim_token),
@@ -4944,6 +5020,16 @@ class CoreRepository:
             ).fetchone()
             if updated is None:
                 raise RuntimeError("Publish Run lease was lost before completion")
+            if (locked['request_json'] or {}).get('protocol_revision')=='1.2':
+                parent=await (await connection.execute('SELECT * FROM assistant.runs WHERE run_id=%s FOR UPDATE',
+                    (locked['parent_run_id'],))).fetchone()
+                if not parent or parent['project_id']!=locked['project_id']:
+                    raise PermissionError('Typed publication Task owner unavailable')
+                from assistant_kernel.services.phase_control_v12 import PhaseControlV12
+                parent=await PhaseControlV12(self.settings,self).publication_locked(connection,publication=locked,
+                    parent=parent,result=result,reply_id=str(reply['message_id']))
+                await connection.commit()
+                return {'run_id':run_id,'reply_message_id':str(reply['message_id']),'parent_status':parent['status']}
             if (locked["request_json"] or {}).get("task_protocol") == "single-agent.v2":
                 parent = await (
                     await connection.execute(
@@ -4954,10 +5040,10 @@ class CoreRepository:
                             ended_at=now(),updated_at=now()
                         WHERE run_id=%s AND status IN ('waiting_user','blocked')
                           AND request_json->>'publish_run_id'=%s
-                        RETURNING run_id
+                        RETURNING *
                         """,
                         (
-                            Jsonb({"task_phase": "published"}),
+                            Jsonb({"task_phase": "published", "publication_state": "published"}),
                             Jsonb({
                                 "publication_state": "published",
                                 "publish_run_id": run_id,
@@ -4969,7 +5055,85 @@ class CoreRepository:
                 ).fetchone()
                 if parent is None:
                     raise RuntimeError("approved Task is not awaiting this Publisher Run")
+                if self._five_stage_project(str(parent["project_id"])):
+                    parent_request = dict(parent.get("request_json") or {})
+                    accepted = dict(parent_request.get("accepted_documents") or {})
+                    from assistant_kernel.services.document_runtime import TaskDocumentService
+                    documents = TaskDocumentService(self.settings)
+                    publication_ref = documents.write_revision(
+                        project_id=str(parent["project_id"]), task_id=str(parent["run_id"]),
+                        document_kind="publication", document_schema="publication-receipt.v1",
+                        payload=result, status="published", actor_type="publisher", actor_id="kernel",
+                        run_id=run_id, reason="actual Publisher completion", source_refs=[],
+                    )
+                    accepted["publication"] = publication_ref
+                    await connection.execute(
+                        "UPDATE assistant.runs SET request_json=request_json || %s WHERE run_id=%s",
+                        (Jsonb({"accepted_documents": accepted, "task_activation": "closed",
+                                "state_revision": int(parent_request.get("state_revision") or 0) + 1}), parent["run_id"]),
+                    )
+                    design_ref = dict(accepted.get("solution_design") or {})
+                    design = documents.read(str(parent["project_id"]), design_ref)["payload"] if design_ref else {}
+                    changes = list((result.get("map_change_batch") or {}).get("changes") or result.get("files") or [])
+                    shas = {str(item.get("target_uri") or ""): item.get("candidate_sha256") or item.get("after_sha256")
+                            for item in changes if isinstance(item, dict)}
+                    from assistant_kernel.services.workspace_scope import WorkspaceScopeService
+                    scope = WorkspaceScopeService(self.settings)
+                    roots = scope.resolve(str(parent["project_id"]), str(parent["run_id"]), None)
+                    vault = ProjectRuntimeManager(self.settings.data_root).describe(str(parent["project_id"])).vault_root.resolve()
+                    for uri, digest in list(shas.items()):
+                        if uri.startswith("workspace://"):
+                            try:
+                                _, path, _ = scope.resolve_uri(roots, uri)
+                                if vault in path.resolve().parents:
+                                    shas[f"vault://{parent['project_id']}/{path.resolve().relative_to(vault).as_posix()}"] = digest
+                            except (ValueError, PermissionError):
+                                pass
+                    actions = []
+                    for original in design.get("runbook_actions") or []:
+                        action = dict(original)
+                        script_ref = dict(action.get("script_ref") or {})
+                        current_sha = shas.get(str(script_ref.get("uri") or ""))
+                        if current_sha:
+                            if script_ref.get("sha256") and script_ref["sha256"] != current_sha:
+                                action["activation_warning"] = "published_source_differs_from_design"
+                            else:
+                                script_ref["sha256"] = current_sha
+                        action["script_ref"] = script_ref
+                        actions.append(action)
+                    baseline = {
+                        "schema_version": "operational-baseline.v1", "task_id": str(parent["run_id"]),
+                        "publication_run_id": run_id, "publication_receipt": result,
+                        "task_contract_ref": accepted.get("task_contract"), "solution_design_ref": design_ref,
+                        "requirements_approval": parent_request.get("requirements_approval"),
+                        "design_approval": parent_request.get("design_approval"), "runbook_actions": actions,
+                        "publication_ref": publication_ref, "created_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                    await connection.execute(
+                        """INSERT INTO assistant.kernel_meta(key,value) VALUES (%s,%s)
+                            ON CONFLICT(key) DO UPDATE SET value=assistant.kernel_meta.value || EXCLUDED.value,updated_at=now()""",
+                        (f"project-runtime:{parent['project_id']}", Jsonb({"active_task_id": None, "operational_baseline_ref": baseline})),
+                    )
+                pending = await (await connection.execute(
+                    "SELECT 1 FROM assistant.messages WHERE run_id=%s AND content_json->>'task_input_status'='pending' LIMIT 1",
+                    (parent["run_id"],),
+                )).fetchone()
+                if pending and not self._five_stage_project(str(parent["project_id"])):
+                    await self._requeue_pending_inputs(connection, parent)
             await connection.commit()
+        if parent is not None and self._five_stage_project(str(parent["project_id"])):
+            from assistant_kernel.services.task_queue import ProjectTaskQueue
+            queue = ProjectTaskQueue(self.settings, self)
+            pending = await self.list_pending_task_inputs(str(parent["run_id"]))
+            for message in pending:
+                text = _history_text(dict(message.get("content_json") or {}))
+                if text:
+                    await queue.queue(str(parent["project_id"]), text, str(message["message_id"]),
+                                      idempotency_key=f"post-publish-input:{message['message_id']}")
+            approval_source = (parent.get("request_json") or {}).get("design_approval", {}).get("message_id") or str(parent["trigger_message_id"])
+            await queue.queue(str(parent["project_id"]), "核验当前发布版本的启用状态并生成首份运营报告",
+                              str(approval_source), task_kind="operation", idempotency_key=f"initial-operation:{run_id}")
+            await queue.activate_next(str(parent["project_id"]))
             return {"run_id": run_id, "reply_message_id": str(reply["message_id"])}
 
     @staticmethod
@@ -5007,10 +5171,16 @@ class CoreRepository:
         error: dict[str, Any]
     ) -> str:
         async with self.database.connection() as connection:
+            await self._require_active_run(connection, run_id)
             cursor = await connection.execute(
                 """
                 UPDATE assistant.runs
                 SET status=CASE
+                      WHEN executor_json ? 'validation_process'
+                        AND COALESCE(executor_json#>>'{validation_process,cleanup,status}','unknown')<>'verified' THEN 'reconciling'
+                      WHEN run_type='python' AND executor_json ? 'python_attempt'
+                        AND COALESCE(executor_json#>>'{python_attempt,cleanup,status}','unknown')<>'verified'
+                        THEN 'reconciling'
                       WHEN cancel_requested_at IS NOT NULL AND (
                         run_type IN ('python','publish') OR (process_pid IS NOT NULL AND
                         COALESCE((executor_json->>'may_write_shared')::boolean,
@@ -5021,15 +5191,23 @@ class CoreRepository:
                         run_type='python' OR COALESCE((executor_json->>'may_write_shared')::boolean,
                             COALESCE(executor_json->>'sandbox','')<>'read-only')
                       )) THEN 'reconciling'
+                      WHEN run_type='chat' AND agent_key LIKE '%%:manager'
+                        AND COALESCE((request_json->>'design_required')::boolean,false) THEN 'waiting_supervisor'
                       WHEN attempt>=max_attempts THEN 'dead_letter'
                       ELSE 'queued' END,
                     available_at=CASE
+                      WHEN run_type='python' AND executor_json ? 'python_attempt'
+                        AND COALESCE(executor_json#>>'{python_attempt,cleanup,status}','unknown')<>'verified'
+                        THEN available_at
                       WHEN cancel_requested_at IS NOT NULL THEN available_at
                       WHEN run_type='publish' OR (process_pid IS NOT NULL AND (
                         run_type='python' OR COALESCE((executor_json->>'may_write_shared')::boolean,
                             COALESCE(executor_json->>'sandbox','')<>'read-only')
                       )) THEN available_at
                       WHEN attempt>=max_attempts THEN available_at
+                      WHEN request_json->>'interaction_kind'='supervisor_consultation'
+                        THEN now() + (CASE GREATEST(max_attempts-attempt,0)
+                          WHEN 3 THEN 30 WHEN 2 THEN 120 ELSE 600 END) * interval '1 second'
                       ELSE now()+(LEAST(attempt,6)*interval '5 seconds') END,
                     error_json=%s,worker_id=NULL,worker_instance_id=NULL,claim_token=NULL,
                     lease_until=NULL,
@@ -5041,7 +5219,11 @@ class CoreRepository:
                         run_type='python' OR COALESCE((executor_json->>'may_write_shared')::boolean,
                             COALESCE(executor_json->>'sandbox','')<>'read-only')
                       ) THEN process_start_ticks ELSE NULL END,
-                    ended_at=CASE WHEN cancel_requested_at IS NOT NULL THEN now()
+                    ended_at=CASE
+                      WHEN run_type='python' AND executor_json ? 'python_attempt'
+                        AND COALESCE(executor_json#>>'{python_attempt,cleanup,status}','unknown')<>'verified'
+                        THEN NULL
+                      WHEN cancel_requested_at IS NOT NULL THEN now()
                       WHEN attempt>=max_attempts AND NOT (
                         run_type='publish' OR (process_pid IS NOT NULL AND (
                           run_type='python' OR COALESCE((executor_json->>'may_write_shared')::boolean,
@@ -5051,7 +5233,7 @@ class CoreRepository:
                     updated_at=now()
                 WHERE run_id=%s AND worker_instance_id=%s AND claim_token=%s
                   AND status='running'
-                RETURNING run_id,status,run_type,parent_run_id,request_json
+                RETURNING *
                 """,
                 (Jsonb(json_compatible(error)), run_id, worker_instance_id, claim_token),
             )
@@ -5070,6 +5252,11 @@ class CoreRepository:
             raise ValueError("action must be retry, fail, or cancel")
         target = {"retry": "queued", "fail": "failed", "cancel": "cancelled"}[action]
         async with self.database.connection() as connection:
+            await self._require_active_run(connection, run_id)
+            owner=await (await connection.execute('SELECT executor_json FROM assistant.runs WHERE run_id=%s FOR UPDATE',(run_id,))).fetchone()
+            validation=(owner['executor_json'] or {}).get('validation_process') if owner else None
+            if validation and validation.get('cleanup',{}).get('status')!='verified':
+                raise PermissionError('Validator cleanup is unresolved; inspect the actual receipt before any reconciliation action')
             cursor = await connection.execute(
                 """
                 UPDATE assistant.runs
@@ -5079,11 +5266,21 @@ class CoreRepository:
                     error_json=COALESCE(error_json,'{}'::jsonb) || %s,
                     process_pid=NULL,process_start_ticks=NULL,updated_at=now()
                 WHERE run_id=%s AND status='reconciling'
-                RETURNING run_id,status,run_type,parent_run_id,request_json
+                    AND (NOT executor_json ? 'validation_process' OR executor_json#>>'{validation_process,cleanup,status}'='verified')
+                RETURNING *
                 """,
                 (target, target, target, target, Jsonb({"reconciliation_note": note}), run_id),
             )
             row = await cursor.fetchone()
+            if row is not None and action == "retry" and str(row["agent_key"]).endswith(":manager") and self._five_stage_task(row):
+                row = await (await connection.execute(
+                    """UPDATE assistant.runs SET status='waiting_supervisor',request_json=request_json || %s
+                       WHERE run_id=%s RETURNING *""",
+                    (Jsonb({"supervision_failure": None}), run_id),
+                )).fetchone()
+                await self._queue_supervision_locked(
+                    connection, row, str(row["trigger_message_id"]), reason="pm_reconciled",
+                )
             if row is not None:
                 phase = {
                     "retry": "publishing", "fail": "publication_failed",
@@ -5110,7 +5307,7 @@ class CoreRepository:
                        m.content_json AS source_content
                 FROM assistant.runs r JOIN assistant.messages m
                   ON m.message_id=r.trigger_message_id
-                WHERE r.status='reconciling' AND m.channel='discord'
+                WHERE r.status='reconciling' AND r.project_id NOT IN ('system','butler-maintenance') AND r.agent_key NOT IN ('system-butler','project:kernel:intake','project:butler-maintenance:intake','retired:management') AND m.channel='discord'
                   AND COALESCE(r.executor_json#>>'{reconciliation,card_message_id}','')=''
                   AND (
                     COALESCE(r.executor_json#>>'{reconciliation,resolved_action}','')=''
@@ -5132,7 +5329,7 @@ class CoreRepository:
             rows = list(await (await connection.execute(
                 """
                 SELECT * FROM assistant.runs
-                WHERE status='reconciling'
+                WHERE status='reconciling' AND project_id NOT IN ('system','butler-maintenance') AND agent_key NOT IN ('system-butler','project:kernel:intake','project:butler-maintenance:intake','retired:management')
                   AND COALESCE(executor_json#>>'{reconciliation,resolved_action}','')=''
                 ORDER BY updated_at LIMIT %s
                 """,
@@ -5151,6 +5348,7 @@ class CoreRepository:
         python Runs always stay on the manual card path.
         """
         async with self.database.connection() as connection:
+            await self._require_active_run(connection, run_id)
             cursor = await connection.execute(
                 """
                 UPDATE assistant.runs
@@ -5158,12 +5356,16 @@ class CoreRepository:
                                 ELSE 'queued' END,
                     available_at=CASE
                       WHEN attempt>=max_attempts THEN available_at
+                      WHEN request_json->>'interaction_kind'='supervisor_consultation'
+                        THEN now() + (CASE GREATEST(max_attempts-attempt,0)
+                          WHEN 3 THEN 30 WHEN 2 THEN 120 ELSE 600 END) * interval '1 second'
                       ELSE now()+(LEAST(attempt,6)*interval '5 seconds') END,
                     ended_at=CASE WHEN attempt>=max_attempts THEN now()
                                   ELSE ended_at END,
                     error_json=COALESCE(error_json,'{}'::jsonb) || %s,
                     updated_at=now()
                 WHERE run_id=%s AND status='reconciling'
+                    AND (NOT executor_json ? 'validation_process' OR executor_json#>>'{validation_process,cleanup,status}'='verified')
                 RETURNING run_id,status
                 """,
                 (
@@ -5217,7 +5419,7 @@ class CoreRepository:
         async with self.database.connection() as connection:
             rows = list(await (await connection.execute(
                 f"""
-                SELECT m.message_id,m.run_id,m.channel,m.chat_id,m.direction,
+                SELECT m.message_id,m.run_id,m.channel,m.chat_id,m.direction,m.reply_to_message_id,
                        m.message_type,m.content_json,m.created_at,r.agent_key
                 FROM assistant.messages m
                 LEFT JOIN assistant.runs r ON r.run_id=m.run_id
@@ -5241,10 +5443,18 @@ class CoreRepository:
                 "chat_id": str(row["chat_id"]),
                 "direction": str(row["direction"]),
                 "message_type": str(row["message_type"]),
-                "text": str((row["content_json"] or {}).get("text") or "")[:400],
+                "text": (_history_text(dict(row["content_json"] or {})) or (
+                    json.dumps({key: (row["content_json"] or {})[key] for key in
+                        ("questions", "answers", "choice_ids", "additional_text")
+                        if key in (row["content_json"] or {})}, ensure_ascii=False)
+                    if (row["content_json"] or {}).get("schema_version") == "questionnaire-answer.v1" else ""
+                ))[:4000],
+                "content_json": {key: (row["content_json"] or {})[key] for key in
+                    ("schema_version", "questions", "answers", "choice_ids", "additional_text", "text")
+                    if key in (row["content_json"] or {})},
                 "created_at": str(row["created_at"]),
             }
-            for row in rows
+            for row in self._filter_revoked_context(rows)
         ]
 
     async def project_usage_rollup(self, project_id: str) -> dict[str, Any]:
@@ -5460,6 +5670,9 @@ class CoreRepository:
                 """
                 SELECT 1 FROM assistant.runs
                 WHERE run_id=%s
+                  AND status NOT IN ('succeeded','failed','dead_letter','cancelled')
+                  AND cancel_requested_at IS NULL
+                  AND COALESCE(request_json->>'task_activation','active')='active'
                   AND COALESCE((request_json->>'supervisor_context_epoch')::bigint,0)=%s
                 """,
                 (task_id, int(source_context_epoch)),
@@ -5471,6 +5684,7 @@ class CoreRepository:
     ) -> dict[str, Any] | None:
         """Atomically queue one current reconciliation card through the normal Outbox."""
         async with self.database.connection() as connection:
+            await self._require_active_run(connection, run_id)
             row = await (await connection.execute(
                 """
                 SELECT r.*,m.channel,m.chat_id,m.user_id,m.message_id AS source_message_id
@@ -5596,8 +5810,13 @@ class CoreRepository:
             if card is None:
                 raise PermissionError("reconciliation card is unknown")
             content = dict(card.get("content_json") or {})
+            await self._require_active_run(connection, str(card['run_id']))
             executor = dict(card.get("executor_json") or {})
             reconciliation = dict(executor.get("reconciliation") or {})
+            python_attempt = executor.get("python_attempt") or {}
+            if (card["run_type"] == "python" and python_attempt and action != "wait"
+                    and (python_attempt.get("cleanup") or {}).get("status") != "verified"):
+                raise PermissionError("Python process cleanup must be verified before resolving this Run")
             generation = int(content.get("reconciliation_generation") or 0)
             if (
                 card["run_status"] != "reconciling"
@@ -5753,20 +5972,47 @@ class CoreRepository:
             cursor = await connection.execute(
                 """
                 UPDATE assistant.runs SET cancel_requested_at=COALESCE(cancel_requested_at,now()),
-                    status=CASE WHEN status IN ('queued','waiting_user','waiting_supervisor','waiting_children') THEN 'cancelled' ELSE status END,
-                    ended_at=CASE WHEN status IN ('queued','waiting_user','waiting_supervisor','waiting_children') THEN now() ELSE ended_at END,
+                    status=CASE WHEN status IN ('queued','waiting_user','waiting_supervisor') THEN 'cancelled' ELSE status END,
+                    ended_at=CASE WHEN status IN ('queued','waiting_user','waiting_supervisor') THEN now() ELSE ended_at END,
                     updated_at=now()
-                WHERE run_id=%s AND status IN ('queued','running','waiting_user','waiting_supervisor','waiting_children')
+                WHERE run_id=%s AND status IN ('queued','running','waiting_user','waiting_supervisor')
                   AND NOT (
                     COALESCE(request_json->>'task_protocol','')='single-agent.v2'
                     AND COALESCE(request_json->>'task_phase','') IN
                         ('publishing','publication_reconciling')
+                    AND COALESCE(request_json->>'protocol_revision','')<>'1.2'
                   )
-                RETURNING run_id
+                RETURNING *
                 """,
                 (run_id,),
             )
-            updated = await cursor.fetchone() is not None
+            row=await cursor.fetchone()
+            updated=row is not None
+            if row and (row['request_json'] or {}).get('protocol_revision')=='1.2':
+                source_id=str(uuid.uuid4())
+                await connection.execute("""INSERT INTO assistant.messages(message_id,project_id,run_id,channel,chat_id,
+                    direction,message_type,content_json,delivery_status,idempotency_key)
+                    VALUES (%s,%s,%s,'kernel',%s,'system','cancel_request',%s,'received',%s)""",
+                    (source_id,row['project_id'],run_id,'cancel:'+run_id,Jsonb({'run_id':run_id,'origin':'compiled_cancel_controller',
+                        'context_visibility':'structured','human_answer':False}), 'v12-cancel:'+run_id+':'+source_id))
+                from assistant_kernel.services.question_groups import QuestionGroupService
+                groups=await (await connection.execute("""SELECT message_id FROM assistant.messages WHERE project_id=%s
+                    AND message_type='question_group' AND content_json#>>'{group,status}' IN ('open','answered')
+                    AND (run_id=%s OR content_json->>'task_id'=%s) FOR UPDATE""",(row['project_id'],run_id,run_id))).fetchall()
+                for group in groups:
+                    await QuestionGroupService(self.settings,self).close_locked(connection,group_id=str(group['message_id']),
+                        status='cancelled',source_message_id=source_id)
+                await connection.execute("""UPDATE assistant.runs SET cancel_requested_at=COALESCE(cancel_requested_at,now()),
+                    status=CASE WHEN status IN ('queued','waiting_user','waiting_supervisor') THEN 'cancelled' ELSE status END,
+                    ended_at=CASE WHEN status IN ('queued','waiting_user','waiting_supervisor') THEN now() ELSE ended_at END
+                    WHERE project_id=%s AND request_json->>'task_id'=%s AND agent_key LIKE '%%:supervisor'
+                    AND NOT COALESCE((request_json->>'mainline_context_only')::boolean,false)
+                    AND status IN ('queued','running','waiting_user','waiting_supervisor','reconciling')""",(row['project_id'],run_id))
+                queued_publication=await (await connection.execute("""UPDATE assistant.runs SET status='cancelled',cancel_requested_at=now(),ended_at=now()
+                    WHERE parent_run_id=%s AND run_type='publish' AND status='queued' RETURNING run_id""",(run_id,))).fetchone()
+                patch={'cancel_source_message_id':source_id}
+                if queued_publication:patch['publication_disposition']='cancelled_before_start'
+                await connection.execute('UPDATE assistant.runs SET request_json=request_json || %s WHERE run_id=%s',(Jsonb(patch),run_id))
             await connection.commit()
             return updated
 
@@ -5805,6 +6051,8 @@ class CoreRepository:
         self, project_id: str, agent_key: str, channel: str, chat_id: str,
         *, rotation_checkpoint: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        from assistant_kernel.services.kernel_management import require_active_identity
+        require_active_identity(project_id, agent_key)
         session_id = str(uuid.uuid4())
         async with self.database.connection() as connection:
             await connection.execute(
@@ -5821,22 +6069,14 @@ class CoreRepository:
                 (project_id, agent_key, channel, chat_id),
             )
             current = await cursor.fetchone()
-            stored_window = int(
-                (current or {}).get("context_window_tokens")
-                or self.settings.default_context_window_tokens
-            )
-            stored_input = int((current or {}).get("input_tokens") or 0)
-            stored_ratio = stored_input / stored_window if stored_window > 0 else 0.0
-            threshold_rotation = stored_ratio > self.settings.context_soft_ratio
-            rotation_needed = bool(
-                current and (
-                    current["status"] == "rotation_required"
-                    or current.get("usage_known") is False
-                    or threshold_rotation
-                    or bool(rotation_checkpoint)
-                )
-            )
+            # Context occupancy and unavailable usage are telemetry, never a
+            # Kernel session boundary. Only a verified explicit boundary can
+            # seal the current native session.
+            rotation_needed = bool(current and rotation_checkpoint)
             if current and not rotation_needed:
+                if current['status']=='rotation_required':
+                    await connection.execute("UPDATE assistant.sessions SET status='active',updated_at=now() WHERE session_id=%s",(current['session_id'],))
+                    current={**current,'status':'active'}
                 await connection.commit()
                 return current
             parent_id = str(current["session_id"]) if current else None
@@ -5925,34 +6165,63 @@ class CoreRepository:
         content: dict[str, Any], reply_to_message_id: str | None,
         idempotency_key: str,
     ) -> dict[str, Any]:
-        message_id = str(uuid.uuid4())
         async with self.database.connection() as connection:
-            cursor = await connection.execute(
+            row = await self._create_outbound_locked(
+                connection, project_id=project_id,session_id=session_id,run_id=run_id,
+                channel=channel,chat_id=chat_id,user_id=user_id,message_type=message_type,
+                content=content,reply_to_message_id=reply_to_message_id,idempotency_key=idempotency_key,
+            )
+            await connection.commit()
+            return row
+
+    async def _create_outbound_locked(
+        self, connection, *, project_id: str, session_id: str | None,
+        run_id: str | None, channel: str, chat_id: str, user_id: str | None,
+        message_type: str, content: dict[str, Any], reply_to_message_id: str | None,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        """Join the caller's transaction; no second queue and no hidden commit."""
+        message_id = str(uuid.uuid4())
+        run_id = str(run_id) if run_id is not None else None
+        session_id = str(session_id) if session_id is not None else None
+        reply_to_message_id = str(reply_to_message_id) if reply_to_message_id is not None else None
+        from assistant_kernel.services.system_config import STATE_KEY,SystemConfigService
+        configured=await (await connection.execute('SELECT value FROM assistant.kernel_meta WHERE key=%s',(STATE_KEY,))).fetchone()
+        retry_limit=10
+        if configured:
+            policy=SystemConfigService(self.settings)._config(configured['value']['desired_ref'])['notifications']
+            retry_limit=policy['delivery_max_attempts']
+            content={**content,'delivery':{**(content.get('delivery') or {}),'policy':{**policy,'source_ref':configured['value']['desired_ref']}}}
+        cursor = await connection.execute(
                 """
                 INSERT INTO assistant.messages(
                     message_id,project_id,session_id,run_id,channel,chat_id,user_id,direction,
-                    message_type,reply_to_message_id,content_json,delivery_status,idempotency_key
-                ) VALUES (%s,%s,%s,%s,%s,%s,%s,'outbound',%s,%s,%s,'pending',%s)
+                    message_type,reply_to_message_id,content_json,delivery_status,idempotency_key,max_retries
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s,'outbound',%s,%s,%s,'pending',%s,%s)
                 ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL
                 DO UPDATE SET idempotency_key=EXCLUDED.idempotency_key RETURNING *
                 """,
                 (
                     message_id, project_id, session_id, run_id, channel, chat_id, user_id,
                     message_type, reply_to_message_id, Jsonb(json_compatible(content)),
-                    idempotency_key,
+                    idempotency_key,retry_limit,
                 ),
             )
-            row = await cursor.fetchone()
-            if (
+        row = await cursor.fetchone()
+        semantic = lambda body: {k:v for k,v in body.items() if k != "delivery"}
+        if (
                 str(row["project_id"]) != project_id
                 or str(row["channel"]) != channel
                 or str(row["chat_id"]) != chat_id
                 or str(row["message_type"]) != message_type
-                or (row["content_json"] or {}) != json_compatible(content)
+                or semantic(row["content_json"] or {}) != semantic(json_compatible(content))
+                or (str(row["run_id"]) if row["run_id"] else None) != run_id
+                or (str(row["session_id"]) if row["session_id"] else None) != session_id
+                or (str(row["reply_to_message_id"]) if row["reply_to_message_id"] else None) != reply_to_message_id
+                or row["user_id"] != user_id
             ):
-                raise ValueError("idempotency_key was reused for different outbound content")
-            await connection.commit()
-            return row
+            raise ValueError("idempotency_key was reused for different outbound content or ownership")
+        return row
 
     async def queue_supervisor_status(
         self, *, project_id: str, run_id: str, channel: str, chat_id: str,
@@ -6432,6 +6701,13 @@ class CoreRepository:
                     SELECT message_id FROM assistant.messages
                     WHERE direction='outbound' AND delivery_status='pending' AND available_at<=now()
                       AND (%s::text IS NULL OR channel=%s)
+                      AND (content_json->>'schema_version' IS DISTINCT FROM 'question-projection-refresh.v1'
+                        OR EXISTS (SELECT 1 FROM assistant.messages target
+                            WHERE target.message_id::text=messages.content_json->>'target_message_id'
+                              AND target.external_message_id IS NOT NULL))
+                      AND NOT EXISTS (SELECT 1 FROM assistant.messages active
+                          WHERE active.direction='outbound' AND active.delivery_status='delivering'
+                            AND active.content_json->>'target_message_id'=messages.content_json->>'target_message_id')
                     ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1
                 )
                 UPDATE assistant.messages m
@@ -6444,6 +6720,10 @@ class CoreRepository:
             )
             row = await cursor.fetchone()
             await connection.commit()
+            if row:
+                from assistant_kernel.services.question_groups import QuestionGroupService, projection_ref, REFRESH_SCHEMA
+                if projection_ref(row['content_json'] or {}) or (row['content_json'] or {}).get('schema_version')==REFRESH_SCHEMA:
+                    row = await QuestionGroupService(self.settings,self).hydrate(connection,row)
             return row
 
     async def delivery_backlog(self, channel: str) -> dict[str, int]:
@@ -6527,6 +6807,16 @@ class CoreRepository:
                       AND m.delivery_status='sent' AND m.external_message_id IS NOT NULL
                       AND (
                         (m.message_type IN ('question','approval') AND r.status='waiting_user')
+                        OR (m.content_json->>'schema_version'='question-group-projection.v1'
+                            AND m.content_json#>>'{question_projection,view_status}'='active'
+                            AND r.status IN ('waiting_user','waiting_supervisor'))
+                        OR (m.content_json->>'interaction_kind'='supervision_recovery'
+                            AND m.content_json->>'action_status'='waiting'
+                            AND (r.status IN ('waiting_supervisor','waiting_user','blocked','dead_letter','failed')
+                                OR m.content_json->>'task_id' IS NULL))
+                        OR (m.content_json->>'interaction_kind'='supervisor_status'
+                            AND m.content_json->>'action_status'='waiting'
+                            AND r.status IN ('waiting_user','waiting_supervisor'))
                         OR (
                           m.message_type='reconciliation'
                           AND m.content_json->>'interaction_kind'='reconcile_run'
@@ -6555,6 +6845,9 @@ class CoreRepository:
                     (min(max(limit, 1), 2000),),
                 )
             ).fetchall())
+            from assistant_kernel.services.question_groups import QuestionGroupService, projection_ref
+            service=QuestionGroupService(self.settings,self)
+            rows=[await service.hydrate(connection,row) if projection_ref(row['content_json'] or {}) else row for row in rows]
         return rows
 
     async def confirm_delivery_current(
@@ -6588,6 +6881,18 @@ class CoreRepository:
             if row is None:
                 await connection.rollback()
                 return False
+            original=await (await connection.execute('SELECT * FROM assistant.messages WHERE message_id=%s',(message_id,))).fetchone()
+            if original and original['content_json'].get('interaction_kind')=='operation_notice':
+                from assistant_kernel.services.operation_records import OperationRecords
+                target=await OperationRecords(self.settings,self).delivery_target(connection,original)
+                if not target['active']:
+                    await connection.execute("UPDATE assistant.messages SET delivery_status='cancelled',worker_id=NULL,worker_instance_id=NULL,lease_until=NULL,error_text='operation notice policy or route changed',updated_at=now() WHERE message_id=%s",(message_id,))
+                    await connection.commit();return False
+                if target['route']!=(original['channel'],original['chat_id'],original['user_id']):
+                    route=target['route'] or ('internal','pending-project-operations',None)
+                    await connection.execute("UPDATE assistant.messages SET channel=%s,chat_id=%s,user_id=%s,delivery_status='pending',worker_id=NULL,worker_instance_id=NULL,lease_until=NULL,content_json=jsonb_set(content_json,'{pending_operation_route}',%s::jsonb),updated_at=now() WHERE message_id=%s",
+                        (*route,Jsonb(not bool(target['route'])),message_id))
+                    await connection.commit();return False
             foreground = row.get("run_type") == "chat" or (
                 row.get("run_type") == "stage" and row.get("stage") == "requirements"
             )
@@ -6619,13 +6924,13 @@ class CoreRepository:
             cursor = await connection.execute(
                 """
                 UPDATE assistant.messages SET delivery_status='sent',external_message_id=%s,
-                    content_json=content_json || %s,worker_id=NULL,worker_instance_id=NULL,
+                    content_json=jsonb_set(content_json,'{delivery}',COALESCE(content_json->'delivery','{}'::jsonb) || %s::jsonb),worker_id=NULL,worker_instance_id=NULL,
                     lease_until=NULL,sent_at=now(),updated_at=now(),error_text=NULL
                 WHERE message_id=%s AND worker_instance_id=%s AND delivery_status='delivering'
                 RETURNING message_id
                 """,
                 (
-                    external_message_id, Jsonb({"delivery": json_compatible(delivery or {})}),
+                    external_message_id, Jsonb(json_compatible(delivery or {})),
                     message_id, worker_instance_id,
                 ),
             )
@@ -6640,13 +6945,14 @@ class CoreRepository:
                 UPDATE assistant.messages
                 SET delivery_status=CASE WHEN retry_count>=max_retries THEN 'failed' ELSE 'pending' END,
                     available_at=CASE WHEN retry_count>=max_retries THEN available_at
-                      ELSE now()+(LEAST(retry_count,6)*interval '10 seconds') END,
+                      ELSE now()+LEAST(retry_count*COALESCE((content_json#>>'{delivery,policy,retry_base_seconds}')::integer,10),
+                        COALESCE((content_json#>>'{delivery,policy,retry_max_seconds}')::integer,60))*interval '1 second' END,
                     worker_id=NULL,worker_instance_id=NULL,lease_until=NULL,
-                    error_text=%s,updated_at=now()
+                    error_text=left(%s,COALESCE((content_json#>>'{delivery,policy,error_excerpt_chars}')::integer,2000)),updated_at=now()
                 WHERE message_id=%s AND worker_instance_id=%s AND delivery_status='delivering'
                 RETURNING delivery_status
                 """,
-                (error[:2000], message_id, worker_instance_id),
+                (error, message_id, worker_instance_id),
             )
             row = await cursor.fetchone()
             await connection.commit()

@@ -54,6 +54,12 @@ async def inspect() -> tuple[dict[str, Any], int]:
             """
         )
         active = list(await active_cursor.fetchall())
+        service_blockers=[]
+        exists=await (await connection.execute("SELECT to_regclass('assistant.service_instances') AS name")).fetchone()
+        if exists['name']:
+            rows=await (await connection.execute("SELECT instance_id,project_id,unit_id,observed_state,cleanup_status,state_json FROM assistant.service_instances WHERE cleanup_status<>'verified' OR state_json#>'{work_control,items}'<>'{}'::jsonb")).fetchall()
+            service_blockers=[{'instance_id':str(x['instance_id']),'project_id':x['project_id'],'unit_id':x['unit_id'],
+                'observed_state':x['observed_state'],'cleanup_status':x['cleanup_status'],'work_items':len(x['state_json'].get('work_control',{}).get('items',{}))} for x in rows]
 
     now = datetime.now(timezone.utc)
     running: list[dict[str, Any]] = []
@@ -90,7 +96,9 @@ async def inspect() -> tuple[dict[str, Any], int]:
             "timeout_upper_bound_seconds": remaining_timeout,
         })
 
-    if running:
+    if service_blockers:
+        verdict='blocked';exit_code=3;recommendation='Service work, waiting input or cleanup remains; use its existing explicit control before restart.'
+    elif running:
         verdict = "wait"
         exit_code = 2
         recommendation = "Active Runs exist; wait for them to finish before restarting."
@@ -116,6 +124,7 @@ async def inspect() -> tuple[dict[str, Any], int]:
         "database": True,
         "counts": counts,
         "running_runs": running,
+        "service_blockers":service_blockers,
         "live_reconciling_run_ids": reconciling_alive,
         "estimated_upper_bound_seconds": max(upper_bounds) if upper_bounds else None,
         "recommendation": recommendation,

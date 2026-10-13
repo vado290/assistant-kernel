@@ -40,7 +40,6 @@ class ProjectGrantService:
                 # Fail closed during a rolling migration or an isolated
                 # filesystem-only test: no table means no external grants.
                 return []
-            cutoff = None
             if run_id:
                 try:
                     uuid.UUID(run_id)
@@ -53,7 +52,6 @@ class ProjectGrantService:
                     ).fetchone()
                     if row is None:
                         raise ValueError("Run identity was not found while resolving grants")
-                    cutoff = row[0]
             rows = connection.execute(
                 """
                 SELECT resource_key,policy_json,policy_sha256,grant_id
@@ -61,10 +59,9 @@ class ProjectGrantService:
                 WHERE project_id=%s AND grant_kind='file'
                   AND subject_kind='project' AND status='active'
                   AND (expires_at IS NULL OR expires_at>now())
-                  AND (%s::timestamptz IS NULL OR activated_at<=%s::timestamptz)
                 ORDER BY resource_key
                 """,
-                (project_id, cutoff, cutoff),
+                (project_id,),
             ).fetchall()
         roots: list[dict[str, Any]] = []
         for resource_key, raw_policy, expected_hash, grant_id in rows:

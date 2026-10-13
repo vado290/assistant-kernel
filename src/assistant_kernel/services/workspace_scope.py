@@ -51,6 +51,7 @@ class AuthorizedRoot:
     write_mode: str = "direct"
     native_mode: str = "enforced"
     recursive: bool = False
+    permission_package: str = 'legacy-limited'
 
 
 class WorkspaceScopeService:
@@ -182,7 +183,10 @@ class WorkspaceScopeService:
         self, project_id: str, run_id: str, stage: str | None,
         *, pinned_at_creation: bool = False, candidate_only: bool = False,
         candidate_enabled: bool = False,
+        shared_agreement: bool | None = None,
     ) -> list[AuthorizedRoot]:
+        if shared_agreement is None:
+            shared_agreement = project_id != 'system'
         data = yaml.safe_load(self.path.read_text(encoding="utf-8")) if self.path.is_file() else {}
         projects = (data or {}).get("projects") or {}
         selected = projects.get(project_id) or projects.get("default") or {}
@@ -218,6 +222,8 @@ class WorkspaceScopeService:
                 raw = raw.replace(marker, value)
             path = Path(raw).resolve()
             if not path.exists():
+                if shared_agreement:
+                    raise FileNotFoundError(f'Project agreed directory is unavailable: {item["key"]}; check the mount, not a new authorization')
                 continue
             includes = tuple(
                 str(pattern).replace("\\", "/").strip()
@@ -230,7 +236,7 @@ class WorkspaceScopeService:
                 if str(pattern).strip()
             )
             formal_access = (
-                "read" if candidate_only and project_id != "system"
+                "read" if candidate_only and project_id != "system" and not shared_agreement
                 else (
                     "write" if str(item.get("key") or "") == "project"
                     else str(item.get("access") or "read")
@@ -245,17 +251,22 @@ class WorkspaceScopeService:
                 grant_id=str(item.get("grant_id") or "") or None,
                 grant_sha256=str(item.get("grant_sha256") or "") or None,
                 write_mode=(
-                    "gated" if candidate_only and project_id != "system"
+                    "gated" if candidate_only and project_id != "system" and not shared_agreement
                     else str(item.get("write_mode") or "direct")
                 ),
-                native_mode=str(item.get("native_mode") or "enforced"),
-                recursive=bool(item.get("recursive", False)),
+                native_mode='behavioral' if shared_agreement else str(item.get("native_mode") or "enforced"),
+                recursive=(True if shared_agreement and str(item.get('key'))=='project' else bool(item.get("recursive", False))),
+                permission_package=('directory-full.v1' if shared_agreement and (
+                    str(item.get('key'))=='project' or item.get('file_package')=='directory-full.v1'
+                    or (item.get('access')=='write' and item.get('write_mode')=='direct'
+                        and item.get('recursive') is True and not includes and not excludes)
+                ) else 'legacy-limited'),
             ))
             if roots[-1].access not in {"read", "write"}:
                 raise ValueError("workspace root access must be read or write")
             if roots[-1].write_mode not in {"direct", "gated"}:
                 raise ValueError("workspace root write_mode must be direct or gated")
-            if roots[-1].native_mode not in {"enforced", "mcp_only"}:
+            if roots[-1].native_mode not in {"enforced", "mcp_only", "behavioral"}:
                 raise ValueError("workspace root native_mode is unsupported")
         if project_id != "system":
             work = self.runtime.resolve_below(project_root, f"runs/{run_id}/work")
@@ -264,6 +275,9 @@ class WorkspaceScopeService:
                 key="run_work", path=work.resolve(), access="write",
                 description="Current Run working files and research outputs",
                 publish_allowed=False,
+                native_mode='behavioral' if shared_agreement else 'enforced',
+                permission_package='directory-full.v1' if shared_agreement else 'legacy-limited',
+                recursive=shared_agreement,
             ))
         if stage == "implementation" or candidate_enabled:
             candidate = project_root / "runs" / run_id / "candidate"
@@ -271,6 +285,9 @@ class WorkspaceScopeService:
             roots.append(AuthorizedRoot(
                 key="candidate", path=candidate.resolve(), access="write",
                 description="Current Run candidate workspace",
+                native_mode='behavioral' if shared_agreement else 'enforced',
+                permission_package='directory-full.v1' if shared_agreement else 'legacy-limited',
+                recursive=shared_agreement,
             ))
         return roots
 
@@ -278,6 +295,7 @@ class WorkspaceScopeService:
         self, project_id: str, run_id: str, stage: str | None,
         *, candidate_only: bool = False, candidate_enabled: bool = False,
         variant: str | None = None,
+        shared_agreement: bool = False,
     ) -> tuple[str, str]:
         suffix = f"-{variant}" if variant else ""
         relative = Path("runs") / run_id / "resolved" / f"workspace-scope{suffix}.json"
@@ -294,6 +312,7 @@ class WorkspaceScopeService:
                 or bool(payload.get("candidate_only", False)) != candidate_only
                 or bool(payload.get("candidate_enabled", False)) != candidate_enabled
                 or (str(payload.get("variant") or "") or None) != variant
+                or bool(payload.get('shared_agreement',False)) != shared_agreement
             ):
                 raise RuntimeError("workspace scope snapshot conflicts with this Run")
             return uri, hashlib.sha256(encoded).hexdigest()
@@ -301,6 +320,7 @@ class WorkspaceScopeService:
             project_id, run_id, stage,
             pinned_at_creation=True, candidate_only=candidate_only,
             candidate_enabled=candidate_enabled,
+            shared_agreement=shared_agreement,
         )
         config_payload = self.path.read_bytes() if self.path.is_file() else b""
         payload = {
@@ -311,6 +331,7 @@ class WorkspaceScopeService:
             "candidate_only": candidate_only,
             "candidate_enabled": candidate_enabled,
             "variant": variant,
+            "shared_agreement": shared_agreement,
             "scope_config_sha256": hashlib.sha256(config_payload).hexdigest(),
             "roots": [
                 {
@@ -326,6 +347,7 @@ class WorkspaceScopeService:
                     "write_mode": root.write_mode,
                     "native_mode": root.native_mode,
                     "recursive": root.recursive,
+                    "permission_package": root.permission_package,
                 }
                 for root in roots
             ],
@@ -388,6 +410,7 @@ class WorkspaceScopeService:
                 grant_sha256=str(item.get("grant_sha256") or "") or None,
                 write_mode=str(item.get("write_mode") or "direct"),
                 native_mode=str(item.get("native_mode") or "enforced"),
+                permission_package=str(item.get('permission_package') or 'legacy-limited'),
                 recursive=bool(item.get("recursive", bool(
                     grant_id and not includes and not excludes
                 ))),
@@ -525,17 +548,6 @@ class WorkspaceScopeService:
 
     def resource_guide(self, project_id: str) -> dict[str, Any]:
         """Return concise, machine-owned placement rules for structural tasks."""
-        if project_id == "system":
-            return {
-                "schema_version": "project-resource-guide.v1",
-                "layout_version": "butler",
-                "resources": [
-                    {"path": "agent-config.yaml", "purpose": "Butler invocation configuration"},
-                    {"path": "role.md", "purpose": "Butler identity and responsibility"},
-                    {"path": ".agents/skills/<skill>/", "purpose": "Butler Skills"},
-                    {"path": "runs/ and runtime/", "purpose": "Kernel-generated state; do not scaffold"},
-                ],
-            }
         root = self.runtime.ensure(project_id).vault_root
         project_path = root / "project.yaml"
         project = (

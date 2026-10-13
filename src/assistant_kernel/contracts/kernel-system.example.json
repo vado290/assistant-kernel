@@ -1,0 +1,245 @@
+{
+  "$schema": "./kernel-system.schema.json",
+  "agent_defaults": {
+    "context_policy": "max",
+    "custom_context_window_tokens": null,
+    "max_native_subagents": 3,
+    "model": "gpt-5.6-sol",
+    "model_catalog_cache_seconds": 300,
+    "native_auto_compact_token_limit": null,
+    "provider": "openai",
+    "reasoning_effort": "medium",
+    "role_hard_limit_tokens": 20000,
+    "role_soft_limit_tokens": 16000,
+    "timeout_seconds": 600
+  },
+  "backups": {
+    "before_infrastructure_change": true,
+    "directory": "backups",
+    "retention_days": null
+  },
+  "channels": {
+    "discord": {
+      "account_ref": "secret://channels/discord",
+      "enabled": true
+    },
+    "feishu": {
+      "account_ref": "secret://channels/feishu",
+      "enabled": true
+    }
+  },
+  "config_updates": {
+    "poll_seconds": 1,
+    "settle_seconds": 2
+  },
+  "document_service": {
+    "listen_port": 5001,
+    "request_timeout_seconds": 180,
+    "workers": 1
+  },
+  "infrastructure": {
+    "compose_project": "ai",
+    "host_bind_address": "127.0.0.1",
+    "host_ports": {
+      "document_service": 15001,
+      "kernel_api": 18001,
+      "kernel_mcp": 18002,
+      "postgres": 15432,
+      "redis": 16379,
+      "reranker": 18088
+    },
+    "network_key": "rec_net",
+    "services": {
+      "AI": {
+        "cpu_limit": null,
+        "image": "assistant-ai:0.1.0",
+        "memory_limit_mb": null
+      },
+      "rag-postgres": {
+        "cpu_limit": null,
+        "image": "pgvector/pgvector:0.8.6-pg18-trixie",
+        "memory_limit_mb": null
+      },
+      "rag-reranker": {
+        "cpu_limit": null,
+        "image": "local/rag-reranker-gateway:1.0.0",
+        "memory_limit_mb": null
+      },
+      "redis": {
+        "cpu_limit": null,
+        "image": "redis:6-alpine",
+        "memory_limit_mb": null
+      }
+    },
+    "storage": {
+      "document_cache": {
+        "source": "assistant-data/caches/docling",
+        "target": "/home/v/.cache/docling",
+        "type": "bind"
+      },
+      "postgres": {
+        "source": "rag-stack/data/postgres",
+        "target": "/var/lib/postgresql",
+        "type": "bind"
+      },
+      "redis": {
+        "source": "redis_data",
+        "target": "/data",
+        "type": "bind"
+      }
+    }
+  },
+  "kernel": {
+    "api": {
+      "listen_host": "0.0.0.0",
+      "port": 8001
+    },
+    "health": {
+      "heartbeat_seconds": 30,
+      "stale_after_seconds": 90
+    },
+    "mcp": {
+      "listen_host": "0.0.0.0",
+      "port": 8002
+    },
+    "queue": {
+      "lease_seconds": 60,
+      "poll_seconds": 1
+    },
+    "scheduler": {
+      "batch_size": 100,
+      "enabled": false,
+      "late_grace_seconds": 5,
+      "poll_seconds": 1
+    },
+    "workers": {
+      "interactive": 2,
+      "runtime": 4
+    }
+  },
+  "logging": {
+    "backup_files": 10,
+    "level": "INFO",
+    "max_file_bytes": 52428800,
+    "trace_retention_days": null
+  },
+  "map": {
+    "change_lookback_days": 30,
+    "external_directory_warning": {
+      "elapsed_ms": 3000,
+      "file_count": 10000,
+      "total_bytes": 1073741824
+    },
+    "read_max_bytes": 262144,
+    "scan": {
+      "max_duration_ms": 5000,
+      "max_files": 10000
+    }
+  },
+  "notifications": {
+    "delivery_max_attempts": 10,
+    "error_excerpt_chars": 1500,
+    "retry_base_seconds": 10,
+    "retry_max_seconds": 60
+  },
+  "paths": {
+    "data_directory": "assistant-data",
+    "python_executable": "/home/v/miniconda3/bin/python",
+    "workspace_root": "/home/v/AI"
+  },
+  "postgres": {
+    "connect_timeout_seconds": 10,
+    "database": "rag",
+    "host": "rag-postgres",
+    "password_ref": "secret://infrastructure/postgres-password",
+    "port": 5432,
+    "settings": {
+      "effective_cache_size_mb": 4096,
+      "idle_in_transaction_session_timeout_ms": 0,
+      "lock_timeout_ms": 0,
+      "maintenance_work_mem_mb": 64,
+      "max_connections": 100,
+      "max_parallel_workers": 8,
+      "max_parallel_workers_per_gather": 2,
+      "max_worker_processes": 8,
+      "shared_buffers_mb": 128,
+      "statement_timeout_ms": 0,
+      "work_mem_mb": 4
+    },
+    "user": "rag_service"
+  },
+  "python_defaults": {
+    "cpu_pool_size": 2,
+    "io_workers": 8,
+    "max_timeout_seconds": 3600,
+    "numeric_threads": 1,
+    "timeout_seconds": 300
+  },
+  "redis": {
+    "credential_ref": null,
+    "database_index": 0,
+    "host": "redis",
+    "port": 6379
+  },
+  "reranker": {
+    "credential_ref": "secret://infrastructure/reranker",
+    "listen_port": 8080,
+    "request_timeout_seconds": 60
+  },
+  "resource_limits": {
+    "max_cpu_slots": 8,
+    "max_cpu_work_items": 4,
+    "max_declared_memory_mb": null,
+    "max_finite_runs": 4,
+    "max_managed_model_invocations": 8,
+    "max_service_instances": 4
+  },
+  "schema_version": "kernel-system-config.v1",
+  "service_defaults": {
+    "heartbeat_seconds": 30,
+    "recovery": {
+      "backoff_seconds": [
+        30,
+        120,
+        600
+      ],
+      "max_restarts": 3,
+      "max_restarts_per_window": 5,
+      "stable_window_seconds": 300,
+      "window_seconds": 3600
+    },
+    "stale_after_seconds": 90,
+    "startup_timeout_seconds": 60,
+    "stop_grace_seconds": 30
+  },
+  "supervisor_defaults": {
+    "critical": {
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "high",
+      "timeout_seconds": 240
+    },
+    "daily_input_tokens": 200000,
+    "daily_output_tokens": 40000,
+    "format_correction_attempts": 1,
+    "intent": {
+      "model": "gpt-5.6-luna",
+      "reasoning_effort": "low",
+      "timeout_seconds": 90
+    },
+    "max_task_turns": 24,
+    "normal": {
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "medium",
+      "timeout_seconds": 180
+    },
+    "retry_delays_seconds": [
+      30,
+      120,
+      600
+    ]
+  },
+  "system": {
+    "language": "zh-CN",
+    "timezone": "Asia/Shanghai"
+  }
+}

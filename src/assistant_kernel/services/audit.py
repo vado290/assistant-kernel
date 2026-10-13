@@ -19,6 +19,7 @@ AUDIT_READ_ONLY_TOOLS = frozenset({
     "get_stage_handoff",
     "list_stage_artifacts",
     "read_stage_artifact",
+    "list_runtime_units", "runtime_unit_status", "query_project_operations",
 })
 
 

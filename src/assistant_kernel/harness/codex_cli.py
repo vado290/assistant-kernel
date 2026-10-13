@@ -6,6 +6,7 @@ import os
 import re
 import sys
 import uuid
+import asyncio
 from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
@@ -98,18 +99,34 @@ class CodexCliHarness:
 
     async def run_turn(self, request: AgentTurnRequest) -> AgentTurnResult:
         runtime = self.runtime_manager.ensure(request.project_id)
-        environment = os.environ.copy()
-        environment["CODEX_HOME"] = str(runtime.codex_home)
+        codex_home=request.codex_home or runtime.codex_home
+        environment = (os.environ.copy() if request.base_environment is None else dict(request.base_environment))
+        environment["CODEX_HOME"] = str(codex_home)
         environment.update(request.extra_environment)
         runtime_overrides = ["-c", "features.goals=false"]
+        if not 0 <= request.max_concurrent_subagents <= 3:
+            raise ValueError('Native temporary subagents must stay within the approved 0..3 bound')
+        multi_agent_enabled=request.multi_agent_enabled and request.max_concurrent_subagents>0
         runtime_overrides.extend([
-            "-c", f"features.multi_agent={'true' if request.multi_agent_enabled else 'false'}",
+            "-c", f"features.multi_agent={'true' if multi_agent_enabled else 'false'}",
+            "-c", f"agents.enabled={'true' if multi_agent_enabled else 'false'}",
+            # Keep the verified installed backend; a user config cannot enable
+            # a different backend outside the fixed invocation configuration.
+            "-c", "features.multi_agent_v2=false",
         ])
+        if multi_agent_enabled:
+            runtime_overrides.extend(['-c',f'agents.max_concurrent_threads_per_session={request.max_concurrent_subagents}'])
         profile_overrides: list[str] = []
+        if request.sandbox == 'danger-full-access':
+            if request.permission_profile:
+                raise ValueError('shared Project agreement cannot use a per-Run directory permission profile')
+            runtime_overrides.extend(['-c','approval_policy="never"','-c','shell_environment_policy.inherit="core"'])
+            for name in ['POSTGRES_*','ASSISTANT_*','KERNEL_SCOPE_*','RAG_ENV_FILE']:
+                runtime_overrides.extend(['-c','shell_environment_policy.filters.'+json.dumps(name)+'="exclude"'])
         if request.permission_profile:
             if not re.fullmatch(r"kernel_run_[A-Za-z0-9_]+", request.permission_profile):
                 raise ValueError("invalid pinned Codex permission profile")
-            profile_path = runtime.codex_home / f"{request.permission_profile}.config.toml"
+            profile_path = codex_home / f"{request.permission_profile}.config.toml"
             if not profile_path.is_file() or hashlib.sha256(profile_path.read_bytes()).hexdigest() != request.permission_profile_sha256:
                 raise ValueError("pinned Codex permission profile is missing or changed")
             # `exec resume` rejects `-p`; the profile belongs to `exec` and
@@ -153,73 +170,12 @@ class CodexCliHarness:
             runtime_overrides.extend([
                 "-c", f'model_provider="{request.provider}"',
             ])
-        scoped_overrides: list[str] = []
-        if request.scoped_tools:
-            environment.update(request.scope_context)
-            scoped_env_names = sorted(request.scope_context)
-            scoped_overrides = [
-                "-c", "mcp_servers.kernel_scoped.command=" + json.dumps(sys.executable),
-                "-c", 'mcp_servers.kernel_scoped.args=["-m","assistant_kernel.mcp_server.scoped_tools"]',
-                "-c", "mcp_servers.kernel_scoped.required=true",
-                "-c", 'mcp_servers.kernel_scoped.default_tools_approval_mode="auto"',
-                "-c", "mcp_servers.kernel_scoped.enabled_tools=" + json.dumps(list(request.scoped_tools)),
-                "-c", "mcp_servers.kernel_scoped.env_vars=" + json.dumps(
-                    scoped_env_names + [
-                        "AI_HOME", "ASSISTANT_DATA_ROOT", "ASSISTANT_PROVIDER_SECRETS",
-                        "ASSISTANT_POSTGRES_HOST", "ASSISTANT_POSTGRES_PORT",
-                        "RAG_ENV_FILE", "PYTHONPATH",
-                    ]
-                ),
-            ]
-        project_mcp_overrides: list[str] = []
-        for server in request.mcp_servers:
-            server_id = str(server.get("server_id") or "")
-            if not self._MCP_ID.fullmatch(server_id) or server_id == "kernel_scoped":
-                raise ValueError(f"invalid or reserved MCP server_id: {server_id}")
-            prefix = f"mcp_servers.{server_id}."
-            transport = str(server.get("transport") or "")
-            if transport == "stdio":
-                command_value = str(server.get("command") or "")
-                args_value = [str(item) for item in server.get("args") or []]
-                cwd_value = str(server.get("cwd") or "")
-                env_value = {
-                    str(key): str(value) for key, value in (server.get("env") or {}).items()
-                }
-                if not command_value or not cwd_value:
-                    raise ValueError(f"STDIO MCP binding is incomplete: {server_id}")
-                project_mcp_overrides.extend([
-                    "-c", prefix + "command=" + json.dumps(command_value),
-                    "-c", prefix + "args=" + json.dumps(args_value),
-                    "-c", prefix + "cwd=" + json.dumps(cwd_value),
-                    "-c", prefix + "env=" + json.dumps(env_value),
-                ])
-            elif transport == "streamable-http":
-                url = str(server.get("url") or "")
-                if not url.startswith(("http://", "https://")):
-                    raise ValueError(f"HTTP MCP binding has no valid URL: {server_id}")
-                project_mcp_overrides.extend(["-c", prefix + "url=" + json.dumps(url)])
-                bearer_env = str(server.get("bearer_token_env_var") or "")
-                if bearer_env:
-                    project_mcp_overrides.extend([
-                        "-c", prefix + "bearer_token_env_var=" + json.dumps(bearer_env)
-                    ])
-            else:
-                raise ValueError(f"unsupported MCP transport: {transport}")
-            project_mcp_overrides.extend([
-                "-c", prefix + "required=" + json.dumps(bool(server.get("required", True))),
-                "-c", prefix + "default_tools_approval_mode=" + json.dumps(
-                    str(server.get("default_tools_approval_mode") or "auto")
-                ),
-                "-c", prefix + "enabled_tools=" + json.dumps(
-                    [str(item) for item in server.get("enabled_tools") or []]
-                ),
-                "-c", prefix + "startup_timeout_sec=" + json.dumps(
-                    int(server.get("startup_timeout_sec") or 10)
-                ),
-                "-c", prefix + "tool_timeout_sec=" + json.dumps(
-                    int(server.get("tool_timeout_sec") or 60)
-                ),
-            ])
+        invocation_id = request.invocation_id or uuid.uuid4().hex
+        archive_dir = runtime.vault_root / "runs" / "agent-traces" / "invocations" / invocation_id
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        from assistant_kernel.harness.mcp_config import compile_mcp
+        scoped_overrides, mcp_private = await compile_mcp(request, environment, self.codex_binary, archive_dir)
+        project_mcp_overrides = []
         writable_root_args = [
             value
             for root in request.writable_roots
@@ -266,9 +222,6 @@ class CodexCliHarness:
             if request.reasoning_effort:
                 command.extend(["-c", f'model_reasoning_effort="{request.reasoning_effort}"'])
             command.append("-")
-        invocation_id = request.invocation_id or uuid.uuid4().hex
-        archive_dir = runtime.vault_root / "runs" / "agent-traces" / "invocations" / invocation_id
-        archive_dir.mkdir(parents=True, exist_ok=True)
         invocation_path = archive_dir / "request.json"
         invocation_path.write_text(
             json.dumps(
@@ -300,24 +253,40 @@ class CodexCliHarness:
             encoding="utf-8",
         )
         (archive_dir / "prompt.md").write_text(request.prompt, encoding="utf-8")
-        code, stdout, stderr, _ = await run_managed_process(
-            *command,
-            cwd=str(request.cwd),
-            timeout_seconds=request.timeout_seconds or self.timeout_seconds,
-            env=environment,
-            input_data=request.prompt.encode("utf-8"),
-            capture_directory=archive_dir,
-            cancel_event=request.cancel_event,
-            on_started=request.process_started_callback,
-        )
+        try:
+            code, stdout, stderr, _ = await run_managed_process(
+                *command,
+                cwd=str(request.cwd),
+                timeout_seconds=request.timeout_seconds or self.timeout_seconds,
+                env=environment,
+                input_data=request.prompt.encode("utf-8"),
+                capture_directory=archive_dir,
+                cancel_event=request.cancel_event,
+                on_started=request.process_started_callback,
+            )
+        finally:
+            from assistant_kernel.worker.mcp_process import cleanup_mcp_processes
+            process_cleanup=await asyncio.shield(cleanup_mcp_processes(invocation_id))
+            (archive_dir/'mcp-cleanup.json').write_text(json.dumps(process_cleanup))
+            if mcp_private is not None:mcp_private.unlink(missing_ok=True)
         (archive_dir / "stdout.jsonl").write_bytes(stdout)
         (archive_dir / "stderr.log").write_bytes(stderr)
         if code != 0:
             raise RuntimeError(f"Codex exited with code {code}: {stderr.decode('utf-8', 'replace')[-2000:]}")
+        mcp_receipts = []
+        if request.scoped_tools or request.mcp_servers:
+            from assistant_kernel.mcp_server.managed import exposed_name
+            permitted = set(request.scoped_tools) | {exposed_name(s['server_id'],t) for s in request.mcp_servers for t in s.get('enabled_tools',[])}
+            paths=list(archive_dir.glob('mcp-runtime.*.json'))
+            mcp_receipts=[json.loads(path.read_text()) for path in paths]
+            if not mcp_receipts or process_cleanup['status']!='verified':
+                raise RuntimeError('Managed MCP initialization or connection cleanup is unverified')
+            if any(not set(r.get('exposed',[])) <= permitted for r in mcp_receipts):
+                raise PermissionError('Managed MCP exposed tools outside the fixed selection')
         content = stdout.decode("utf-8", "replace")
         parsed = self.parse_jsonl(content)
         native_usage = self.read_native_context_usage(
-            runtime.codex_home, parsed.physical_session_id
+            codex_home, parsed.physical_session_id
         )
         if native_usage is None:
             context_usage = TurnUsage(
@@ -348,6 +317,12 @@ class CodexCliHarness:
             f"vault://{request.project_id}/"
             f"{archive_path.relative_to(runtime.vault_root).as_posix()}"
         )
+        usage_metadata['mcp_runtime'] = {'receipt_count':len(mcp_receipts),
+            'exposed_tools':sorted({name for r in mcp_receipts for name in r.get('exposed',[])}),
+            'receipts':[{'uri':f'vault://{request.project_id}/'+path.relative_to(runtime.vault_root).as_posix(),
+                'sha256':hashlib.sha256(path.read_bytes()).hexdigest()} for path in archive_dir.glob('mcp-runtime.*.json')],
+            'process_cleanup':process_cleanup,
+            'inventory_scope':'managed entry points only; source policy separately verified'}
         return AgentTurnResult(
             physical_session_id=parsed.physical_session_id,
             usage=context_usage,

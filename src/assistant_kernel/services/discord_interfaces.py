@@ -50,7 +50,7 @@ class DiscordInterfaceRegistry:
     def upsert(
         self, *, channel_id: str, guild_id: str, project_id: str, role: str,
     ) -> dict[str, Any]:
-        if role not in {"supervisor", "operator"}:
+        if role not in {"supervisor"}:
             raise ValueError("unsupported Discord Project interface role")
         with self._lock():
             payload = self.read()
@@ -85,7 +85,7 @@ class DiscordInterfaceRegistry:
             return None
         project_id = str(value.get("project_id") or "").strip()
         role = str(value.get("role") or "").strip()
-        if not project_id or role not in {"supervisor", "operator"}:
+        if not project_id or role not in {"supervisor"}:
             raise ValueError("Discord interface entry is incomplete")
         return {
             **value,
@@ -101,8 +101,9 @@ class DiscordInterfaceRegistry:
         Callers must use this method instead of assuming it is duplicated inside
         the entry payload.
         """
-        if role not in {"supervisor", "operator"}:
+        if role not in {"supervisor"}:
             raise ValueError("unsupported Discord Project interface role")
+        matching=[]
         for channel_id, value in self.read()["interfaces"].items():
             if not isinstance(value, dict):
                 continue
@@ -110,10 +111,11 @@ class DiscordInterfaceRegistry:
                 str(value.get("project_id") or "") == str(project_id)
                 and str(value.get("role") or "") == role
             ):
-                return {
+                matching.append({
                     **value,
                     "channel_id": str(channel_id),
                     "project_id": str(project_id),
                     "role": role,
-                }
-        return None
+                })
+        if len(matching)>1:raise ValueError('Project has multiple Supervisor interfaces; select a unique primary route')
+        return matching[0] if matching else None

@@ -25,7 +25,7 @@ class QwenProvider:
         self.timeout_seconds = timeout_seconds
 
     def configured(self) -> bool:
-        return bool(self.config.api_key.get_secret_value())
+        return self.config.enabled and bool(self.config.api_key.get_secret_value())
 
     def rerank_configured(self) -> bool:
         return self.configured() and bool(
@@ -34,7 +34,7 @@ class QwenProvider:
 
     def _headers(self) -> dict[str, str]:
         key = self.config.api_key.get_secret_value()
-        if not key:
+        if not self.config.enabled or not key:
             raise RuntimeError("DashScope API key is not configured")
         return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
 
@@ -67,6 +67,7 @@ class QwenProvider:
         return url
 
     async def embed(self, texts: list[str], dimensions: int = 1024) -> EmbeddingResult:
+        if not self.config.models.embedding:raise RuntimeError('Embedding model is unconfigured')
         if not texts or not all(isinstance(item, str) and item.strip() for item in texts):
             raise ValueError("texts must contain one or more non-empty strings")
         if not 64 <= dimensions <= 2048:

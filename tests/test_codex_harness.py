@@ -54,6 +54,8 @@ async def test_prompt_is_archived_without_legacy_database_mcp(tmp_path, monkeypa
     async def fake_process(*command, **kwargs):
         captured["command"] = command
         captured["env"] = kwargs["env"]
+        if kwargs["env"].get("KERNEL_MCP_CONFIG_PATH"):
+            captured["mcp"] = json.loads(Path(kwargs["env"]["KERNEL_MCP_CONFIG_PATH"]).read_text())
         output = (
             '{"type":"thread.started","thread_id":"thread-agent"}\n'
             '{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}\n'
@@ -145,6 +147,8 @@ async def test_scoped_mcp_is_injected_without_scope_values_in_command(tmp_path, 
     async def fake_process(*command, **kwargs):
         captured["command"] = command
         captured["env"] = kwargs["env"]
+        if kwargs["env"].get("KERNEL_MCP_CONFIG_PATH"):
+            captured["mcp"] = json.loads(Path(kwargs["env"]["KERNEL_MCP_CONFIG_PATH"]).read_text())
         return 0, (
             b'{"type":"thread.started","thread_id":"thread-agent"}\n'
             b'{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}\n'
@@ -167,7 +171,7 @@ async def test_scoped_mcp_is_injected_without_scope_values_in_command(tmp_path, 
         writable_roots=(external,),
     ))
     command = " ".join(captured["command"])
-    assert "assistant_kernel.mcp_server.scoped_tools" in command
+    assert "assistant_kernel.mcp_server.managed" in command
     assert "default_tools_approval_mode" in command
     assert "enabled_tools" in command
     assert "features.goals=false" in command
@@ -176,7 +180,7 @@ async def test_scoped_mcp_is_injected_without_scope_values_in_command(tmp_path, 
     assert str(external) in captured["command"]
     assert "sandbox_workspace_write.network_access=true" in captured["command"]
     assert "sandbox_workspace_write.writable_roots=" in command
-    assert captured["env"]["KERNEL_SCOPE_PROJECT_ID"] == "p"
+    assert captured["mcp"]["scope_context"]["KERNEL_SCOPE_PROJECT_ID"] == "p"
 
 
 async def test_resume_reapplies_writable_roots(tmp_path, monkeypatch):
@@ -245,3 +249,17 @@ async def test_pinned_permission_profile_replaces_legacy_sandbox_on_fresh_and_re
         assert not any("sandbox_workspace_write." in item for item in command)
         assert command.index("-p") < command.index("resume") if "resume" in command else True
         assert 'model_provider="openai"' in command
+
+
+@pytest.fixture(autouse=True)
+def isolated_codex_config_query(monkeypatch):
+    async def configured(*args,**kwargs):return []
+    monkeypatch.setattr('assistant_kernel.harness.mcp_config.configured_servers',configured)
+    from assistant_kernel.harness.mcp_config import compile_mcp
+    async def compile_fixture(request,environment,binary,archive_dir):
+        result=await compile_mcp(request,environment,binary,archive_dir)
+        if result[1]:
+            payload=json.loads(result[1].read_text())
+            (archive_dir/'mcp-runtime.fixture.json').write_text(json.dumps({'exposed':payload['selected'],'cleanup':'closed','test_fake':True}))
+        return result
+    monkeypatch.setattr('assistant_kernel.harness.mcp_config.compile_mcp',compile_fixture)

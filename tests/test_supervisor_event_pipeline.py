@@ -15,8 +15,9 @@ from assistant_kernel.services.supervisor_processor import SupervisorProcessor
 class TurnRepository:
     def __init__(self) -> None:
         self.created: list[dict] = []
+        self.legacy_degraded: list[dict] = []
         self.task = {
-            "run_id": "task-1", "status": "waiting_user",
+            "run_id": "task-1", "project_id": "p", "status": "waiting_user",
             "request_json": {
                 "task_turn_count": 1, "task_phase": "waiting_user",
                 "current_stage": "requirements", "supervisor_context_epoch": 7,
@@ -34,6 +35,10 @@ class TurnRepository:
     async def create_run(self, **kwargs):
         self.created.append(kwargs)
         return {"run_id": "supervisor-1"}
+
+    async def resume_supervision_degraded(self, **kwargs):
+        self.legacy_degraded.append(kwargs)
+        return self.task
 
 
 @pytest.mark.asyncio
@@ -76,6 +81,7 @@ async def test_turn_handoff_is_pinned_and_consultation_v3(tmp_path):
     # overwritten and no third consultation is created.
     assert len(repository.created) == 2
     assert json.loads(target.read_text(encoding="utf-8")) == handoff
+    assert repository.legacy_degraded[0]["reason"] == "Supervisor evaluation could not be queued"
 
 
 class MemoryRecorder:

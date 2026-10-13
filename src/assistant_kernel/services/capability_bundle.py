@@ -29,6 +29,19 @@ def _json_bytes(value: Any) -> bytes:
     ).encode("utf-8")
 
 
+def _line_delta(old: bytes | None, new: bytes | None) -> dict[str, Any]:
+    try:
+        if b"\x00" in (old or b"") or b"\x00" in (new or b""):
+            raise UnicodeError("binary")
+        operations = difflib.SequenceMatcher(
+            a=(old or b"").decode("utf-8").splitlines(True),
+            b=(new or b"").decode("utf-8").splitlines(True), autojunk=False).get_opcodes()
+        return {"lines_added": sum(j2-j1 for tag, i1, i2, j1, j2 in operations if tag in {"insert", "replace"}),
+                "lines_deleted": sum(i2-i1 for tag, i1, i2, j1, j2 in operations if tag in {"delete", "replace"})}
+    except UnicodeError:
+        return {"lines_added": None, "lines_deleted": None}
+
+
 class CapabilityBundleService:
     """Inspect, version and publish Project-local Skill bundles.
 
@@ -202,12 +215,16 @@ class CapabilityBundleService:
         return revision_id, revision_uri, patch_uri
 
     def publish(
-        self, *, project_id: str, publish_run_id: str, request: dict[str, Any]
+        self, *, project_id: str, publish_run_id: str, request: dict[str, Any],
+        cancel_event: Any = None,
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        if cancel_event is not None and cancel_event.is_set():
+            raise RuntimeError("publication cancelled before file effects")
         change = dict(request.get("capability_change") or {})
         if not change:
             return self._publish_files(
-                project_id=project_id, publish_run_id=publish_run_id, request=request
+                project_id=project_id, publish_run_id=publish_run_id, request=request,
+                cancel_event=cancel_event,
             )
         name = self.validate_name(str(change.get("target_skill") or ""))
         mode = str(change.get("change_mode") or "")
@@ -315,6 +332,8 @@ class CapabilityBundleService:
         }
         journal_path.write_text(json.dumps(journal, ensure_ascii=False, indent=2), encoding="utf-8")
         backup = publish_root / "previous-skill"
+        if cancel_event is not None and cancel_event.is_set():
+            raise RuntimeError("publication cancelled before file effects")
         if backup.exists():
             shutil.rmtree(backup)
         if active_root.exists():
@@ -329,6 +348,8 @@ class CapabilityBundleService:
             raise
 
         try:
+            if cancel_event is not None and cancel_event.is_set():
+                raise RuntimeError("publication cancelled; rolling back Skill effects")
             revision_id, revision_uri, patch_uri = self._write_revision(
                 project_id, name, parent_revision=parent_revision,
                 source_run_id=str(request.get("implementation_run_id") or ""),
@@ -355,6 +376,18 @@ class CapabilityBundleService:
             "revision_uri": revision_uri,
             "diff_uri": patch_uri,
         }
+        patch_path = self.runtime.resolve_vault_file(project_id, patch_uri[len(f"vault://{project_id}/"):])
+        result["map_change_batch"] = {
+            "batch_id": f"publisher:{publish_run_id}",
+            "task_id": str(request.get("implementation_run_id") or publish_run_id),
+            "run_id": publish_run_id, "actor": "publisher", "scope_kind": "published",
+            "changes": [{**entry,
+                **_line_delta(before.get(str(entry["target_uri"])[len(expected_prefix):]),
+                              (active_root / str(entry["target_uri"])[len(expected_prefix):]).read_bytes()
+                              if (active_root / str(entry["target_uri"])[len(expected_prefix):]).is_file() else None),
+                "diff_ref": {"uri": patch_uri, "sha256": _sha256(patch_path.read_bytes())}}
+                for entry in entries],
+        }
         artifacts = [
             {"uri": revision_uri, "kind": "skill_revision"},
             {"uri": patch_uri, "kind": "skill_diff"},
@@ -365,7 +398,8 @@ class CapabilityBundleService:
         return result, artifacts
 
     def _publish_files(
-        self, *, project_id: str, publish_run_id: str, request: dict[str, Any]
+        self, *, project_id: str, publish_run_id: str, request: dict[str, Any],
+        cancel_event: Any = None,
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         manifest_uri = str(request.get("candidate_manifest_uri") or "")
         prefix = f"vault://{project_id}/"
@@ -508,9 +542,12 @@ class CapabilityBundleService:
         patch_parts: list[str] = []
         try:
             for item in prepared:
+                if cancel_event is not None and cancel_event.is_set():
+                    raise RuntimeError("publication cancelled; rolling back file effects")
                 target = Path(item["target"])
                 relative = str(item["relative"])
                 old_data = target.read_bytes() if target.is_file() else None
+                item["map_line_delta"] = _line_delta(old_data, item["data"])
                 if old_data is not None:
                     backup = backup_root / str(item["root_key"]) / relative
                     backup.parent.mkdir(parents=True, exist_ok=True)
@@ -611,6 +648,19 @@ class CapabilityBundleService:
         receipt_uri = f"vault://{project_id}/{receipt_path.relative_to(vault).as_posix()}"
         diff_uri = f"vault://{project_id}/{diff_path.relative_to(vault).as_posix()}"
         result = {**receipt, "publication_uri": receipt_uri, "diff_uri": diff_uri}
+        result["map_change_batch"] = {
+            "batch_id": f"publisher:{publish_run_id}",
+            "changes": [
+                {**{key: value for key, value in item.items() if key in {
+                    "operation", "target_uri", "original_sha256", "candidate_sha256"}},
+                 **item.get("map_line_delta", {}),
+                 "diff_ref": {"uri": diff_uri, "sha256": _sha256(diff_path.read_bytes())}}
+                for item in prepared
+            ],
+            "task_id": implementation_run_id,
+            "run_id": publish_run_id,
+            "actor": "publisher", "scope_kind": "published",
+        }
         return result, [
             {"uri": receipt_uri, "kind": "publication_receipt"},
             {"uri": diff_uri, "kind": "publication_diff"},

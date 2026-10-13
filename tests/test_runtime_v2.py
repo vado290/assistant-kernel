@@ -32,17 +32,20 @@ def settings_for(tmp_path: Path) -> KernelSettings:
     })
 
 
-def test_candidate_only_scope_keeps_formal_project_read_only(tmp_path: Path) -> None:
+def test_legacy_scope_reader_retains_old_semantics_but_current_scope_is_shared(tmp_path: Path) -> None:
     settings = settings_for(tmp_path)
     ProjectRuntimeManager(tmp_path).ensure("demo")
     roots = WorkspaceScopeService(settings).resolve(
-        "demo", "run-1", "implementation", candidate_only=True,
+        "demo", "run-1", "implementation", candidate_only=True, shared_agreement=False,
     )
     by_key = {item.key: item for item in roots}
     assert by_key["project"].access == "read"
     assert by_key["project"].write_mode == "gated"
     assert by_key["candidate"].access == "write"
     assert by_key["run_work"].access == "write"
+    current = WorkspaceScopeService(settings).resolve('demo', 'run-2', 'requirements', candidate_only=True)
+    assert next(item for item in current if item.key == 'project').access == 'write'
+    assert all(item.native_mode == 'behavioral' for item in current)
 
 
 def test_worker_health_reports_fresh_and_stale_instances(tmp_path: Path) -> None:
@@ -232,32 +235,6 @@ async def test_channel_dead_letter_notice_is_safe_and_idempotently_keyed(channel
     assert "required workspace scope" not in notice["content"]["text"]
 
 
-async def test_child_dead_letter_settles_parent_without_user_notice() -> None:
-    class Repository:
-        def __init__(self):
-            self.settled = []
-            self.created = []
-
-        async def get_message(self, message_id: str):
-            return {
-                "message_id": message_id, "channel": "discord",
-                "chat_id": "chat-1", "user_id": "user-1",
-            }
-
-        async def settle_terminal_child_failure(self, run_id: str):
-            self.settled.append(run_id)
-
-        async def create_outbound(self, **kwargs):
-            self.created.append(kwargs)
-
-    repository = Repository()
-    await _notify_terminal_failure(repository, {
-        "run_id": "child-1", "project_id": "demo",
-        "trigger_message_id": "message-1", "session_id": None,
-        "request_json": {"interaction_kind": "child_task"},
-    })
-    assert repository.settled == ["child-1"]
-    assert repository.created == []
 
 
 def test_v2_layout_does_not_fall_back_to_legacy_agent(tmp_path: Path) -> None:
@@ -351,7 +328,7 @@ def test_execution_plan_snapshots_project_stdio_mcp(tmp_path: Path) -> None:
     assert (repeated_uri, repeated_sha) == (uri, file_sha)
 
 
-def test_child_task_execution_plan_is_candidate_only(tmp_path: Path) -> None:
+def test_candidate_submission_does_not_reduce_the_project_file_agreement(tmp_path: Path) -> None:
     settings, _ = write_v2_project(tmp_path)
     scopes = settings.data_root / "config" / "project-scopes.yaml"
     scopes.parent.mkdir(parents=True, exist_ok=True)
@@ -371,8 +348,9 @@ def test_child_task_execution_plan_is_candidate_only(tmp_path: Path) -> None:
             "agent_key": config.agent_key, "trigger_message_id": "message-1",
             "idempotency_key": "child:1", "max_attempts": 3,
             "request_json": {
-                "interaction_kind": "child_task",
-                "delivery_mode": "parent_only",
+                "candidate_only": True,
+                "task_protocol": "single-agent.v2",
+                "permission_profile_name": "candidate-write",
             },
         },
         config=config, config_snapshot_uri=snapshot_uri,
@@ -387,9 +365,11 @@ def test_child_task_execution_plan_is_candidate_only(tmp_path: Path) -> None:
             plan["bindings"]["workspace_scope_snapshot_sha256"],
         )
     }
-    assert roots["project"].access == "read"
+    assert roots["project"].access == "write"
     assert roots["candidate"].access == "write"
     assert plan["runtime"]["candidate_only"] is True
+    assert plan['bindings']['stage_permissions']['formal_write'] is False
+    assert plan['bindings']['stage_permissions']['business_approval_required'] is True
 
 
 def test_model_or_context_change_changes_session_compatibility(tmp_path: Path) -> None:
@@ -425,6 +405,7 @@ def test_model_or_context_change_changes_session_compatibility(tmp_path: Path) -
 
 async def test_codex_harness_injects_stdio_and_http_mcp(tmp_path: Path, monkeypatch) -> None:
     captured = {}
+    monkeypatch.setenv("SHARED_MCP_TOKEN", "synthetic")
 
     async def fake_process(*command, **kwargs):
         captured["command"] = command
@@ -463,9 +444,9 @@ async def test_codex_harness_injects_stdio_and_http_mcp(tmp_path: Path, monkeypa
     ))
 
     command = " ".join(captured["command"])
-    assert "mcp_servers.local-tools.command" in command
-    assert "mcp_servers.shared-tools.url" in command
-    assert "bearer_token_env_var" in command
+    assert "assistant_kernel.mcp_server.managed" in command
+    assert "mcp_servers.kernel_scoped.enabled_tools" in command
+    assert "SHARED_MCP_TOKEN" not in command
     request = json.loads(
         (tmp_path / "vaults" / "demo" / "runs" / "agent-traces" / "invocations")
         .glob("*/request.json").__next__().read_text(encoding="utf-8")
@@ -509,3 +490,17 @@ server.run(transport="stdio")
     assert [tool.name for tool in tools.tools] == ["echo_value"]
     assert result.is_error is False
     assert json.loads(result.content[0].text) == {"value": "ok"}
+
+
+@pytest.fixture(autouse=True)
+def isolated_codex_config_query(monkeypatch):
+    async def configured(*args,**kwargs):return []
+    monkeypatch.setattr('assistant_kernel.harness.mcp_config.configured_servers',configured)
+    from assistant_kernel.harness.mcp_config import compile_mcp
+    async def compile_fixture(request,environment,binary,archive_dir):
+        result=await compile_mcp(request,environment,binary,archive_dir)
+        if result[1]:
+            payload=json.loads(result[1].read_text())
+            (archive_dir/'mcp-runtime.fixture.json').write_text(json.dumps({'exposed':payload['selected'],'cleanup':'closed','test_fake':True}))
+        return result
+    monkeypatch.setattr('assistant_kernel.harness.mcp_config.compile_mcp',compile_fixture)

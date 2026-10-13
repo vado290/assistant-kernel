@@ -1,6 +1,6 @@
 ---
 name: assistant-agent-design
-description: 设计或审查Project中的PM、Supervisor、Child、Operator和业务Agent，包括Role、Config、Scope、Skill、MCP、Trigger与I/O；仅在任务涉及Agent结构时使用。
+description: 设计或审查Project的PM五阶段和Supervisor，包括Role、Config、Scope、Skill、MCP、Trigger与I/O；仅在任务涉及Agent结构时使用。
 metadata:
   version: "1.2.0"
 ---
@@ -17,7 +17,10 @@ metadata:
 - Skill写完成该类任务的方法、判断、提问和工具使用。
 - Config是机器执行的事实，不得依赖Role文字授予权限。
 - 长连接、持续监听、频繁轮询和硬规则属于Service；Service在需要推理时创建Agent Run。
-- Child Agent与PM使用相同Config Schema；原生子Agent使用Delegation合同，不创建第二套业务状态权威。
+- PM 使用公共 Role 与五个显式阶段 Profile；每个 Profile 声明 required/available Skills、
+  MCP Server/tools 和输出产物。Profile 只能选择已有 Agent 能力上限内的集合。
+- 原生子Agent使用临时 Delegation 合同，不注册长期业务身份、不交互用户、不创建第二套
+  业务状态权威；Kernel child Run 与 Operator Agent 已退役。
 
 ## Config必填项
 
@@ -29,7 +32,7 @@ metadata:
 
 Agent Config可以引用用户消息、Schedule、Workflow节点或Service事件，但自身不保存计时循环。每次触发创建独立Run，使用稳定幂等键。需要持续在线时创建Service配置，并明确它怎样触发Agent。
 
-Agent必须通过Project Agent Registry动态发现。飞书直达和PM移交分别由 `entrypoints.feishu_slash` 与 `entrypoints.pm_handoff`控制；Supervisor、Child和Operator默认不允许直接进入。Role、核心Skill、身份、Work Mode Bundle或关键Scope变化必须考虑Session compatibility和安全rotation。
+Agent必须通过Project Agent Registry动态发现。飞书直达和PM移交分别由 `entrypoints.feishu_slash` 与 `entrypoints.pm_handoff`控制；Supervisor的直接入口按已有Registry配置；Kernel child Run与Operator Agent已退役。Role、核心Skill、身份、Work Mode Bundle或关键Scope变化必须考虑Session compatibility和安全rotation。
 
 ## 交付与审查
 

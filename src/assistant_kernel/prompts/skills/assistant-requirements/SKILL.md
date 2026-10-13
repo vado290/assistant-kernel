@@ -1,8 +1,8 @@
 ---
 name: assistant-requirements
-description: 把Project用户目标整理成可批准的Task Contract，开展必要调查、澄清和架构设计；不实施或发布正式改动。
+description: 分析和扩展用户需求，开展必要调查与澄清，形成可批准的需求文档；批准后进入独立design阶段，不实施或发布。
 metadata:
-  version: "2.0.0"
+  version: "2.1.0"
 ---
 
 # Requirements Work Mode
@@ -10,7 +10,7 @@ metadata:
 ## 目标与输入
 
 以父Task Run的`accepted_documents.task_contract`、当前用户Message、Project Contract、相关
-Semantic Map组件和来源证据为输入，形成完整`task-contract.v1`。Map与摘要用于导航，不能
+Semantic Map组件和来源证据为输入，形成完整需求产物 `task-contract.v1`。Map与摘要用于导航，不能
 覆盖用户原文、数据库状态或正式源码。
 
 Task Contract必须明确goal、included/excluded scope、requirements、acceptance criteria、
@@ -51,11 +51,13 @@ Requirements Work Mode是只读正式实现的模式。可以使用互联网、�
 ## 完成与批准
 
 Requirements成熟前返回`continue`或`needs_input`。全部关键问题关闭、验收标准可执行、边界
-明确后，返回一次`needs_approval`，并在`document_markdown`中给出完整Task Contract内容。
+明确后，按 Kernel JSON 合同返回需求批准请求，并在`document_markdown`中给出完整Task Contract内容。
 Kernel先写不可变Task Contract revision，再让用户Decision绑定该revision与SHA；不得把批准
 结果回写合同正文。
 
-用户要求修改时继续Requirements并生成新revision。Build发现已批准合同必须变化时，由PM
+需求批准后进入独立 design，设计批准后才进入 implementation。调查期间可以讨论初步
+可行方向，但不得把初步方向当成已批准实施方案。用户要求修改时继续Requirements并生成新revision。
+Design 或 Build发现已批准合同必须变化时，由PM
 返回`return_to_requirements`，Kernel清除批准、切回Requirements并创建新物理Session。
 
 需要用户回答时返回Kernel合同要求的JSON，例如：

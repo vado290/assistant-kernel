@@ -12,6 +12,7 @@ import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import psycopg
 import pytest
@@ -96,11 +97,164 @@ def core_settings(tmp_path):
             connection.execute(upgrade.read_text(encoding="utf-8"))
             upgrade = Path(__file__).parents[1] / "migrations" / "upgrade_core5_v6.sql"
             connection.execute(upgrade.read_text(encoding="utf-8"))
+            upgrade = Path(__file__).parents[1] / "migrations" / "upgrade_core5_v7.sql"
+            connection.execute(upgrade.read_text(encoding="utf-8"))
         yield settings
     finally:
         assert database_name.startswith("kernel_core4_test_")
         with psycopg.connect(**connection_args, autocommit=True) as connection:
             connection.execute(sql.SQL("DROP DATABASE {}").format(sql.Identifier(database_name)))
+
+
+async def _questionnaire_waiting(settings):
+    prepare_agent(settings)
+    repository = CoreRepository(settings)
+    incoming = await repository.ingest_message(
+        project_id="demo", agent_key="project:demo:manager", channel="discord",
+        chat_id="200", user_id="300", external_event_id="questionnaire:start",
+        external_message_id=None,
+        content={"text": "先确认需求"},
+    )
+    worker = str(uuid.uuid4())
+    run = await repository.claim_run("test", worker, 60)
+    session = await repository.ensure_session("demo", "project:demo:manager", "discord", "200")
+    message = await repository.finalize_agent_waiting(
+        run_id=str(run["run_id"]), worker_instance_id=worker, claim_token=str(run["claim_token"]),
+        session_id=str(session["session_id"]), native_session_id="native-questionnaire",
+        input_tokens=10, context_window_tokens=1000, archive_uri=None, archive_sha256=None,
+        project_id="demo", channel="discord", chat_id="200", user_id="300",
+        source_message_id=str(incoming["message"]["message_id"]), question={
+            "summary": "确认两个问题", "questions": [
+                {"question_id": "scope", "question_text": "范围是什么？", "required": True,
+                 "topic": "功能范围", "recommended_option_id": "a", "options": [
+                     {"id": "a", "label": "最小版本"}, {"id": "b", "label": "完整版本"},
+                 ]},
+                {"question_id": "environment", "question_text": "在哪部署？", "required": True},
+            ],
+        },
+    )
+    return repository, run, message
+
+
+async def _questionnaire_action(repository, message, action, *, value=None, event=None):
+    state = message["content_json"]["questionnaire"]
+    return await repository.record_questionnaire_action(
+        message_id=str(message["message_id"]), project_id="demo", channel="discord", chat_id="200",
+        user_id="300", external_event_id=event or "questionnaire:" + uuid.uuid4().hex,
+        revision=int(state["revision"]), page=int(state["cursor"]), action=action, value=value,
+    )
+
+
+async def test_questionnaire_drafts_submit_and_duplicate_resume_once(core_settings):
+    repository, run, message = await _questionnaire_waiting(core_settings)
+    assert len(message["question_message_ids"]) == 1
+    assert (await repository.get_run(str(run["run_id"]))) ["result_json"]["question_ids"] == ["scope", "environment"]
+    with pytest.raises(ValueError, match="先选择"):
+        await _questionnaire_action(repository, message, "next")
+    result = await _questionnaire_action(repository, message, "choice", value="0")
+    message = result["message"]
+    assert result["resumed"] is False
+    assert (await repository.get_run(str(run["run_id"]))) ["status"] == "waiting_user"
+    message = (await _questionnaire_action(repository, message, "next"))["message"]
+    message = (await _questionnaire_action(repository, message, "text", value="自己的部署环境"))["message"]
+    message = (await _questionnaire_action(repository, message, "next"))["message"]
+    message = (await _questionnaire_action(repository, message, "additional", value="最后自由补充"))["message"]
+    submission = dict(message)
+    result = await _questionnaire_action(repository, submission, "submit", event="questionnaire:submit")
+    assert result["resumed"] is True
+    duplicate = await _questionnaire_action(repository, submission, "submit", event="questionnaire:submit")
+    assert duplicate["duplicate"] is True and duplicate["resumed"] is False
+    updated = await repository.get_run(str(run["run_id"]))
+    assert updated["status"] == "queued"
+    assert updated["request_json"]["answer"]["answers"] == {"scope": "最小版本", "environment": "自己的部署环境"}
+    assert updated["request_json"]["answer"]["additional_text"] == "最后自由补充"
+    assert updated["request_json"]["answer"]["questions"][0]["question_text"] == "范围是什么？"
+    assert len(updated["request_json"]["answer_history"]) == 1
+    assert len(await repository.list_runs("demo")) == 1
+    with pytest.raises(PermissionError, match="no longer current"):
+        await _questionnaire_action(repository, result["message"], "submit")
+
+
+async def test_questionnaire_concurrent_stale_pages_and_reset_are_fenced(core_settings):
+    repository, run, message = await _questionnaire_waiting(core_settings)
+    results = await asyncio.gather(
+        _questionnaire_action(repository, message, "choice", value="0"),
+        _questionnaire_action(repository, message, "choice", value="1"),
+        return_exceptions=True,
+    )
+    assert sum(isinstance(item, dict) for item in results) == 1
+    assert sum(isinstance(item, ValueError) for item in results) == 1
+    current = await repository.get_message(str(message["message_id"]))
+    assert current["content_json"]["questionnaire"]["revision"] == 1
+    for override in ({"user_id": "wrong"}, {"chat_id": "wrong"}):
+        with pytest.raises(PermissionError):
+            await repository.record_questionnaire_action(**{
+                "message_id": str(message["message_id"]), "project_id": "demo", "channel": "discord",
+                "chat_id": "200", "user_id": "300", "external_event_id": uuid.uuid4().hex,
+                "revision": 1, "page": 0, "action": "next", **override,
+            })
+    await repository.reset_conversation(
+        project_id="demo", channel="discord", chat_id="200", user_id="300",
+        source_message_id=str(run["trigger_message_id"]), idempotency_key="questionnaire:reset",
+    )
+    with pytest.raises(PermissionError, match="no longer current"):
+        await _questionnaire_action(repository, current, "text", value="旧卡答案")
+    assert (await repository.get_run(str(run["run_id"]))) ["status"] == "waiting_user"
+
+
+async def test_questionnaire_restart_rebuild_and_normal_reply_do_not_start_run(core_settings):
+    repository, run, message = await _questionnaire_waiting(core_settings)
+    kwargs = {
+        "message_id": str(message["message_id"]), "project_id": "demo", "channel": "discord",
+        "chat_id": "200", "user_id": "300", "external_event_id": "questionnaire:plain-reply",
+        "revision": -1, "page": -1, "action": "reply", "value": "自由回复",
+    }
+    await repository.record_questionnaire_action(**kwargs)
+    restarted = CoreRepository(core_settings)
+    assert (await restarted.record_questionnaire_action(**kwargs))["duplicate"] is True
+    current = await restarted.get_message(str(message["message_id"]))
+    view = build_discord_view(current, SimpleNamespace(handle_kernel_component=AsyncMock()))
+    assert view.is_persistent()
+    assert any(":q:1:0:" in item.custom_id for item in view.children)
+    assert current["content_json"]["questionnaire"]["answers"] == {"scope": "自由回复"}
+    assert (await restarted.get_run(str(run["run_id"]))) ["status"] == "waiting_user"
+    assert len(await restarted.list_runs("demo")) == 1
+
+
+async def test_questionnaire_answers_reach_next_pm_prompt_without_draft_events(core_settings):
+    prepare_agent(core_settings)
+    repository = CoreRepository(core_settings)
+    await repository.ingest_message(
+        project_id="demo", agent_key="project:demo:manager", channel="discord", chat_id="200",
+        user_id="300", external_event_id="questionnaire:pm", content={"text": "开始规划"},
+        external_message_id=None,
+    )
+    harness = FakeHarness([
+        (json.dumps({"outcome": "needs_input", "questions": [
+            {"question_id": "scope", "question_text": "完整的问题原文？", "required": True},
+        ]}), 10, "native-questionnaire"),
+        ("完成", 20, "native-questionnaire"),
+    ])
+    processor = RunProcessor(core_settings, repository, harness)
+    worker = str(uuid.uuid4())
+    run = await repository.claim_run("test", worker, 60)
+    waiting = await processor.process(run, worker)
+    message = await repository.get_message(waiting["question_message_id"])
+    question_prompt = harness.requests[0].prompt
+    assert "a short topic and complete question_text" in question_prompt
+    assert "recommended_option_id" in question_prompt and "recommendation_reason" in question_prompt
+    assert "free-text alternative and final additional comments" in question_prompt
+    message = (await _questionnaire_action(repository, message, "text", value="用户完整回答"))["message"]
+    message = (await _questionnaire_action(repository, message, "next"))["message"]
+    message = (await _questionnaire_action(repository, message, "additional", value="用户补充"))["message"]
+    await _questionnaire_action(repository, message, "submit")
+    worker = str(uuid.uuid4())
+    run = await repository.claim_run("test", worker, 60)
+    await processor.process(run, worker)
+    prompt = harness.requests[1].prompt
+    assert "完整的问题原文？" in prompt and "用户完整回答" in prompt and "用户补充" in prompt
+    assert "questionnaire-action.v1" not in prompt and '"event_request"' not in prompt
+    assert harness.requests[1].physical_session_id == "native-questionnaire"
 
 
 def prepare_agent(settings: KernelSettings, project_id: str = "demo") -> None:
@@ -338,6 +492,29 @@ def prepare_discord_config(
     }), encoding="utf-8")
 
 
+async def answer_fixed_proposal(repository,run,worker,question_id):
+    """Exercise the real stored-question/answer path in the isolated test DB."""
+    trigger=await repository.get_message(str(run['trigger_message_id']))
+    session=await repository.ensure_session(str(run['project_id']),str(run['agent_key']),
+                                           str(trigger['channel']),str(trigger['chat_id']))
+    waiting=await repository.finalize_agent_waiting(run_id=str(run['run_id']),worker_instance_id=worker,
+        claim_token=str(run['claim_token']),session_id=str(session['session_id']),native_session_id='proposal-fixture',
+        input_tokens=1,context_window_tokens=1000,archive_uri=None,archive_sha256=None,
+        project_id=str(run['project_id']),channel=str(trigger['channel']),chat_id=str(trigger['chat_id']),
+        user_id=str(trigger['user_id']),source_message_id=str(trigger['message_id']),
+        question={'summary':'Confirm the fixed proposal','questions':[{'question_id':question_id,
+            'question_text':'Approve this proposal?','required':True}]})
+    shown=await repository.get_message(str(waiting['message_id']))
+    assert question_id in shown['content_json']['disclosed_subject_refs']
+    await repository.ingest_message(project_id=str(run['project_id']),agent_key=str(run['agent_key']),
+        channel=str(trigger['channel']),chat_id=str(trigger['chat_id']),user_id=str(trigger['user_id']),
+        external_event_id='proposal-answer-'+uuid.uuid4().hex,external_message_id=None,
+        content={'text':'批准'},message_type='answer',reply_to_message_id=str(waiting['message_id']))
+    resumed=await repository.claim_run('test',worker,60)
+    assert resumed['run_id']==run['run_id']
+    return resumed
+
+
 class FakeHarness:
     name = "fake"
 
@@ -495,7 +672,8 @@ async def test_discord_project_channel_provisioning_is_idempotent(core_settings)
                 "id": "555", "guild_id": "100", "name": "demo",
             })
         if request.method == "GET":
-            return httpx.Response(200, json=[])
+            return httpx.Response(200, json=[{'id':'prefix-collision', 'type':0,
+                'topic':'binding test\nassistant-kernel-project:demo-validation'}])
         assert json.loads(request.content)["topic"].endswith(
             "assistant-kernel-project:demo"
         )
@@ -561,6 +739,9 @@ async def test_discord_project_interfaces_are_grouped_named_and_registered(core_
                 {"id": "556", "type": 0, "name": "demo-supervisor",
                  "parent_id": None,
                  "topic": "assistant-kernel-interface:supervisor:demo"},
+                {"id": "557", "type": 0, "name": "other-supervisor",
+                 "parent_id": "other-category",
+                 "topic": "assistant-kernel-interface:supervisor:demo-validation"},
             ])
         if request.method == "PATCH":
             body = json.loads(request.content)
@@ -647,7 +828,7 @@ async def test_project_handoff_can_move_first_pm_run_to_new_discord_channel(
 ) -> None:
     repository = CoreRepository(core_settings)
     await repository.ingest_message(
-        project_id="system", agent_key="system-butler", channel="discord",
+        project_id="kernel", agent_key="project:kernel:manager", channel="discord",
         chat_id="999", user_id="300", external_event_id="create:source",
         external_message_id="source", content={
             "text": "create demo",
@@ -734,7 +915,7 @@ async def test_discord_thread_binding_identity_dedup_and_owner_control(core_sett
 
 
 @pytest.mark.asyncio
-async def test_discord_unbound_guild_channel_defaults_to_butler(core_settings):
+async def test_discord_unbound_home_channel_has_no_default_agent(core_settings):
     prepare_discord_config(core_settings, users=[], owners=["300"])
     result = await ingest_discord_event(core_settings, {
         "event_id": "new-channel-message",
@@ -746,20 +927,22 @@ async def test_discord_unbound_guild_channel_defaults_to_butler(core_settings):
         "content": "route this through the Butler",
         "attachments": [],
     })
-    assert result["message"]["project_id"] == "system"
+    assert result["message"]["project_id"] == "kernel"
     assert result["message"]["user_id"] == "777"
-    assert result["run"]["agent_key"] == "system-butler"
+    assert result["run"] is None
 
 
 @pytest.mark.asyncio
 async def test_discord_audit_command_queues_versioned_read_only_run(core_settings):
     prepare_discord_config(core_settings, users=[], owners=["300"])
     repository = CoreRepository(core_settings)
+    prepare_bindable_project(core_settings, "demo")
     event = {
         "event_id": "audit-1", "interaction_id": "audit-1",
         "guild_id": "100", "channel_id": "999", "user_id": "300",
         "author_bot": False, "content": "/audit full", "attachments": [],
     }
+    await ingest_discord_event(core_settings, {**event, "event_id":"audit-bind", "interaction_id":"audit-bind", "content":"/bind_project demo"})
     first = await ingest_discord_event(core_settings, event)
     duplicate = await ingest_discord_event(core_settings, event)
     assert first["command"] == "/audit"
@@ -777,7 +960,7 @@ async def test_discord_audit_command_queues_versioned_read_only_run(core_setting
     assert "实际影响到的依赖关系" in prompt
     assert duplicate["duplicate"] is True
     assert duplicate["run"] is None
-    assert len(await repository.list_runs("system")) == 1
+    assert len(await repository.list_runs("demo")) == 1
 
 
 @pytest.mark.asyncio
@@ -789,7 +972,7 @@ async def test_discord_unbound_non_home_channel_requires_project_binding(core_se
         "author_bot": False, "content": "should not start an LLM Run", "attachments": [],
     })
     assert result["run"] is None
-    assert result["unbound_group"] is True
+    assert result["command"] == "/butler"
     assert "/bind_project" in result["outbound"]["content_json"]["text"]
 
 
@@ -816,16 +999,17 @@ async def test_discord_supervisor_interface_queues_consultation_without_pm_run(
         "author_bot": False, "content": "请解释当前阶段", "attachments": [],
     })
     repository = CoreRepository(core_settings)
-    assert result["run"] is None
+    assert result["run"]["agent_key"] == "project:demo:supervisor"
+    assert result["run"]["request_json"]["task_id"] is None
+    assert result["run"]["request_json"]["consultation_id"]
     assert result["message"]["project_id"] == "demo"
-    assert result["outbound"]["content_json"]["origin"] == "kernel"
-    assert "没有进行中的Task" in result["outbound"]["content_json"]["text"]
-    assert await repository.list_runs("demo") == []
+    assert all(row["agent_key"] == "project:demo:supervisor" for row in await repository.list_runs("demo"))
 
     # With an open Project task, the same channel text queues a consultation.
     execution = await repository.create_run(
-        project_id="demo", agent_key="project:demo:python", run_type="python",
-        request={"source_uri": "vault://demo/tools/x.py"},
+        project_id="demo", agent_key="project:demo:manager", run_type="chat",
+        trigger_message_id=str(result["message"]["message_id"]),
+        request={"task_protocol":"single-agent.v2"},
         idempotency_key="supervisor-routing-task",
     )
     result = await ingest_discord_event(core_settings, {
@@ -837,7 +1021,8 @@ async def test_discord_supervisor_interface_queues_consultation_without_pm_run(
     consultation = result["run"]
     assert consultation["agent_key"] == "project:demo:supervisor"
     assert consultation["run_type"] == "chat"
-    assert consultation["executor_json"]["scheduling_lane"] == "conversation"
+    assert consultation["queue_kind"] == "interactive"
+    assert consultation["mutex_key"] is None
     assert consultation["request_json"]["interaction_kind"] == "supervisor_consultation"
     assert consultation["request_json"]["task_id"] == str(execution["run_id"])
     assert consultation["request_json"]["trigger"] == "user_consultation"
@@ -846,7 +1031,7 @@ async def test_discord_supervisor_interface_queues_consultation_without_pm_run(
     assert "正在基于当前Task状态评估" in result["outbound"]["content_json"]["text"]
     runs = await repository.list_runs("demo")
     assert not any(
-        str(item["agent_key"]) == "project:demo:manager" for item in runs
+        str(item["agent_key"]) == "project:demo:manager" and item["run_id"] != execution["run_id"] for item in runs
     )
 
 
@@ -957,7 +1142,7 @@ async def test_discord_client_registers_commands_without_connecting(core_setting
             "new", "goal", "resume", "bind_project", "unbind_project",
             "pending", "status", "kernel-status", "audit", "binding",
             "supervisor", "prompt", "stage", "why",
-            "whoami", "help", "pm", "butler",
+            "whoami", "help", "pm",
         }
     finally:
         await client.close()
@@ -1611,7 +1796,7 @@ async def test_multiple_choice_cards_resurface_only_unanswered_after_new(core_se
 
 async def test_schema_contains_expected_core_tables(core_settings):
     repository = CoreRepository(core_settings)
-    assert await repository.schema_version() == "core5.v6"
+    assert await repository.schema_version() == "core5.v7"
     assert await repository.table_names() == [
         "kernel_meta", "messages", "model_invocations", "project_grants", "runs", "sessions"
     ]
@@ -1749,76 +1934,6 @@ async def test_degraded_supervision_bypasses_matching_validation_barrier(core_se
     assert resumed["request_json"]["degraded_supervision"] is True
 
 
-async def test_kernel_child_run_is_parent_only_and_resumes_parent(core_settings):
-    prepare_agent(core_settings)
-    repository = CoreRepository(core_settings)
-    ingested = await repository.ingest_message(
-        project_id="demo", agent_key="project:demo:manager", channel="discord",
-        chat_id="child-chat", user_id="user", external_event_id="child:in",
-        external_message_id="child-m", content={"text": "delegate"},
-    )
-    worker = str(uuid.uuid4())
-    task = await repository.claim_run("pm", worker, 60)
-    continued = await repository.finalize_agent_continue(
-        run_id=str(task["run_id"]), worker_instance_id=worker,
-        claim_token=str(task["claim_token"]), project_id="demo",
-        channel="discord", chat_id="child-chat", user_id="user",
-        source_message_id=str(ingested["message"]["message_id"]),
-        summary="delegate", request_patch={
-            "task_turn_count": 1, "supervisor_context_epoch": 0,
-            "state_revision": 1, "accepted_documents": {},
-        }, artifact_refs=[], wait_for_supervisor=True,
-    )
-    supervisor = await repository.create_run(
-        project_id="demo", agent_key="project:demo:supervisor", run_type="chat",
-        trigger_message_id=str(continued["reply"]["message_id"]),
-        request={"interaction_kind": "supervisor_consultation", "task_id": str(task["run_id"])},
-        idempotency_key=f"child-supervisor:{task['run_id']}",
-    )
-    supervisor_worker = str(uuid.uuid4())
-    claimed = await repository.claim_run("supervisor", supervisor_worker, 60)
-    request_ref = {
-        "schema_version": "resource-ref.v1", "kind": "document",
-        "id": "delegation:test", "uri": "vault://demo/delegation.json",
-        "document_schema": "delegation-request.v1", "revision_id": "rev-d",
-        "sha256": "b" * 64, "purpose": "delegation",
-    }
-    committed = await repository.commit_supervisor_action(
-        supervisor_run_id=str(supervisor["run_id"]),
-        worker_instance_id=supervisor_worker,
-        claim_token=str(claimed["claim_token"]), task_id=str(task["run_id"]),
-        source_context_epoch=0, source_turn_number=0,
-        action_ref={**request_ref, "id": "action:test"},
-        confirmation_class="safe", pm_instruction="delegate",
-        target_work_mode="requirements",
-        delegations=[{
-            "delegation_id": "d1", "executor": "kernel_child_run",
-            "goal": "bounded work", "required": True, "request_ref": request_ref,
-        }],
-        result={"outcome": "evaluated"}, artifact_refs=[],
-    )
-    assert committed["task"]["status"] == "waiting_children"
-    assert len(committed["children"]) == 1
-    child = committed["children"][0]
-    child_worker = str(uuid.uuid4())
-    claimed_child = await repository.claim_run("child", child_worker, 60)
-    assert str(claimed_child["run_id"]) == str(child["run_id"])
-    result_ref = {**request_ref, "id": "child-result:d1", "purpose": "child-result"}
-    finalized = await repository.finalize_child_task(
-        run_id=str(child["run_id"]), worker_instance_id=child_worker,
-        claim_token=str(claimed_child["claim_token"]),
-        result={"outcome": "completed", "summary": "done"},
-        result_ref=result_ref, artifact_refs=[],
-    )
-    assert finalized["parent"]["status"] == "queued"
-    outbound = [
-        item for item in await repository.list_messages_through(
-            "demo", "discord", "child-chat", str(continued["reply"]["message_id"]),
-            limit=50,
-        )
-        if item["direction"] == "outbound"
-    ]
-    assert all(item["run_id"] != child["run_id"] for item in outbound)
 
 
 async def test_lane_indexes_allow_cross_agent_conversation_concurrency(core_settings):
@@ -1862,7 +1977,8 @@ async def test_lane_indexes_allow_cross_agent_conversation_concurrency(core_sett
         },
         idempotency_key="lane-supervisor-consult-1",
     )
-    assert supervisor_run["executor_json"]["scheduling_lane"] == "conversation"
+    assert supervisor_run["queue_kind"] == "interactive"
+    assert supervisor_run["mutex_key"] is None
     claimed_supervisor = await repository.claim_run("w1", str(uuid.uuid4()), 30)
     assert claimed_supervisor is not None
     assert str(claimed_supervisor["run_id"]) == str(supervisor_run["run_id"])
@@ -1880,9 +1996,9 @@ async def test_lane_indexes_allow_cross_agent_conversation_concurrency(core_sett
         run_type="python", request={"source_uri": "vault://unused/y.py"},
         idempotency_key="lane-python-2",
     )
-    first_python = await repository.claim_run("w2", str(uuid.uuid4()), 30)
+    first_python = await repository.claim_run("w2", str(uuid.uuid4()), 30, queue_kind="runtime")
     assert str(first_python["run_id"]) == str(python_execution["run_id"])
-    assert await repository.claim_run("w2", str(uuid.uuid4()), 30) is None
+    assert await repository.claim_run("w2", str(uuid.uuid4()), 30, queue_kind="runtime") is not None
 
     # Same conversation stays exclusive: nothing else is claimable while the
     # supervisor conversation and the execution lane both hold active runs.
@@ -1940,7 +2056,7 @@ async def test_duplicate_message_one_run_and_delivery(core_settings):
     assert (await repository.get_message(str(outbound["message_id"])))["delivery_status"] == "sent"
 
 
-async def test_identical_queued_pm_message_keeps_only_latest_run(core_settings):
+async def test_identical_body_distinct_events_preserve_both_runs(core_settings):
     prepare_agent(core_settings)
     repository = CoreRepository(core_settings)
     first = await repository.ingest_message(
@@ -1959,8 +2075,8 @@ async def test_identical_queued_pm_message_keeps_only_latest_run(core_settings):
             "discord": {"attachments": []},
         },
     )
-    assert second["superseded_run_ids"] == [str(first["run"]["run_id"])]
-    assert (await repository.get_run(str(first["run"]["run_id"])))["status"] == "cancelled"
+    assert second["superseded_run_ids"] == []
+    assert (await repository.get_run(str(first["run"]["run_id"])))["status"] == "queued"
     assert (await repository.get_run(str(second["run"]["run_id"])))["status"] == "queued"
 
 
@@ -2063,45 +2179,6 @@ async def test_claim_prioritizes_conversation_lane_over_older_execution_run(core
     assert str(claimed["run_id"]) != str(python_execution["run_id"])
 
 
-async def test_reconciling_execution_does_not_block_pm_conversation_lane(core_settings):
-    prepare_agent(core_settings)
-    prepare_stage(core_settings, "demo", "requirements")
-    repository = CoreRepository(core_settings)
-    initial = await repository.ingest_message(
-        project_id="demo", agent_key="project:demo:manager", channel="discord",
-        chat_id="chat-1", user_id="user-1", external_event_id="lane:initial",
-        external_message_id="lane-initial", content={"text": "start requirements"},
-    )
-    manager_worker = str(uuid.uuid4())
-    manager = await repository.claim_run("manager", manager_worker, 60)
-    stage = await repository.start_task_from_claim(
-        source_run_id=str(manager["run_id"]), worker_instance_id=manager_worker,
-        claim_token=str(manager["claim_token"]), goal="design safely",
-        stages=["requirements"], change_class="major",
-    )
-    assert await repository.finish_run(
-        str(manager["run_id"]), manager_worker, str(manager["claim_token"]),
-        status="succeeded",
-    )
-    execution_worker = str(uuid.uuid4())
-    claimed_stage = await repository.claim_run("execution", execution_worker, 60)
-    assert str(claimed_stage["run_id"]) == str(stage["run_id"])
-    async with repository.database.connection() as connection:
-        await connection.execute(
-            "UPDATE assistant.runs SET status='reconciling',worker_id=NULL,"
-            "worker_instance_id=NULL,claim_token=NULL,lease_until=NULL WHERE run_id=%s",
-            (stage["run_id"],),
-        )
-        await connection.commit()
-    follow_up = await repository.ingest_message(
-        project_id="demo", agent_key="project:demo:manager", channel="discord",
-        chat_id="chat-1", user_id="user-1", external_event_id="lane:follow-up",
-        external_message_id="lane-follow-up", content={"text": "keep talking"},
-    )
-    conversation_worker = str(uuid.uuid4())
-    claimed_chat = await repository.claim_run("conversation", conversation_worker, 60)
-    assert str(claimed_chat["run_id"]) == str(follow_up["run"]["run_id"])
-    assert (await repository.active_execution_blocker("demo"))["run_id"] == stage["run_id"]
 
 
 async def test_recent_history_is_project_scoped_bounded_and_paginated(core_settings):
@@ -2149,22 +2226,22 @@ async def test_route_resolver_uses_reply_then_durable_binding_then_default(core_
     repository = CoreRepository(core_settings)
     resolver = RouteResolver(core_settings, repository)
     assert await resolver.resolve("api", "chat-1", "user-1") == (
-        "system", "system-butler"
+        "kernel", "retired:management"
     )
     source = await repository.ingest_message(
-        project_id="system", agent_key="system-butler", channel="api",
+        project_id="kernel", agent_key="project:kernel:manager", channel="api",
         chat_id="chat-1", user_id="user-1", external_event_id="route:source",
         external_message_id="route-source", content={"text": "route"},
     )
     outbound = await repository.create_outbound(
-        project_id="system", session_id=None, run_id=str(source["run"]["run_id"]),
+        project_id="kernel", session_id=None, run_id=str(source["run"]["run_id"]),
         channel="api", chat_id="chat-1", user_id="user-1", message_type="question",
         content={"text": "question"}, reply_to_message_id=str(source["message"]["message_id"]),
         idempotency_key="route-question",
     )
     assert await resolver.resolve(
         "api", "chat-1", "user-1", reply_to_message_id=str(outbound["message_id"]),
-    ) == ("system", "system-butler")
+    ) == ("kernel", "project:kernel:manager")
     await repository.set_route_binding(
         channel="api", chat_id="chat-1", user_id="user-1", project_id="demo",
         agent_key="project:demo:manager", reason="test",
@@ -3157,116 +3234,8 @@ async def test_legacy_manager_approval_does_not_require_task_v1_work_order(core_
     assert pinned["request_json"].get("task_protocol") is None
 
 
-async def test_stage_approval_creates_next_stage(core_settings):
-    prepare_agent(core_settings)
-    prepare_stage(core_settings, "demo", "requirements")
-    prepare_stage(core_settings, "demo", "implementation")
-    repository = CoreRepository(core_settings)
-    await repository.ingest_message(
-        project_id="demo", agent_key="project:demo:manager", channel="feishu",
-        chat_id="chat-1", user_id="user-1", external_event_id="task:initial",
-        external_message_id="initial", content={"text": "build"},
-    )
-    manager_worker = str(uuid.uuid4())
-    manager = await repository.claim_run("test", manager_worker, 60)
-    task = await repository.start_task_from_claim(
-        source_run_id=str(manager["run_id"]), worker_instance_id=manager_worker,
-        claim_token=str(manager["claim_token"]), goal="build safely",
-        stages=["requirements", "implementation"], change_class="major",
-        task_metadata={
-            "stage_bindings": {
-                "implementation": {"config_snapshot_uri": "vault://demo/implementation.json"},
-            }
-        },
-    )
-    assert task["stage"] == "requirements"
-    assert await repository.finish_run(
-        str(manager["run_id"]), manager_worker, str(manager["claim_token"]),
-        status="succeeded", result={"task_run_id": str(task["run_id"])},
-    )
-    stage_worker = str(uuid.uuid4())
-    stage_run = await repository.claim_run("test", stage_worker, 60)
-    response = json.dumps({
-        "outcome": "needs_approval", "summary": "requirements ready",
-        "document_markdown": "# Requirements\n\nVerified requirements.",
-        "approval_question": "Approve these requirements?", "artifacts": [],
-    })
-    waiting = await RunProcessor(
-        core_settings, repository, FakeHarness([(response, 10, "requirements-native")])
-    ).process(stage_run, stage_worker)
-    approved = await repository.ingest_message(
-        project_id="demo", agent_key="project:demo:requirements", channel="feishu",
-        chat_id="chat-1", user_id="user-1", external_event_id="task:approval",
-        external_message_id="approval", content={"decision": "approve"},
-        message_type="answer", reply_to_message_id=waiting["question_message_id"],
-    )
-    assert approved["approval_decision"] == "approve"
-    assert approved["run"]["stage"] == "implementation"
-    assert approved["run"]["status"] == "queued"
-    assert approved["run"]["executor_json"]["config_snapshot_uri"] == (
-        "vault://demo/implementation.json"
-    )
-    assert approved["run"]["request_json"]["requirements_approval"][
-        "requirements_run_id"
-    ] == str(stage_run["run_id"])
-    async with repository.database.connection() as connection:
-        receipt = await (
-            await connection.execute(
-                "SELECT content_json FROM assistant.messages "
-                "WHERE message_type='kernel_notice' AND run_id=%s",
-                (approved["run"]["run_id"],),
-            )
-        ).fetchone()
-    assert "已创建下一阶段 implementation" in receipt["content_json"]["text"]
 
 
-async def test_project_agent_plan_approval_creates_one_candidate_only_build(core_settings):
-    prepare_bindable_project(core_settings)
-    prepare_v2_stage(core_settings, "demo", "implementation")
-    prepare_v2_stage(core_settings, "demo", "review")
-    repository = CoreRepository(core_settings)
-    await repository.ingest_message(
-        project_id="demo", agent_key="project:demo:manager", channel="discord",
-        chat_id="chat-1", user_id="user-1", external_event_id="plan:initial",
-        external_message_id="initial", content={"text": "prepare one package"},
-    )
-    worker = str(uuid.uuid4())
-    plan = await repository.claim_run("test", worker, 60)
-    response = json.dumps({
-        "outcome": "needs_approval",
-        "summary": "one bounded package",
-        "document_markdown": "# Work Order\n\nCandidate-only change.",
-        "approval_question": "Approve this package?",
-        "work_order": {
-            "schema_version": "work-order.v1",
-            "package_id": "pkg-1",
-            "goal": "Update one module",
-            "target_uris": ["workspace://project/module.py"],
-            "acceptance_criteria": ["unit test passes"],
-            "non_goals": ["no deployment"],
-            "requested_skills": [],
-            "risk_class": "high",
-        },
-        "artifacts": [],
-    })
-    waiting = await RunProcessor(
-        core_settings, repository, FakeHarness([(response, 10, "plan-native")])
-    ).process(plan, worker)
-    pinned = await repository.get_run(str(plan["run_id"]))
-    assert pinned["request_json"]["task_protocol"] == "task.v1"
-    assert pinned["request_json"]["stage_index"] == -1
-    assert pinned["request_json"]["candidate_only"] is True
-    approved = await repository.ingest_message(
-        project_id="demo", agent_key="project:demo:manager", channel="discord",
-        chat_id="chat-1", user_id="user-1", external_event_id="plan:approve",
-        external_message_id="approve", content={"decision": "approve"},
-        message_type="answer", reply_to_message_id=waiting["question_message_id"],
-    )
-    build = approved["run"]
-    assert build["stage"] == "implementation"
-    assert build["request_json"]["stage_index"] == 0
-    assert build["request_json"]["candidate_only"] is True
-    assert build["request_json"]["work_order_approval"]["artifact_sha256"]
 
 
 def test_work_order_is_bounded_and_task_status_phrases_are_deterministic():
@@ -3284,101 +3253,10 @@ def test_work_order_is_bounded_and_task_status_phrases_are_deterministic():
     assert parse_slash_command("请继续完成任务") == ("/task-status", None)
 
 
-async def test_new_requirements_task_can_supersede_queued_stage(core_settings):
-    prepare_agent(core_settings)
-    prepare_stage(core_settings, "demo", "requirements")
-    repository = CoreRepository(core_settings)
-    await repository.ingest_message(
-        project_id="demo", agent_key="project:demo:manager", channel="discord",
-        chat_id="chat-1", user_id="user-1", external_event_id="supersede:initial",
-        external_message_id="initial", content={"text": "start"},
-    )
-    worker = str(uuid.uuid4())
-    manager = await repository.claim_run("test", worker, 60)
-    first = await repository.start_task_from_claim(
-        source_run_id=str(manager["run_id"]), worker_instance_id=worker,
-        claim_token=str(manager["claim_token"]), goal="old requirements",
-        stages=["requirements"], change_class="major",
-    )
-    replacement = await repository.start_task_from_claim(
-        source_run_id=str(manager["run_id"]), worker_instance_id=worker,
-        claim_token=str(manager["claim_token"]), goal="revised requirements",
-        stages=["requirements"], change_class="major",
-        supersede_run_id=str(first["run_id"]),
-        supersede_reason="user changed the approved safety boundary",
-    )
-    old = await repository.get_run(str(first["run_id"]))
-    assert old["status"] == "cancelled"
-    assert old["executor_json"]["supersession"]["replacement_run_id"] == str(
-        replacement["run_id"]
-    )
-    assert replacement["request_json"]["supersedes_run_id"] == str(first["run_id"])
 
 
-async def test_project_rejects_second_open_execution_task(core_settings):
-    prepare_agent(core_settings)
-    prepare_stage(core_settings, "demo", "implementation")
-    repository = CoreRepository(core_settings)
-    await repository.ingest_message(
-        project_id="demo", agent_key="project:demo:manager", channel="discord",
-        chat_id="chat-1", user_id="user-1", external_event_id="single:initial",
-        external_message_id="initial", content={"text": "start"},
-    )
-    worker = str(uuid.uuid4())
-    manager = await repository.claim_run("test", worker, 60)
-    first = await repository.start_task_from_claim(
-        source_run_id=str(manager["run_id"]), worker_instance_id=worker,
-        claim_token=str(manager["claim_token"]), goal="first",
-        stages=["implementation"], change_class="minor",
-    )
-    assert first["status"] == "queued"
-    with pytest.raises(RuntimeError, match="already has an open execution task"):
-        await repository.start_task_from_claim(
-            source_run_id=str(manager["run_id"]), worker_instance_id=worker,
-            claim_token=str(manager["claim_token"]), goal="duplicate",
-            stages=["implementation"], change_class="minor",
-        )
 
 
-async def test_natural_continue_returns_task_status_without_an_llm_run(core_settings):
-    prepare_agent(core_settings)
-    prepare_stage(core_settings, "demo", "implementation")
-    repository = CoreRepository(core_settings)
-    initial = await repository.ingest_message(
-        project_id="demo", agent_key="project:demo:manager", channel="feishu",
-        chat_id="chat-1", user_id="user-1", external_event_id="continue:initial",
-        external_message_id="initial", content={"text": "start"},
-    )
-    worker = str(uuid.uuid4())
-    manager = await repository.claim_run("test", worker, 60)
-    task = await repository.start_task_from_claim(
-        source_run_id=str(manager["run_id"]), worker_instance_id=worker,
-        claim_token=str(manager["claim_token"]), goal="one package",
-        stages=["implementation"], change_class="minor",
-    )
-    assert await repository.finish_run(
-        str(manager["run_id"]), worker, str(manager["claim_token"]),
-        status="succeeded",
-    )
-    result = await ingest_event(core_settings, {
-        "header": {"event_id": "continue:status"},
-        "kernel": {"project_id": "demo", "agent_key": "project:demo:manager"},
-        "event": {
-            "sender": {"sender_id": {"open_id": "user-1"}},
-            "message": {"chat_id": "chat-1", "chat_type": "p2p",
-                        "message_id": "continue-status", "content": json.dumps({
-                            "text": "请继续完成任务",
-                        })},
-        },
-    }, "app-1", allow_explicit_route=True)
-    assert result["command"] == "/task-status"
-    assert result["run"] is None
-    assert str(task["run_id"]) in result["outbound"]["content_json"]["text"]
-    async with repository.database.connection() as connection:
-        count = await (await connection.execute(
-            "SELECT count(*) AS count FROM assistant.runs WHERE project_id='demo'"
-        )).fetchone()
-    assert int(count["count"]) == 2
 
 
 async def test_single_agent_task_requeues_same_run_with_hash_chained_pack(core_settings):
@@ -3436,7 +3314,7 @@ async def test_single_agent_task_requeues_same_run_with_hash_chained_pack(core_s
     )
     assert busy["run"] is None
     assert str(busy["active_task"]["run_id"]) == str(run["run_id"])
-    assert "不会中断或创建新Task" in busy["outbound"]["content_json"]["text"]
+    assert "将在后续Turn处理" in busy["outbound"]["content_json"]["text"]
     async with repository.database.connection() as connection:
         count = await (await connection.execute(
             "SELECT count(*) AS count FROM assistant.runs WHERE project_id='demo'"
@@ -3493,7 +3371,8 @@ async def test_single_agent_turn_queues_supervisor_evaluation_run(core_settings)
     assert consultation["agent_key"] == "project:demo:supervisor"
     assert consultation["run_type"] == "chat"
     assert consultation["status"] == "queued"
-    assert consultation["executor_json"]["scheduling_lane"] == "conversation"
+    assert consultation["queue_kind"] == "interactive"
+    assert consultation["mutex_key"] is None
     request = consultation["request_json"]
     assert request["trigger"] == "after_agent_turn"
     assert request["task_id"] == str(run["run_id"])
@@ -3680,7 +3559,7 @@ async def test_single_agent_build_returns_to_requirements_with_fresh_session(cor
     resumed = await repository.claim_run("test", next_worker, 60)
     await RunProcessor(core_settings, repository, harness).process(resumed, next_worker)
     assert harness.requests[1].physical_session_id is None
-    assert "# Active mode · Requirements" in harness.requests[1].prompt
+    assert "# Active phase · requirements" in harness.requests[1].prompt
 
 
 async def test_ready_for_validation_waits_for_supervisor_before_validation(core_settings):
@@ -3856,6 +3735,11 @@ async def test_single_agent_validation_waits_for_release_then_creates_publish(
         return
     publisher_worker = str(uuid.uuid4())
     publisher = await repository.claim_run("test", publisher_worker, 60)
+    cancelled = asyncio.Event()
+    cancelled.set()
+    with pytest.raises(RuntimeError, match="cancelled before file effects"):
+        CapabilityBundleService(core_settings).publish(project_id="demo",publish_run_id=str(publisher["run_id"]),request=dict(publisher["request_json"]),cancel_event=cancelled)
+    assert not (root / "safe_module.py").exists()
     publication, artifacts = CapabilityBundleService(core_settings).publish(
         project_id="demo", publish_run_id=str(publisher["run_id"]),
         request=dict(publisher["request_json"]),
@@ -3868,12 +3752,17 @@ async def test_single_agent_validation_waits_for_release_then_creates_publish(
     assert publication["outcome"] == "published"
     assert (root / "safe_module.py").read_text(encoding="utf-8") == "SAFE = True\n"
     parent = await repository.get_run(str(run["run_id"]))
-    assert parent["status"] == "succeeded"
-    assert parent["request_json"]["task_phase"] == "published"
+    assert parent["status"] == "queued"
+    assert parent["request_json"]["task_phase"] == "working"
+    assert parent["request_json"]["publication_state"] == "published"
+    next_worker = str(uuid.uuid4())
+    resumed = await repository.claim_run("pm",next_worker,60)
+    inputs = await repository.pin_turn_inputs(str(resumed["run_id"]),next_worker,str(resumed["claim_token"]))
+    assert [m["message_id"] for m in inputs] == [busy["message"]["message_id"]]
     assert parent["result_json"]["publication_state"] == "published"
 
 
-async def test_high_risk_single_agent_uses_fresh_read_only_audit_turn(core_settings):
+async def test_high_risk_single_agent_uses_fresh_behaviorally_read_only_audit_turn(core_settings):
     prepare_bindable_project(core_settings)
     root = ProjectRuntimeManager(core_settings.data_root).ensure("demo").vault_root
     project = yaml.safe_load((root / "project.yaml").read_text(encoding="utf-8"))
@@ -3949,451 +3838,30 @@ async def test_high_risk_single_agent_uses_fresh_read_only_audit_turn(core_setti
     audit_plan = root / "runs" / str(run["run_id"]) / "resolved" / "execution-plan-audit.json"
     assert build_plan.is_file() and audit_plan.is_file()
     audit_payload = json.loads(audit_plan.read_text(encoding="utf-8"))
-    assert audit_payload["bindings"]["stage_permissions"]["direct_workspace_write"] is False
+    assert audit_payload["bindings"]["stage_permissions"]["direct_workspace_write"] is True
     assert audit_payload["bindings"]["work_mode_bundle"]["mode_id"] == "audit"
     assert audit_payload["bindings"]["permission_profile_name"] == "read-only"
     assert audit_payload["bindings"]["work_mode_bundle_sha256"]
     scope_uri = audit_payload["bindings"]["workspace_scope_snapshot_uri"]
     scope = json.loads((root / scope_uri.split("vault://demo/", 1)[1]).read_text(encoding="utf-8"))
     assert "candidate" not in {item["key"] for item in scope["roots"]}
-    assert audit_payload["runtime"]["may_write_shared"] is False
+    assert audit_payload["runtime"]["may_write_shared"] is True
+    assert audit_payload['bindings']['stage_permissions']['business_approval_required'] is True
     assert audit_payload["bindings"]["stage_permissions"]["network"] is True
-    assert audit_payload["bindings"]["stage_permissions"]["account_connect"] is True
-    assert audit_payload["bindings"]["stage_permissions"]["trade"] is True
+    assert audit_payload["bindings"]["stage_permissions"]["account_connect"] is False
+    assert audit_payload["bindings"]["stage_permissions"]["trade"] is False
 
 
-async def test_feishu_card_action_approves_current_stage(core_settings):
-    prepare_agent(core_settings)
-    prepare_stage(core_settings, "demo", "requirements")
-    prepare_stage(core_settings, "demo", "implementation")
-    repository = CoreRepository(core_settings)
-    await repository.ingest_message(
-        project_id="demo", agent_key="project:demo:manager", channel="feishu",
-        chat_id="chat-1", user_id="user-1", external_event_id="card-stage:initial",
-        external_message_id="initial", content={"text": "build"},
-    )
-    manager_worker = str(uuid.uuid4())
-    manager = await repository.claim_run("test", manager_worker, 60)
-    await repository.start_task_from_claim(
-        source_run_id=str(manager["run_id"]), worker_instance_id=manager_worker,
-        claim_token=str(manager["claim_token"]), goal="build safely",
-        stages=["requirements", "implementation"], change_class="major",
-    )
-    await repository.finish_run(
-        str(manager["run_id"]), manager_worker, str(manager["claim_token"]),
-        status="succeeded",
-    )
-    stage_worker = str(uuid.uuid4())
-    stage_run = await repository.claim_run("test", stage_worker, 60)
-    waiting = await RunProcessor(
-        core_settings, repository, FakeHarness([(
-            json.dumps({
-                "outcome": "needs_approval", "summary": "ready",
-                "document_markdown": "# Requirements", "approval_question": "Proceed?",
-                "artifacts": [],
-            }),
-            10, "requirements-native",
-        )]),
-    ).process(stage_run, stage_worker)
-    delivery_worker = str(uuid.uuid4())
-    approval = await repository.claim_delivery("sender", delivery_worker, 60, "feishu")
-    assert await repository.acknowledge_delivery(
-        str(approval["message_id"]), delivery_worker, "approval-card-external"
-    )
-    result = await ingest_event(core_settings, {
-        "header": {"event_id": "card-stage:approve"},
-        "event": {
-            "operator": {"open_id": "user-1"},
-            "action": {"value": {
-                "decision": "approve",
-                "project_id": "demo",
-                "run_id": str(stage_run["run_id"]),
-                "question_message_id": waiting["question_message_id"],
-            }},
-            "context": {
-                "open_chat_id": "chat-1",
-                "open_message_id": "approval-card-external",
-            },
-        },
-    }, "app-1")
-    assert result["approval_decision"] == "approve"
-    assert result["run"]["stage"] == "implementation"
 
 
-async def test_cutover_retires_waiting_stage_card_and_resume(core_settings):
-    prepare_agent(core_settings)
-    prepare_stage(core_settings, "demo", "requirements")
-    repository = CoreRepository(core_settings)
-    await repository.ingest_message(
-        project_id="demo", agent_key="project:demo:manager", channel="discord",
-        chat_id="chat-1", user_id="user-1", external_event_id="cutover:initial",
-        external_message_id="initial", content={"text": "legacy requirements"},
-    )
-    manager_worker = str(uuid.uuid4())
-    manager = await repository.claim_run("test", manager_worker, 60)
-    await repository.start_task_from_claim(
-        source_run_id=str(manager["run_id"]), worker_instance_id=manager_worker,
-        claim_token=str(manager["claim_token"]), goal="legacy requirements",
-        stages=["requirements", "implementation", "review"],
-    )
-    await repository.finish_run(
-        str(manager["run_id"]), manager_worker, str(manager["claim_token"]),
-        status="succeeded",
-    )
-    stage_worker = str(uuid.uuid4())
-    stage = await repository.claim_run("test", stage_worker, 60)
-    waiting = await RunProcessor(
-        core_settings, repository, FakeHarness([(
-            json.dumps({
-                "outcome": "needs_input", "summary": "clarification",
-                "questions": [{
-                    "question_id": "legacy-q", "question_text": "Old question?",
-                    "required": True,
-                }], "artifacts": [],
-            }), 10, "legacy-native",
-        )]),
-    ).process(stage, stage_worker)
-    root = ProjectRuntimeManager(core_settings.data_root).ensure("demo").vault_root
-    (root / "project.yaml").write_text(
-        yaml.safe_dump({"task_protocol": "single-agent.v2"}), encoding="utf-8"
-    )
-    answer = await repository.ingest_message(
-        project_id="demo", agent_key="project:demo:manager", channel="discord",
-        chat_id="chat-1", user_id="user-1", external_event_id="cutover:answer",
-        external_message_id="answer", content={"text": "old answer"},
-        message_type="answer", reply_to_message_id=waiting["question_message_id"],
-    )
-    assert answer["stale_reply"] is True
-    assert answer["run"] is None
-    assert (await repository.get_run(str(stage["run_id"])))["status"] == "waiting_user"
-    with pytest.raises(PermissionError, match="旧阶段"):
-        await repository.resume_waiting_run(
-            run_id=str(stage["run_id"]), project_id="demo", channel="discord",
-            chat_id="chat-1", user_id="user-1",
-            source_message_id=str(answer["message"]["message_id"]),
-            idempotency_key="cutover:resume",
-        )
-    assert await repository.request_cancel(str(stage["run_id"])) is True
-    assert (await repository.get_run(str(stage["run_id"])))["status"] == "cancelled"
-    async with repository.database.connection() as connection:
-        stages = await (await connection.execute(
-            "SELECT count(*) AS count FROM assistant.runs WHERE project_id='demo' "
-            "AND stage='implementation'"
-        )).fetchone()
-    assert int(stages["count"]) == 0
 
 
-async def test_failed_validation_creates_bounded_implementation_rework(core_settings):
-    prepare_agent(core_settings)
-    prepare_stage(core_settings, "demo", "implementation")
-    prepare_stage(core_settings, "demo", "review")
-    repository = CoreRepository(core_settings)
-    await repository.ingest_message(
-        project_id="demo", agent_key="project:demo:manager", channel="feishu",
-        chat_id="chat-1", user_id="user-1", external_event_id="minor:initial",
-        external_message_id="initial", content={"text": "small fix"},
-    )
-    manager_worker = str(uuid.uuid4())
-    manager = await repository.claim_run("test", manager_worker, 60)
-    task = await repository.start_task_from_claim(
-        source_run_id=str(manager["run_id"]), worker_instance_id=manager_worker,
-        claim_token=str(manager["claim_token"]), goal="small safe fix",
-        stages=["implementation", "review"], change_class="minor",
-    )
-    assert await repository.finish_run(
-        str(manager["run_id"]), manager_worker, str(manager["claim_token"]),
-        status="succeeded", result={"task_run_id": str(task["run_id"])},
-    )
-    stage_worker = str(uuid.uuid4())
-    implementation = await repository.claim_run("test", stage_worker, 60)
-    completed = await RunProcessor(
-        core_settings, repository, FakeHarness([(
-            json.dumps({"outcome": "completed", "summary": "implemented", "artifacts": []}),
-            10, "implementation-native",
-        )])
-    ).process(implementation, stage_worker)
-    assert completed["outcome"] == "validation_rework"
-    assert completed["next_run_id"] is not None
-    rework = await repository.get_run(completed["next_run_id"])
-    assert rework["stage"] == "implementation"
-    assert rework["request_json"]["validation_rework_count"] == 1
-    validation = next(
-        item for item in (await repository.get_run(str(implementation["run_id"])))["artifact_refs"]
-        if item.get("kind") == "validation_report"
-    )
-    assert validation["status"] == "failed"
-    rework_worker = str(uuid.uuid4())
-    claimed_rework = await repository.claim_run("test", rework_worker, 60)
-    second = await RunProcessor(
-        core_settings, repository, FakeHarness([(
-            json.dumps({"outcome": "completed", "summary": "retry", "artifacts": []}),
-            10, "implementation-native-2",
-        )]),
-    ).process(claimed_rework, rework_worker)
-    assert second["outcome"] == "validation_rework"
-    assert (await repository.get_run(second["next_run_id"]))["request_json"][
-        "validation_rework_count"
-    ] == 2
-
-    final_worker = str(uuid.uuid4())
-    final_claimed = await repository.claim_run("test", final_worker, 60)
-    blocked = await RunProcessor(
-        core_settings, repository, FakeHarness([(
-            json.dumps({"outcome": "completed", "summary": "retry", "artifacts": []}),
-            10, "implementation-native-final",
-        )]),
-    ).process(final_claimed, final_worker)
-    assert blocked["outcome"] == "blocked"
-    assert blocked["next_run_id"] is None
 
 
-async def test_review_request_changes_creates_fresh_implementation_round(core_settings):
-    prepare_agent(core_settings)
-    prepare_stage(core_settings, "demo", "implementation")
-    prepare_stage(core_settings, "demo", "review")
-    repository = CoreRepository(core_settings)
-    await repository.ingest_message(
-        project_id="demo", agent_key="project:demo:manager", channel="feishu",
-        chat_id="chat-1", user_id="user-1", external_event_id="rework:initial",
-        external_message_id="initial", content={"text": "change"},
-    )
-    manager_worker = str(uuid.uuid4())
-    manager = await repository.claim_run("test", manager_worker, 60)
-    task = await repository.start_task_from_claim(
-        source_run_id=str(manager["run_id"]), worker_instance_id=manager_worker,
-        claim_token=str(manager["claim_token"]), goal="change safely",
-        stages=["implementation", "review"], change_class="minor",
-    )
-    await repository.finish_run(
-        str(manager["run_id"]), manager_worker, str(manager["claim_token"]),
-        status="succeeded",
-    )
-    implementation_worker = str(uuid.uuid4())
-    implementation = await repository.claim_run("test", implementation_worker, 60)
-    candidate_root = (
-        ProjectRuntimeManager(core_settings.data_root).ensure("demo").vault_root /
-        "runs" / str(implementation["run_id"]) / "candidate"
-    )
-    candidate_file = candidate_root / "project" / "notes.txt"
-    candidate_file.parent.mkdir(parents=True, exist_ok=True)
-    candidate_file.write_text("candidate\n", encoding="utf-8")
-    candidate_hash = hashlib.sha256(candidate_file.read_bytes()).hexdigest()
-    (candidate_root / "manifest.json").write_text(json.dumps({
-        "schema_version": "candidate-manifest.v2",
-        "files": [{
-            "operation": "create",
-            "target_uri": "workspace://project/notes.txt",
-            "candidate_uri": "workspace://candidate/project/notes.txt",
-            "original_sha256": None,
-            "candidate_sha256": candidate_hash,
-            "size": len(candidate_file.read_bytes()),
-        }],
-    }), encoding="utf-8")
-    completed = await RunProcessor(
-        core_settings, repository, FakeHarness([(
-            json.dumps({"outcome": "completed", "summary": "candidate", "artifacts": []}),
-            10, "implementation-native",
-        )]),
-    ).process(implementation, implementation_worker)
-    review_worker = str(uuid.uuid4())
-    review = await repository.claim_run("test", review_worker, 60)
-    assert str(review["run_id"]) == completed["next_run_id"]
-    rework = await RunProcessor(
-        core_settings, repository, FakeHarness([(
-            json.dumps({
-                "outcome": "request_changes", "summary": "fix regression",
-                "target_stage": "implementation",
-                "issues": [{"issue_id": "review-1", "evidence": [],
-                            "required_fix": "preserve existing behavior"}],
-                "artifacts": [],
-            }),
-            10, "review-native",
-        )]),
-    ).process(review, review_worker)
-    next_run = await repository.get_run(rework["next_run_id"])
-    assert next_run["stage"] == "implementation"
-    assert next_run["parent_run_id"] == review["run_id"]
-    assert next_run["request_json"]["stage_round"] == 2
-    assert next_run["request_json"]["review_feedback"]["issues"][0]["issue_id"] == "review-1"
 
 
-async def test_requirements_only_review_rework_returns_to_requirements(core_settings):
-    prepare_agent(core_settings)
-    prepare_stage(core_settings, "demo", "requirements")
-    prepare_stage(core_settings, "demo", "review")
-    repository = CoreRepository(core_settings)
-    await repository.ingest_message(
-        project_id="demo", agent_key="project:demo:manager", channel="discord",
-        chat_id="chat-1", user_id="user-1", external_event_id="design:initial",
-        external_message_id="design-initial", content={"text": "design only"},
-    )
-    manager_worker = str(uuid.uuid4())
-    manager = await repository.claim_run("manager", manager_worker, 60)
-    await repository.start_task_from_claim(
-        source_run_id=str(manager["run_id"]), worker_instance_id=manager_worker,
-        claim_token=str(manager["claim_token"]), goal="produce requirements",
-        stages=["requirements", "review"], change_class="major",
-    )
-    await repository.finish_run(
-        str(manager["run_id"]), manager_worker, str(manager["claim_token"]),
-        status="succeeded",
-    )
-    requirements_worker = str(uuid.uuid4())
-    requirements = await repository.claim_run("requirements", requirements_worker, 60)
-    waiting = await RunProcessor(
-        core_settings, repository, FakeHarness([(
-            json.dumps({
-                "outcome": "needs_approval", "summary": "requirements ready",
-                "document_markdown": "# Requirements", "approval_question": "Approve?",
-                "artifacts": [],
-            }),
-            10, "requirements-native",
-        )]),
-    ).process(requirements, requirements_worker)
-    approved = await repository.ingest_message(
-        project_id="demo", agent_key="project:demo:requirements", channel="discord",
-        chat_id="chat-1", user_id="user-1", external_event_id="design:approve",
-        external_message_id="design-approve", content={"decision": "approve"},
-        message_type="answer", reply_to_message_id=waiting["question_message_id"],
-    )
-    assert approved["run"]["stage"] == "review"
-    review_worker = str(uuid.uuid4())
-    review = await repository.claim_run("review", review_worker, 60)
-    rework = await RunProcessor(
-        core_settings, repository, FakeHarness([(
-            json.dumps({
-                "outcome": "request_changes", "summary": "clarify boundary",
-                "target_stage": "requirements",
-                "issues": [{
-                    "issue_id": "requirements-1", "evidence": [],
-                    "required_fix": "clarify the execution boundary",
-                }],
-                "artifacts": [],
-            }),
-            10, "review-native",
-        )]),
-    ).process(review, review_worker)
-    next_run = await repository.get_run(rework["next_run_id"])
-    assert next_run["stage"] == "requirements"
-    assert next_run["agent_key"] == "project:demo:requirements"
-    assert next_run["request_json"]["stage_round"] == 2
 
 
-async def test_approved_skill_review_queues_deterministic_publish(core_settings):
-    prepare_agent(core_settings)
-    prepare_stage(core_settings, "demo", "implementation")
-    prepare_stage(core_settings, "demo", "review")
-    repository = CoreRepository(core_settings)
-    await repository.ingest_message(
-        project_id="demo", agent_key="project:demo:manager", channel="feishu",
-        chat_id="chat-1", user_id="user-1", external_event_id="skill:initial",
-        external_message_id="initial", content={"text": "create a skill"},
-    )
-    manager_worker = str(uuid.uuid4())
-    manager = await repository.claim_run("test", manager_worker, 60)
-    task = await repository.start_task_from_claim(
-        source_run_id=str(manager["run_id"]), worker_instance_id=manager_worker,
-        claim_token=str(manager["claim_token"]), goal="create the skill",
-        stages=["implementation", "review"], change_class="minor",
-        task_metadata={
-            "task_kind": "skill_change",
-            "capability_change": {
-                "target_skill": "new-skill", "change_mode": "create",
-                "baseline": {"bundle_hash": None},
-            },
-        },
-    )
-    await repository.finish_run(
-        str(manager["run_id"]), manager_worker, str(manager["claim_token"]),
-        status="succeeded",
-    )
-    implementation_worker = str(uuid.uuid4())
-    implementation = await repository.claim_run("test", implementation_worker, 60)
-    candidate_root = (
-        ProjectRuntimeManager(core_settings.data_root).ensure("demo").vault_root /
-        "runs" / str(implementation["run_id"]) / "candidate"
-    )
-    candidate_file = candidate_root / "project" / ".agents" / "skills" / "new-skill" / "SKILL.md"
-    candidate_file.parent.mkdir(parents=True, exist_ok=True)
-    candidate_content = """---
-name: new-skill
-description: Create one test capability.
----
-
-# New Skill
-
-## 任务目标
-
-Produce one verified test result.
-"""
-    candidate_file.write_text(candidate_content, encoding="utf-8")
-    candidate_hash = hashlib.sha256(candidate_file.read_bytes()).hexdigest()
-    (candidate_root / "manifest.json").write_text(json.dumps({
-        "schema_version": "candidate-manifest.v2",
-        "files": [{
-            "operation": "create",
-            "target_uri": "workspace://project/.agents/skills/new-skill/SKILL.md",
-            "candidate_uri": "workspace://candidate/project/.agents/skills/new-skill/SKILL.md",
-            "original_sha256": None, "candidate_sha256": candidate_hash,
-            "size": len(candidate_file.read_bytes()),
-        }],
-    }), encoding="utf-8")
-    implementation_result = await RunProcessor(
-        core_settings, repository, FakeHarness([(
-            json.dumps({"outcome": "completed", "summary": "candidate", "artifacts": []}),
-            10, "implementation-native",
-        )]),
-    ).process(implementation, implementation_worker)
-    review_worker = str(uuid.uuid4())
-    review = await repository.claim_run("test", review_worker, 60)
-    assert str(review["run_id"]) == implementation_result["next_run_id"]
-    waiting = await RunProcessor(
-        core_settings, repository, FakeHarness([(
-            json.dumps({
-                "outcome": "needs_approval", "summary": "review passed",
-                "document_markdown": "# Review\n\nVERDICT: APPROVE",
-                "approval_question": "Approve publishing this Skill?", "artifacts": [],
-            }),
-            10, "review-native",
-        )]),
-    ).process(review, review_worker)
-    approved = await repository.ingest_message(
-        project_id="demo", agent_key="project:demo:review", channel="feishu",
-        chat_id="chat-1", user_id="user-1", external_event_id="skill:approval",
-        external_message_id="approval", content={"decision": "approve"},
-        message_type="answer", reply_to_message_id=waiting["question_message_id"],
-    )
-    assert approved["run"]["run_type"] == "publish"
-    assert approved["run"]["status"] == "queued"
-    assert approved["run"]["request_json"]["candidate_manifest_uri"].endswith(
-        "/candidate/manifest.json"
-    )
-    publisher_worker = str(uuid.uuid4())
-    publish = await repository.claim_run("test", publisher_worker, 60)
-    assert str(publish["run_id"]) == str(approved["run"]["run_id"])
-    publication, publication_artifacts = CapabilityBundleService(core_settings).publish(
-        project_id="demo", publish_run_id=str(publish["run_id"]),
-        request=dict(publish["request_json"]),
-    )
-    receipt = await repository.finish_publish_run(
-        str(publish["run_id"]), publisher_worker, str(publish["claim_token"]),
-        result=publication, artifact_refs=publication_artifacts,
-    )
-    finished = await repository.get_run(str(publish["run_id"]))
-    assert finished["status"] == "succeeded"
-    assert finished["result_json"]["outcome"] == "published"
-    assert receipt["reply_message_id"]
-    implementation_done = await repository.get_run(str(implementation["run_id"]))
-    validation = next(
-        item for item in implementation_done["artifact_refs"]
-        if item.get("kind") == "validation_report"
-    )
-    assert validation["status"] == "passed"
-    active_skill = (
-        ProjectRuntimeManager(core_settings.data_root).ensure("demo").vault_root /
-        ".agents" / "skills" / "new-skill" / "SKILL.md"
-    )
-    assert active_skill.read_text(encoding="utf-8") == candidate_content
 
 
 async def test_expired_run_is_quarantined_not_replayed(core_settings):
@@ -4629,11 +4097,11 @@ async def test_reconciliation_wait_defers_next_card(core_settings):
 
 
 async def test_scoped_handoff_is_idempotent(core_settings):
-    prepare_agent(core_settings, "system")
+    prepare_agent(core_settings, "kernel")
     prepare_agent(core_settings, "target")
     repository = CoreRepository(core_settings)
     await repository.ingest_message(
-        project_id="system", agent_key="project:system:manager", channel="feishu",
+        project_id="kernel", agent_key="project:kernel:manager", channel="feishu",
         chat_id="chat-1", user_id="user-1", external_event_id="handoff:initial",
         external_message_id="initial", content={"text": "route me"},
     )
@@ -4678,163 +4146,23 @@ async def test_scoped_handoff_is_idempotent(core_settings):
     assert target_run["project_id"] == "target"
     returned = await repository.handoff_from_claim(
         source_run_id=str(target_run["run_id"]), worker_instance_id=target_worker,
-        claim_token=str(target_run["claim_token"]), target_project_id="system",
-        handoff_summary="Return to the Butler.",
+        claim_token=str(target_run["claim_token"]), target_project_id="kernel",
+        handoff_summary="Return to the source Project PM.",
     )
-    assert returned["run"]["agent_key"] == "system-butler"
+    assert returned["run"]["agent_key"] == "project:kernel:manager"
     assert await repository.resolve_route_binding("feishu", "chat-1", "user-1") == (
-        "system", "system-butler"
+        "kernel", "project:kernel:manager"
     )
 
 
-async def test_project_creation_requires_approved_scoped_run(core_settings):
-    settings = core_settings.model_copy(update={
-        "workspace_root": core_settings.data_root,
-    })
-    repository = CoreRepository(settings)
-    await repository.ingest_message(
-        project_id="system", agent_key="system-butler", channel="feishu",
-        chat_id="chat-1", user_id="user-1", external_event_id="project:initial",
-        external_message_id="initial", content={"text": "create a project"},
-    )
-    worker = str(uuid.uuid4())
-    run = await repository.claim_run("test", worker, 60)
-    service = ProjectDirectoryService(settings, repository)
-    source = settings.workspace_root / "external" / "project-source"
-    source.mkdir(parents=True)
-    (settings.data_root / "config").mkdir(parents=True, exist_ok=True)
-    (settings.data_root / "config" / "source-discovery.yaml").write_text(
-        yaml.safe_dump({
-            "schema_version": "source-discovery.v1",
-            "roots": [{
-                "discovery_id": "test-workspace",
-                "path": str(settings.workspace_root),
-                "display_path": "TEST",
-                "description": "test workspace",
-            }],
-        }, sort_keys=False),
-        encoding="utf-8",
-    )
-    proposal = service.propose(
-        str(run["run_id"]), "new-project", "A safe test Project",
-        initial_goal="Deliver the first useful result",
-        boundaries=["Only this Project Vault"], non_goals=["No external publish"],
-        workspace_roots=[{
-            "discovery_id": "test-workspace",
-            "relative_path": "external/project-source",
-            "root_key": "project-source",
-            "purpose": "Project source",
-        }],
-    )
-    with pytest.raises(PermissionError):
-        await service.create_from_approved_run(
-            run_id=str(run["run_id"]), worker_instance_id=worker,
-            claim_token=str(run["claim_token"]), proposal_uri=proposal["uri"],
-            expected_sha256=proposal["sha256"],
-        )
-    async with repository.database.connection() as connection:
-        await connection.execute(
-            "UPDATE assistant.runs SET request_json=request_json || %s WHERE run_id=%s",
-            (Jsonb({"answer": {"answers": {
-                proposal["approval_question_id"]: "批准"
-            }}}), run["run_id"]),
-        )
-        await connection.commit()
-    created = await service.create_from_approved_run(
-        run_id=str(run["run_id"]), worker_instance_id=worker,
-        claim_token=str(run["claim_token"]), proposal_uri=proposal["uri"],
-        expected_sha256=proposal["sha256"],
-    )
-    assert created["status"] == "active"
-    assert created["initial_goal"] == "Deliver the first useful result"
-    assert len(created["file_grant_ids"]) == 1
-    root = ProjectRuntimeManager(settings.data_root).ensure("new-project").vault_root
-    assert (root / "project.yaml").is_file()
-    source_map = yaml.safe_load((root / "source-map.yaml").read_text(encoding="utf-8"))
-    assert source_map["schema_version"] == "project-source-map.v1"
-    assert source_map["roots"]["project-source"]["entrypoints"] == []
-    assert source_map["roots"]["project-source"]["mode"] == "live"
-    assert yaml.safe_load((root / "project.yaml").read_text(encoding="utf-8"))[
-        "task_protocol"
-    ] == "single-agent.v2"
-    assert (root / "agents" / "pm" / "config.yaml").is_file()
-    assert (root / "project-bootstrap.json").is_file()
-    assert {
-        item.name for item in (root / "agents" / "pm" / "profiles").iterdir()
-    } == {
-        "requirements.yaml", "build.yaml", "audit.yaml",
-        "operate.yaml", "repair.yaml",
-    }
-    assert json.loads(
-        (root / "runtime" / "credentials.json").read_text(encoding="utf-8")
-    )["schema_version"] == "project-credentials.v3"
-    assert {item.name for item in (root / "agents").iterdir()} == {
-        "pm", "supervisor", "operator", "child",
-    }
-    created_project = yaml.safe_load(
-        (root / "project.yaml").read_text(encoding="utf-8")
-    )
-    assert created_project["supervisor"]["model"] == "gpt-5.6-sol"
-    assert created_project["supervisor"]["models"]["intent_panel"]["model"] == (
-        "gpt-5.6-luna"
-    )
-    assert created_project["base_pack"] == {
-        "version": "assistant-base-pack.v1",
-        "semantic_map_schema": "1.0",
-    }
-    assert (root / "knowledge" / "map" / "index.yaml").is_file()
-    assert (root / "knowledge" / "map" / "overview.md").is_file()
-    for agent_id in ("pm", "supervisor", "operator", "child"):
-        assert (root / "agents" / agent_id / "MAP.md").is_file()
-    assert created_project["network"] == {"enabled": True, "unrestricted": True}
-    assert created_project["external_actions"]["approval_required"] is False
-    assert (root / ".agents" / "skills" / "assistant-requirements" / "SKILL.md").is_file()
-    expected_fields = {
-        "schema_version", "agent_id", "agent_key", "kind", "status",
-        "display_name", "aliases", "role", "scope_profile", "harness",
-        "skills", "mcp_servers", "entrypoints", "triggers", "tools",
-    }
-    manager_config = yaml.safe_load(
-        (root / "agents" / "pm" / "config.yaml").read_text(encoding="utf-8")
-    )
-    assert set(manager_config) == expected_fields
-    assert {
-        "list_recent_history", "list_source_discovery_roots", "inspect_source_path",
-    } <= set(manager_config["tools"])
-    assert "start_project_task" not in manager_config["tools"]
-    assert "handoff_to_agent" not in manager_config["tools"]
-    assert "propose_source_scope" not in manager_config["tools"]
-    assert "activate_source_scope" not in manager_config["tools"]
-    assert {item["name"] for item in manager_config["skills"]} == {
-            "assistant-task-continuity", "assistant-project-agent",
-            "assistant-subagent-orchestration",
-            "assistant-requirements", "assistant-release-audit",
-        "assistant-history-retrieval",
-    }
-    assert {"write_candidate_file", "delete_candidate_file"} <= set(
-        manager_config["tools"]
-    )
-    assert "list_project_credentials" in manager_config["tools"]
-    assert "get_project_credential" in manager_config["tools"]
-    assert "request_project_credential" in manager_config["tools"]
-    assert "delete_project_credential" in manager_config["tools"]
-    assert {item["project_id"] for item in service.list()} == {"new-project"}
-    assert service.list()[0]["proposal_sha256"] == proposal["sha256"]
-    assert service.list()[0]["routing"]["typical_requests"] == [
-        "Deliver the first useful result"
-    ]
-    assert len(service.list()[0]["routing_hash"]) == 64
-    repeated = await service.create_from_approved_run(
-        run_id=str(run["run_id"]), worker_instance_id=worker,
-        claim_token=str(run["claim_token"]), proposal_uri=proposal["uri"],
-        expected_sha256=proposal["sha256"],
-    )
-    assert repeated["idempotent"] is True
-    with pytest.raises(ValueError, match="already registered"):
-        service.propose("different-run", "new-project", "Different purpose")
-    ProjectRuntimeManager(core_settings.data_root).ensure("orphan-vault")
-    with pytest.raises(ValueError, match="already exists"):
-        service.propose("different-run", "orphan-vault", "Do not adopt")
+async def test_project_creation_is_retired_before_approval_lookup(core_settings):
+    repository = CoreRepository(core_settings)
+    service = ProjectDirectoryService(core_settings, repository)
+    with pytest.raises(PermissionError, match="retired"):
+        await service.create_from_approved_run(run_id=str(uuid.uuid4()), worker_instance_id=str(uuid.uuid4()),
+            claim_token=str(uuid.uuid4()), proposal_uri="vault://system/old-proposal.yaml", expected_sha256="a"*64)
+    assert not (core_settings.data_root/"butler").exists()
+    assert await repository.list_runs("kernel") == []
 
 
 async def test_source_scope_is_metadata_only_approval_gated_and_idempotent(
@@ -4945,31 +4273,15 @@ async def test_source_scope_is_metadata_only_approval_gated_and_idempotent(
                 "relative_path": "external/vnpy",
             }],
         )
-    with pytest.raises(PermissionError, match="does not approve"):
+    with pytest.raises(PermissionError, match="real answer|does not approve"):
         await service.activate(
             current_project_id="demo", run_id=str(run["run_id"]),
             worker_instance_id=worker, claim_token=str(run["claim_token"]),
             proposal_uri=proposal["proposal_uri"],
             expected_sha256=proposal["proposal_sha256"],
         )
-    answer_message_id = str(uuid.uuid4())
-    async with repository.database.connection() as connection:
-        await connection.execute(
-            """
-            INSERT INTO assistant.messages(
-                message_id,project_id,channel,chat_id,user_id,direction,
-                message_type,content_json
-            ) VALUES (%s,'demo','feishu','chat-1','user-1','inbound','answer',%s)
-            """,
-            (answer_message_id, Jsonb({"text": "批准扩权"})),
-        )
-        await connection.execute(
-            "UPDATE assistant.runs SET request_json=request_json || %s WHERE run_id=%s",
-            (Jsonb({"answer": {"answers": {
-                proposal["approval_question_id"]: "批准扩权"
-            }}, "answer_message_id": answer_message_id}), run["run_id"]),
-        )
-        await connection.commit()
+    run=await answer_fixed_proposal(repository,run,worker,proposal["approval_question_id"])
+    answer_message_id=run["request_json"]["answer_message_id"]
     original_source = source.with_name("vnpy-before-link-change")
     outside_source = settings.workspace_root.parent / "outside-source"
     outside_source.mkdir(exist_ok=True)
@@ -5174,89 +4486,6 @@ async def test_source_discovery_is_metadata_only_through_scoped_mcp(core_setting
     assert "SECRET_TOKEN" not in json.dumps(inspected_payload)
 
 
-async def test_explicit_scope_request_resumes_blocked_stage_with_new_run(core_settings) -> None:
-    settings = core_settings.model_copy(update={"workspace_root": core_settings.data_root})
-    prepare_bindable_project(settings, "demo")
-    source = settings.data_root / "external" / "data-tools"
-    source.mkdir(parents=True)
-    (source / "fetch.py").write_text("print('offline')\n", encoding="utf-8")
-    catalog = settings.data_root / "config" / "source-discovery.yaml"
-    catalog.write_text(yaml.safe_dump({
-        "schema_version": "source-discovery.v1",
-        "roots": [{
-            "discovery_id": "test-workspace", "path": str(settings.data_root),
-            "display_path": "TEST", "description": "test root",
-        }],
-    }, sort_keys=False), encoding="utf-8")
-    settings.service_credentials_path.parent.mkdir(parents=True, exist_ok=True)
-    settings.service_credentials_path.write_text(json.dumps({
-        "services": {"feishu": {"owner_open_ids": ["owner"]}}
-    }), encoding="utf-8")
-    repository = CoreRepository(settings)
-    await repository.ingest_message(
-        project_id="demo", agent_key="project:demo:manager", channel="feishu",
-        chat_id="chat-1", user_id="owner", external_event_id="resume:pm",
-        external_message_id="resume-pm", content={"text": "authorize TEST/external/data-tools"},
-    )
-    pm_worker = str(uuid.uuid4())
-    pm_run = await repository.claim_run("test", pm_worker, 60)
-    stage = await repository.start_task_from_claim(
-        source_run_id=str(pm_run["run_id"]), worker_instance_id=pm_worker,
-        claim_token=str(pm_run["claim_token"]), goal="inspect data tools",
-        stages=["requirements"], change_class="major",
-    )
-    stage_worker = str(uuid.uuid4())
-    assert await repository.claim_run("test", stage_worker, 60) is None
-    assert await repository.finish_run(
-        str(pm_run["run_id"]), pm_worker, str(pm_run["claim_token"]),
-        status="succeeded", result={"handoff": str(stage["run_id"])},
-    )
-    claimed_stage = await repository.claim_run("test", stage_worker, 60)
-    assert str(claimed_stage["run_id"]) == str(stage["run_id"])
-    await repository.finalize_agent_blocked(
-        run_id=str(stage["run_id"]), worker_instance_id=stage_worker,
-        claim_token=str(claimed_stage["claim_token"]),
-        summary="needs read scope", artifact_refs=[],
-        permission_request={
-            "schema_version": "permission-request.v1", "action": "read",
-            "reason": "inspect data tools", "resources": [{"rough_path": "external"}],
-        },
-    )
-    await repository.ingest_message(
-        project_id="demo", agent_key="project:demo:manager", channel="feishu",
-        chat_id="chat-1", user_id="owner", external_event_id="resume:authorize",
-        external_message_id="resume-authorize",
-        content={"text": "authorize external/data-tools as read-only source"},
-    )
-    authorization_worker = str(uuid.uuid4())
-    authorization_run = await repository.claim_run("test", authorization_worker, 60)
-    service = SourceScopeService(settings, repository)
-    proposal = service.propose(
-        current_project_id="demo", run_id=str(authorization_run["run_id"]),
-        target_project_id="demo", reason="inspect data tools",
-        resume_blocked_run_id=str(stage["run_id"]),
-        bindings=[{
-            "root_key": "data-tools", "discovery_id": "test-workspace",
-            "relative_path": "external/data-tools", "includes": ["*.py"],
-            "write_mode": "gated",
-        }],
-    )
-    activated = await service.activate(
-        current_project_id="demo", run_id=str(authorization_run["run_id"]),
-        worker_instance_id=authorization_worker,
-        claim_token=str(authorization_run["claim_token"]),
-        proposal_uri=proposal["proposal_uri"],
-        expected_sha256=proposal["proposal_sha256"],
-    )
-    resumed_id = activated["resumed_stage_run_id"]
-    assert resumed_id
-    blocked = await repository.get_run(str(stage["run_id"]))
-    resumed = await repository.get_run(resumed_id)
-    assert blocked["status"] == "cancelled"
-    assert blocked["result_json"]["superseded_by_run_id"] == resumed_id
-    assert str(resumed["parent_run_id"]) == str(stage["run_id"])
-    assert resumed["status"] == "queued"
-    assert resumed["request_json"]["permission_resume"]["permission_receipt_uri"]
 
 
 def test_workspace_scope_snapshot_is_immutable_and_rejects_retargeting(core_settings) -> None:
@@ -5310,167 +4539,27 @@ def test_recursive_glob_matches_direct_and_nested_files() -> None:
     assert SourceScopeService._matches("strategies/nested/child.py", patterns)
 
 
-async def test_real_question_answer_shape_can_create_and_handoff_project(core_settings):
-    root = ProjectRuntimeManager(core_settings.data_root).ensure("system").vault_root
-    (root / "agent-config.yaml").write_text(
-        "agent_key: system-butler\nreasoning_effort: medium\ntimeout_seconds: 60\n"
-        "sandbox: read-only\nskills: []\ntools: []\n",
-        encoding="utf-8",
-    )
-    (root / "role.md").write_text("Butler", encoding="utf-8")
+async def test_old_creation_answer_cannot_start_project(core_settings):
     repository = CoreRepository(core_settings)
-    await repository.ingest_message(
-        project_id="system", agent_key="system-butler", channel="feishu",
-        chat_id="chat-1", user_id="user-1", external_event_id="project:e2e",
-        external_message_id="initial", content={"text": "create a project"},
-    )
-    worker = str(uuid.uuid4())
-    run = await repository.claim_run("test", worker, 60)
     service = ProjectDirectoryService(core_settings, repository)
-    proposal = service.propose(
-        str(run["run_id"]), "first-business", "First business Project",
-        initial_goal="Start the first task", boundaries=["Private Vault"],
-    )
-    waiting = await RunProcessor(
-        core_settings, repository, FakeHarness([(
-            json.dumps({
-                "outcome": "needs_input", "summary": "proposal ready",
-                "questions": [{
-                    "question_id": proposal["approval_question_id"],
-                    "question_text": "Approve this exact Project proposal?",
-                    "required": True,
-                }],
-            }),
-            10, "butler-native",
-        )]),
-    ).process(run, worker)
-    system_plan = json.loads((root / "runs" / str(run["run_id"]) /
-                              "resolved" / "execution-plan.json").read_text(encoding="utf-8"))
-    assert system_plan["bindings"]["stage_permissions"]["network"] is True
-    assert system_plan["bindings"]["native_permission_profile"]
-    answered = await repository.ingest_message(
-        project_id="system", agent_key="system-butler", channel="feishu",
-        chat_id="chat-1", user_id="user-1", external_event_id="project:e2e:approve",
-        external_message_id="approval", content={"text": "批准"},
-        message_type="answer", reply_to_message_id=waiting["question_message_id"],
-    )
-    assert answered["resumed"] is True
-    resumed_worker = str(uuid.uuid4())
-    resumed = await repository.claim_run("test", resumed_worker, 60)
-    assert resumed["request_json"]["answer"] == {
-        "answers": {proposal["approval_question_id"]: "批准"}
-    }
-    created = await service.create_and_handoff_from_approved_run(
-        run_id=str(resumed["run_id"]), worker_instance_id=resumed_worker,
-        claim_token=str(resumed["claim_token"]), proposal_uri=proposal["uri"],
-        expected_sha256=proposal["sha256"], handoff_summary="Start the first task",
-    )
-    assert created["pm_run_id"]
-    assert created["pm_run_status"] == "queued"
-    pm_run = await repository.get_run(created["pm_run_id"])
-    assert pm_run["agent_key"] == "project:first-business:manager"
-    repeated = await service.create_and_handoff_from_approved_run(
-        run_id=str(resumed["run_id"]), worker_instance_id=resumed_worker,
-        claim_token=str(resumed["claim_token"]), proposal_uri=proposal["uri"],
-        expected_sha256=proposal["sha256"], handoff_summary="Start the first task",
-    )
-    assert repeated["idempotent"] is True
-    assert repeated["pm_run_id"] == created["pm_run_id"]
+    with pytest.raises(PermissionError, match="retired"):
+        await service.create_and_handoff_from_approved_run(run_id=str(uuid.uuid4()), worker_instance_id=str(uuid.uuid4()),
+            claim_token=str(uuid.uuid4()), proposal_uri="vault://system/old-proposal.yaml", expected_sha256="a"*64)
+    assert not (core_settings.data_root/"butler").exists()
+    assert await repository.list_runs("kernel") == []
 
 
 @pytest.mark.asyncio
-async def test_approved_discord_project_creation_provisions_and_moves_pm_run(
+async def test_retired_discord_creation_cannot_provision(
     core_settings, monkeypatch,
 ) -> None:
-    prepare_discord_config(core_settings, users=[], owners=["300"], auto_provision=True)
     repository = CoreRepository(core_settings)
-    await repository.ingest_message(
-        project_id="system", agent_key="system-butler", channel="discord",
-        chat_id="999", user_id="300", external_event_id="project:discord",
-        external_message_id="initial", content={
-            "text": "create a Discord-first project",
-            "discord": {"guild_id": "100", "channel_id": "999"},
-        },
-    )
-    worker = str(uuid.uuid4())
-    run = await repository.claim_run("test", worker, 60)
     service = ProjectDirectoryService(core_settings, repository)
-    proposal = service.propose(
-        str(run["run_id"]), "discord-first", "Discord-first Project",
-        initial_goal="Start in the generated channel",
-    )
-    async with repository.database.connection() as connection:
-        await connection.execute(
-            "UPDATE assistant.runs SET request_json=request_json || %s WHERE run_id=%s",
-            (Jsonb({"answer": {"answers": {
-                proposal["approval_question_id"]: "批准"
-            }}}), run["run_id"]),
-        )
-        await connection.commit()
-
-    async def fake_provision(provisioner, **kwargs):
-        await provisioner.repository.bind_chat_project(
-            channel="discord", chat_id="555", project_id=kwargs["project_id"],
-            agent_key=f"project:{kwargs['project_id']}:manager",
-            bound_by_user_id=kwargs["bound_by_user_id"],
-            source_message_id=kwargs["source_message_id"],
-            project_routing_hash=kwargs["project_routing_hash"],
-            idempotency_key="test:discord-first:555",
-        )
-        return {
-            "project_id": kwargs["project_id"], "guild_id": kwargs["guild_id"],
-            "channel_id": "555", "created": True,
-            "binding_changed": True, "recovered": False,
-        }
-
-    async def fake_interfaces(provisioner, **kwargs):
-        return {
-            "project_id": kwargs["project_id"], "guild_id": kwargs["guild_id"],
-            "category_id": "500", "category_created": True,
-            "pm_channel_id": "555", "supervisor_channel_id": "556",
-            "supervisor_created": True,
-        }
-
-    monkeypatch.setattr(DiscordProjectProvisioner, "provision", fake_provision)
-    monkeypatch.setattr(
-        DiscordProjectProvisioner, "provision_supervisor_interface", fake_interfaces
-    )
-    created = await service.create_and_handoff_from_approved_run(
-        run_id=str(run["run_id"]), worker_instance_id=worker,
-        claim_token=str(run["claim_token"]), proposal_uri=proposal["uri"],
-        expected_sha256=proposal["sha256"],
-    )
-    assert created["discord_provisioning"]["channel_id"] == "555"
-    assert created["discord_provisioning"]["interfaces"]["supervisor_channel_id"] == "556"
-    pm_run = await repository.get_run(created["pm_run_id"])
-    trigger = await repository.get_message(str(pm_run["trigger_message_id"]))
-    assert trigger["channel"] == "discord"
-    assert trigger["chat_id"] == "555"
-    assert (await repository.resolve_project_chat_binding(
-        "discord", "discord-first"
-    ))["chat_id"] == "555"
-    async with repository.database.connection() as connection:
-        handoff_row = await (
-            await connection.execute(
-                """
-                SELECT created_at FROM assistant.messages
-                WHERE direction='inbound' AND message_type='handoff'
-                  AND project_id='discord-first'
-                ORDER BY created_at DESC LIMIT 1
-                """
-            )
-        ).fetchone()
-        receipt_rows = list(await (
-            await connection.execute(
-                """
-                SELECT created_at FROM assistant.messages
-                WHERE idempotency_key LIKE 'discord-project-%:discord-first:555'
-                ORDER BY created_at
-                """
-            )
-        ).fetchall())
-    assert len(receipt_rows) == 2
-    assert all(item["created_at"] >= handoff_row["created_at"] for item in receipt_rows)
+    with pytest.raises(PermissionError, match="retired"):
+        await service.create_and_handoff_from_approved_run(run_id=str(uuid.uuid4()), worker_instance_id=str(uuid.uuid4()),
+            claim_token=str(uuid.uuid4()), proposal_uri="vault://system/old-proposal.yaml", expected_sha256="a"*64)
+    assert not (core_settings.data_root/"butler").exists()
+    assert await repository.list_runs("kernel") == []
 
 
 @pytest.mark.asyncio
@@ -5481,7 +4570,7 @@ async def test_existing_project_handoff_ensures_discord_channel_and_is_idempoten
     prepare_bindable_project(core_settings, "target")
     repository = CoreRepository(core_settings)
     await repository.ingest_message(
-        project_id="system", agent_key="system-butler", channel="discord",
+        project_id="kernel", agent_key="project:kernel:manager", channel="discord",
         chat_id="999", user_id="300", external_event_id="existing:source",
         external_message_id="source", content={
             "text": "continue target",
@@ -5542,63 +4631,6 @@ async def test_existing_project_handoff_ensures_discord_channel_and_is_idempoten
     assert len(await repository.list_runs("target")) == 1
 
 
-async def test_major_stage_blocked_is_persisted_and_can_be_unblocked(core_settings):
-    prepare_agent(core_settings)
-    prepare_stage(core_settings, "demo", "requirements")
-    repository = CoreRepository(core_settings)
-    await repository.ingest_message(
-        project_id="demo", agent_key="project:demo:manager", channel="feishu",
-        chat_id="chat-1", user_id="user-1", external_event_id="blocked:initial",
-        external_message_id="initial", content={"text": "analyze"},
-    )
-    manager_worker = str(uuid.uuid4())
-    manager = await repository.claim_run("test", manager_worker, 60)
-    task = await repository.start_task_from_claim(
-        source_run_id=str(manager["run_id"]), worker_instance_id=manager_worker,
-        claim_token=str(manager["claim_token"]), goal="blocked analysis",
-        stages=["requirements"], change_class="major",
-    )
-    await repository.finish_run(
-        str(manager["run_id"]), manager_worker, str(manager["claim_token"]),
-        status="succeeded",
-    )
-    stage_worker = str(uuid.uuid4())
-    stage_run = await repository.claim_run("test", stage_worker, 60)
-    result = await RunProcessor(
-        core_settings, repository, FakeHarness([(
-            json.dumps({
-                "outcome": "blocked", "summary": "missing external dependency",
-                "permission_request": {
-                    "schema_version": "permission-request.v1", "action": "read",
-                    "reason": "inspect dependency",
-                    "resources": [{"rough_path": "external/dependency"}],
-                },
-            }),
-            10, "requirements-native",
-        )]),
-    ).process(stage_run, stage_worker)
-    assert result["outcome"] == "blocked"
-    assert result["permission_pm_run_id"]
-    permission_pm = await repository.get_run(result["permission_pm_run_id"])
-    assert permission_pm["agent_key"] == "project:demo:manager"
-    assert str(permission_pm["parent_run_id"]) == str(task["run_id"])
-    blocked = await repository.get_run(str(task["run_id"]))
-    assert blocked["status"] == "blocked"
-    assert blocked["result_json"]["outcome"] == "blocked"
-    assert blocked["result_json"]["permission_request"]["action"] == "read"
-    assert blocked["executor_json"]["stage_permissions"] == {
-        "project_workspace_grant": "project_only",
-        "workspace_file_access": "read_execute",
-        "formal_write": False,
-        "direct_workspace_write": False,
-        "run_work_write": True,
-        "network": True,
-            "account_connect": True,
-            "trade": True,
-    }
-    assert await repository.unblock_run(
-        str(task["run_id"]), "dependency is now available"
-    ) == "queued"
 
 
 async def test_recovered_chat_completion_follows_prior_blocked_reply(core_settings):
@@ -5635,50 +4667,9 @@ async def test_recovered_chat_completion_follows_prior_blocked_reply(core_settin
     assert recovered_reply["content_json"]["text"] == "recovered result"
 
 
-async def test_legacy_network_request_does_not_create_an_authorization_run(core_settings):
-    prepare_agent(core_settings)
-    prepare_stage(core_settings, "demo", "requirements")
-    repository = CoreRepository(core_settings)
-    await repository.ingest_message(
-        project_id="demo", agent_key="project:demo:manager", channel="feishu",
-        chat_id="chat-1", user_id="user-1", external_event_id="network:request",
-        external_message_id="network-request", content={"text": "inspect remote data"},
-    )
-    manager_worker = str(uuid.uuid4())
-    manager = await repository.claim_run("test", manager_worker, 60)
-    task = await repository.start_task_from_claim(
-        source_run_id=str(manager["run_id"]), worker_instance_id=manager_worker,
-        claim_token=str(manager["claim_token"]), goal="inspect remote data",
-        stages=["requirements"], change_class="major",
-    )
-    await repository.finish_run(
-        str(manager["run_id"]), manager_worker, str(manager["claim_token"]),
-        status="succeeded",
-    )
-    stage_worker = str(uuid.uuid4())
-    stage_run = await repository.claim_run("test", stage_worker, 60)
-    result = await RunProcessor(
-        core_settings, repository, FakeHarness([(
-            json.dumps({
-                "outcome": "blocked", "summary": "need market data",
-                "permission_request": {
-                    "schema_version": "permission-request.v1", "action": "network",
-                    "reason": "historical bars", "resources": [
-                        {"rough_path": "https://data.alpaca.markets/v2/stocks/bars"}
-                    ],
-                },
-            }),
-            10, "requirements-network",
-        )]),
-    ).process(stage_run, stage_worker)
-    assert result["outcome"] == "blocked"
-    assert result["permission_pm_run_id"] is None
-    blocked = await repository.get_run(str(task["run_id"]))
-    assert blocked["result_json"]["permission_request"] is None
-    assert "不使用独立动作授权" in blocked["result_json"]["summary"]
 
 
-async def test_rotation_creates_parent_linked_session(core_settings):
+async def test_high_context_usage_keeps_native_session(core_settings):
     prepare_agent(core_settings)
     settings = core_settings.model_copy(
         update={"context_soft_ratio": 0.5, "context_hard_ratio": 0.75, "default_context_window_tokens": 100}
@@ -5721,16 +4712,13 @@ async def test_rotation_creates_parent_linked_session(core_settings):
     current = await repository.current_session(
         "demo", "project:demo:manager", "feishu", "chat-1"
     )
-    assert current["native_session_id"] == "native-2"
-    assert str(current["parent_session_id"]) == first_session_id
-    parent = await repository.get_session(str(current["parent_session_id"]))
-    assert parent["status"] == "sealed"
-    assert parent["handoff_checkpoint_json"]["schema_version"] == "session-handoff.v3"
-    assert parent["handoff_checkpoint_json"]["lineage"]["from_session_id"] == first_session_id
-    assert harness.requests[1].physical_session_id is None
+    assert str(current["session_id"]) == first_session_id
+    assert current["parent_session_id"] is None
+    assert current["handoff_checkpoint_json"] == {}
+    assert harness.requests[1].physical_session_id == "native-1"
 
 
-async def test_waiting_turn_records_usage_and_answer_starts_fresh_session(core_settings):
+async def test_waiting_turn_records_usage_and_answer_resumes_same_session(core_settings):
     prepare_agent(core_settings)
     settings = core_settings.model_copy(
         update={"context_soft_ratio": 0.5, "context_hard_ratio": 0.75,
@@ -5771,9 +4759,9 @@ async def test_waiting_turn_records_usage_and_answer_starts_fresh_session(core_s
     current = await repository.current_session(
         "demo", "project:demo:manager", "feishu", "chat-1"
     )
-    assert current["parent_session_id"] == old_session["session_id"]
-    assert current["handoff_checkpoint_json"]["schema_version"] == "session-handoff.v3"
-    assert harness.requests[1].physical_session_id is None
+    assert current["session_id"] == old_session["session_id"]
+    assert current["handoff_checkpoint_json"] == {}
+    assert harness.requests[1].physical_session_id == "native-1"
 
 
 async def test_session_preflight_rotates_stale_active_ratio(core_settings):
@@ -5855,7 +4843,7 @@ async def test_usage_is_persisted_before_agent_failure(core_settings):
     assert session["usage_known"] is True
 
 
-async def test_unknown_usage_rotates_on_next_launch(core_settings):
+async def test_unknown_usage_resumes_native_session(core_settings):
     prepare_agent(core_settings)
     settings = core_settings.model_copy(update={"default_context_window_tokens": 100})
     repository = CoreRepository(settings)
@@ -5880,11 +4868,12 @@ async def test_unknown_usage_rotates_on_next_launch(core_settings):
         if index == 1:
             first_session_id = str(current["session_id"])
             assert current["usage_known"] is False
-    assert str(current["parent_session_id"]) == first_session_id
-    assert harness.requests[1].physical_session_id is None
+    assert str(current["session_id"]) == first_session_id
+    assert current["parent_session_id"] is None
+    assert harness.requests[1].physical_session_id == "native-unknown"
 
 
-async def test_second_rotation_carries_previous_checkpoint(core_settings):
+async def test_repeated_high_occupancy_never_builds_cumulative_handoff(core_settings):
     prepare_agent(core_settings)
     settings = core_settings.model_copy(update={
         "context_soft_ratio": 0.5, "context_hard_ratio": 0.75,
@@ -5911,21 +4900,13 @@ async def test_second_rotation_carries_previous_checkpoint(core_settings):
     current = await repository.current_session(
         "demo", "project:demo:manager", "feishu", "chat-1"
     )
-    parent = await repository.get_session(str(current["parent_session_id"]))
-    checkpoint = parent["handoff_checkpoint_json"]
-    carried = {
-        str(item.get("run_id")) for item in checkpoint["cumulative_state"]["completed"]
-    }
-    assert set(run_ids[:2]) <= carried
-    assert checkpoint["based_on_checkpoint_sha256"]
-    source = checkpoint["coverage"]["source_bundle"]
-    relative = source["uri"].split("/", 3)[-1]
-    source_file = ProjectRuntimeManager(settings.data_root).resolve_vault_file("demo", relative)
-    assert source_file.is_file()
-    assert source["sha256"] == hashlib.sha256(source_file.read_bytes()).hexdigest()
+    assert current["parent_session_id"] is None
+    assert current["handoff_checkpoint_json"] == {}
+    assert [r.physical_session_id for r in harness.requests] == [None,"native-1","native-2"]
+    assert not (settings.data_root/'vaults/demo/handoffs').exists()
 
 
-async def test_rotation_uses_valid_model_summary(core_settings, monkeypatch):
+async def test_context_usage_never_calls_an_extra_summary_model(core_settings, monkeypatch):
     prepare_agent(core_settings)
     core_settings.provider_secrets_path.write_text(json.dumps({
         "default_provider": "test",
@@ -5955,7 +4936,7 @@ async def test_rotation_uses_valid_model_summary(core_settings, monkeypatch):
         )
 
     monkeypatch.setattr(
-        "assistant_kernel.services.run_processor.CatalogChatProvider.chat", fake_chat
+        "assistant_kernel.model_providers.CatalogChatProvider.chat", fake_chat
     )
     settings = core_settings.model_copy(update={
         "context_soft_ratio": 0.5, "context_hard_ratio": 0.75,
@@ -5976,11 +4957,9 @@ async def test_rotation_uses_valid_model_summary(core_settings, monkeypatch):
     current = await repository.current_session(
         "demo", "project:demo:manager", "feishu", "chat-1"
     )
-    checkpoint = current["handoff_checkpoint_json"]
-    assert checkpoint["quality"]["summary_mode"] == "model"
-    assert checkpoint["quality"]["request_id"] == "summary-request"
-    assert checkpoint["cumulative_state"]["confirmed_facts"] == ["fact-one"]
-    assert "assistant-session-rotation-handoff" in captured["system_prompt"]
+    assert current["handoff_checkpoint_json"] == {}
+    assert captured == {}
+    assert harness.requests[1].physical_session_id == "native-1"
 
 
 async def test_role_change_rotates_native_session_with_handoff(core_settings):
@@ -6021,10 +5000,10 @@ async def test_role_change_rotates_native_session_with_handoff(core_settings):
 
     assert current["session_id"] != first_session["session_id"]
     assert current["parent_session_id"] == first_session["session_id"]
-    assert current["handoff_checkpoint_json"]["reason"] == "config_changed"
+    assert current["handoff_checkpoint_json"]["reason"] == "configuration_incompatible"
 
 
-async def test_unknown_legacy_session_compatibility_rotates_before_resume(core_settings):
+async def test_missing_legacy_compatibility_hash_keeps_native_continuation(core_settings):
     prepare_agent(core_settings)
     settings = core_settings.model_copy(update={
         "context_soft_ratio": 0.9,
@@ -6032,7 +5011,7 @@ async def test_unknown_legacy_session_compatibility_rotates_before_resume(core_s
         "default_context_window_tokens": 100,
     })
     repository = CoreRepository(settings)
-    harness = FakeHarness([("first", 10, "native-1"), ("second", 10, "native-2")])
+    harness = FakeHarness([("first", 10, "native-1"), ("second", 10, "native-1")])
     processor = RunProcessor(settings, repository, harness)
     await repository.ingest_message(
         project_id="demo", agent_key="project:demo:manager", channel="feishu",
@@ -6065,10 +5044,10 @@ async def test_unknown_legacy_session_compatibility_rotates_before_resume(core_s
         "demo", "project:demo:manager", "feishu", "chat-1"
     )
 
-    assert current["session_id"] != first_session["session_id"]
-    assert current["parent_session_id"] == first_session["session_id"]
-    assert current["handoff_checkpoint_json"]["reason"] == "config_compatibility_unknown"
-    assert harness.requests[1].physical_session_id is None
+    assert current["session_id"] == first_session["session_id"]
+    assert current["parent_session_id"] is None
+    assert current["handoff_checkpoint_json"] == {}
+    assert harness.requests[1].physical_session_id == 'native-1'
 
 
 async def test_expired_delivery_lease_is_reclaimed(core_settings):
@@ -6216,6 +5195,7 @@ async def test_feishu_slash_switches_to_dynamic_project_agent_without_llm_run(co
         "slash-demo", "project:slash-demo:manager"
     )
 
+    binding_before_retired_command = await repository.resolve_route_binding("feishu", "chat-1", "user-1")
     returned = await ingest_event(core_settings, {
         "header": {"event_id": "slash:butler"},
         "event": {
@@ -6227,13 +5207,8 @@ async def test_feishu_slash_switches_to_dynamic_project_agent_without_llm_run(co
         },
     }, "app-1")
     assert returned["run"] is None
-    assert returned["outbound"]["content_json"]["text"] == (
-        "Hi，我是你的个人超级助理大管家。\n"
-        "现在已回到大管家总入口，有什么需要？"
-    )
-    assert await repository.resolve_route_binding("feishu", "chat-1", "user-1") == (
-        "system", "system-butler"
-    )
+    assert "退役" in returned["outbound"]["content_json"]["text"]
+    assert await repository.resolve_route_binding("feishu", "chat-1", "user-1") == binding_before_retired_command
 
 
 async def test_platform_binding_is_one_project_to_one_chat(
@@ -6386,7 +5361,7 @@ async def test_feishu_group_binding_is_available_to_all_users_and_routes_without
         },
     }, "app-1")
     assert unbound_group["run"] is None
-    assert unbound_group["unbound_group"] is True
+    assert unbound_group["run"] is None
 
 
 def test_feishu_websocket_event_is_normalized() -> None:

@@ -9,9 +9,10 @@ import uvicorn
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from assistant_kernel import __version__
+from assistant_kernel import __version__, __schema_version__
 from assistant_kernel.api.v2 import build_v2_router
 from assistant_kernel.api.volcengine import build_volcengine_router
+from assistant_kernel.api.operations import operations_router
 from assistant_kernel.config import KernelSettings
 from assistant_kernel.model_providers import CatalogChatProvider, QwenProvider
 from assistant_kernel.repositories import CoreRepository
@@ -46,6 +47,7 @@ class PythonExecutionRequest(BaseModel):
     args: list[str] = Field(default_factory=list, max_length=100)
     timeout_seconds: int = Field(default=300, ge=1, le=3600)
     parent_run_id: str | None = None
+    shared_write: bool = False
 
 
 class ChatRequest(BaseModel):
@@ -61,6 +63,9 @@ settings = KernelSettings.from_environment()
 repository = CoreRepository(settings)
 runtime_manager = ProjectRuntimeManager(settings.data_root)
 app = FastAPI(title="Assistant Kernel", version=__version__)
+from assistant_kernel.api.business_runtime import build_runtime_router,build_service_runtime_router
+app.include_router(build_runtime_router(settings,repository))
+app.include_router(build_service_runtime_router(settings,repository))
 
 
 def require_kernel_token(authorization: str | None = Header(default=None)) -> None:
@@ -74,6 +79,9 @@ def require_kernel_token(authorization: str | None = Header(default=None)) -> No
 
 app.include_router(build_v2_router(settings, repository, require_kernel_token))
 app.include_router(build_volcengine_router(settings, require_kernel_token))
+app.include_router(operations_router(settings, repository, require_kernel_token))
+from assistant_kernel.api.schedules import schedules_router
+app.include_router(schedules_router(settings,repository,require_kernel_token))
 
 
 @app.post("/channels/feishu/callback")
@@ -98,7 +106,8 @@ async def feishu_callback(payload: dict):
 
 
 def qwen_provider() -> QwenProvider:
-    config = settings.load_provider_secrets().providers.get("dashscope")
+    from assistant_kernel.services.config_consumers import effective_providers
+    config = effective_providers(settings).providers.get("dashscope")
     if config is None:
         raise HTTPException(status_code=503, detail="dashscope provider is not configured")
     return QwenProvider(config)
@@ -106,7 +115,8 @@ def qwen_provider() -> QwenProvider:
 
 def catalog_provider(provider: str) -> CatalogChatProvider:
     normalized = {"qwen": "dashscope", "doubao": "volcengine"}.get(provider, provider)
-    config = settings.load_provider_secrets().providers.get(normalized)
+    from assistant_kernel.services.config_consumers import effective_providers
+    config = effective_providers(settings).providers.get(normalized)
     if config is None:
         raise HTTPException(status_code=404, detail="provider is not configured")
     return CatalogChatProvider(normalized, config)
@@ -143,9 +153,32 @@ async def health_ready() -> dict:
             discord_delivery = await repository.delivery_health("discord")
         except Exception:
             database_ready = False
-    schema_ready = schema_version == "core5.v6" and tables == [
-        "kernel_meta", "messages", "model_invocations", "project_grants", "runs", "sessions"
-    ]
+    required_tables = {
+        "kernel_meta", "messages", "model_invocations", "project_grants", "runs", "sessions",
+        "project_file_changes",
+        "project_runtime_units",
+        "service_instances",
+        "project_schedules", "schedule_ticks",
+    }
+    schema_ready = schema_version == __schema_version__ and required_tables <= set(tables)
+    scheduler = read_channel_health(settings, 'scheduler')
+    from assistant_kernel.services.system_config import SystemConfigService
+    scheduler_enabled=False
+    scheduler_lag_seconds=None
+    scheduler_poll_seconds=1
+    try:
+        service=SystemConfigService(settings);state=await service.state()
+        scheduler_config=service._config(state['desired_ref'])['kernel'].get('scheduler',{}) if state else {}
+        scheduler_enabled=bool(scheduler_config.get('enabled'))
+        scheduler_poll_seconds=scheduler_config.get('poll_seconds',1)
+    except Exception:
+        if database_ready:scheduler_enabled=True
+    if scheduler.get('last_scan_at'):
+        from datetime import datetime,timezone
+        try:scheduler_lag_seconds=max(0,(datetime.now(timezone.utc)-datetime.fromisoformat(scheduler['last_scan_at'])).total_seconds())
+        except (ValueError,TypeError):pass
+    scheduler_ready=not scheduler_enabled or bool(scheduler.get('process_running') and scheduler.get('connected') and not scheduler.get('stale')
+        and scheduler_lag_seconds is not None and scheduler_lag_seconds<=max(5,3*scheduler_poll_seconds))
     maintenance = read_channel_health(settings, "maintenance")
     maintenance_ready = bool(
         maintenance.get("process_running")
@@ -163,16 +196,20 @@ async def health_ready() -> dict:
         and (gateway_latency is None or float(gateway_latency) <= 2.0)
         and (event_loop_lag is None or float(event_loop_lag) <= 2.0)
     )
+    queue_health = worker_health.get("fresh_by_queue") or {}
+    interactive_ready = int(queue_health.get("interactive") or 0) > 0
+    runtime_ready = int(queue_health.get("runtime") or 0) > 0
     execution_ready = bool(
-        int(worker_health.get("fresh_count") or 0) > 0
+        interactive_ready and runtime_ready
         and int(execution.get("oldest_queued_seconds") or 0) <= 300
     )
     degraded_reasons: list[str] = []
+    if not scheduler_ready:degraded_reasons.append('scheduler_unavailable')
     if not discord_health.get("connected") or discord_health.get("stale"):
         degraded_reasons.append("discord_disconnected")
     elif not discord_ready:
         degraded_reasons.append("discord_gateway_lag")
-    if int(worker_health.get("fresh_count") or 0) == 0:
+    if not interactive_ready or not runtime_ready:
         degraded_reasons.append("run_worker_missing")
     if int(execution.get("oldest_queued_seconds") or 0) > 300:
         degraded_reasons.append("queued_run_stale")
@@ -180,7 +217,7 @@ async def health_ready() -> dict:
         degraded_reasons.append("discord_delivery_failed")
     return {
         "status": (
-            "ready" if database_ready and schema_ready and maintenance_ready
+            "ready" if database_ready and schema_ready and maintenance_ready and scheduler_ready
             else "not_ready"
         ),
         "database": database_ready,
@@ -188,8 +225,11 @@ async def health_ready() -> dict:
         "tables": tables,
         "maintenance_ready": maintenance_ready,
         "maintenance": maintenance,
+        "scheduler": scheduler, "scheduler_enabled": scheduler_enabled, "scheduler_ready": scheduler_ready,
+        "scheduler_lag_seconds": scheduler_lag_seconds,
         "discord_ready": discord_ready,
         "execution_ready": execution_ready,
+        "interactive_ready": interactive_ready, "runtime_ready": runtime_ready,
         "degraded": bool(degraded_reasons),
         "degraded_reasons": degraded_reasons,
         "discord": discord_health,
@@ -204,7 +244,7 @@ async def health_ready() -> dict:
 
 @app.get("/version")
 async def version() -> dict:
-    return {"version": __version__, "schema_version": "core5.v6"}
+    return {"version": __version__, "schema_version": __schema_version__}
 
 
 @app.post("/v1/projects/{project_id}/runtime", dependencies=[Depends(require_kernel_token)])
@@ -292,7 +332,10 @@ async def chat(request: ChatRequest) -> dict:
 
 
 @app.post("/v1/python-executions", dependencies=[Depends(require_kernel_token)])
-async def submit_python_execution(request: PythonExecutionRequest) -> dict:
+async def submit_python_execution(
+    request: PythonExecutionRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=1, max_length=512),
+) -> dict:
     try:
         runtime = runtime_manager.ensure(request.project_id)
         source = runtime_manager.resolve_vault_file(request.project_id, request.relative_script_path)
@@ -301,18 +344,23 @@ async def submit_python_execution(request: PythonExecutionRequest) -> dict:
     if not source.is_file() or source.suffix.lower() != ".py":
         raise HTTPException(status_code=422, detail="relative_script_path must be an existing .py file")
     source_uri = f"vault://{request.project_id}/{source.relative_to(runtime.vault_root).as_posix()}"
-    return await repository.create_run(
-        project_id=request.project_id,
-        agent_key=f"project:{request.project_id}:python",
-        run_type="python",
-        parent_run_id=request.parent_run_id,
-        request={
-            "source_uri": source_uri,
-            "args": request.args,
-            "timeout_seconds": request.timeout_seconds,
-        },
-        idempotency_key=f"python:{uuid.uuid4()}",
-    )
+    try:
+        return await repository.create_run(
+            project_id=request.project_id,
+            agent_key=f"project:{request.project_id}:python",
+            run_type="python",
+            parent_run_id=request.parent_run_id,
+            request={
+                "source_uri": source_uri,
+                "source_sha256": __import__('hashlib').sha256(source.read_bytes()).hexdigest(),
+                "args": request.args,
+                "timeout_seconds": request.timeout_seconds,
+                "shared_write": request.shared_write,
+            },
+            idempotency_key=f"python:{request.project_id}:{idempotency_key or uuid.uuid4()}",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.get("/v1/python-executions/{execution_id}", dependencies=[Depends(require_kernel_token)])
@@ -328,7 +376,59 @@ async def cancel_python_execution(execution_id: str) -> dict:
     return {"execution_id": execution_id, "cancel_requested": await repository.request_cancel(execution_id)}
 
 
+@app.post('/v1/projects/{project_id}/python/submit',dependencies=[Depends(require_kernel_token)])
+async def submit_project_python_manifest(project_id:str,request:dict)->dict:
+    from assistant_kernel.services.project_python import ProjectPython
+    try:return await ProjectPython(settings,repository).submit(project_id,request)
+    except PermissionError as exc:raise HTTPException(status_code=403,detail=str(exc)) from exc
+    except ValueError as exc:raise HTTPException(status_code=422,detail=str(exc)) from exc
+
+
+@app.post('/v1/projects/{project_id}/runtime-units/register',dependencies=[Depends(require_kernel_token)])
+async def register_project_runtime_unit(project_id:str,request:dict)->dict:
+    from assistant_kernel.services.runtime_units import RuntimeUnits
+    from assistant_kernel.services.contracts import contracts
+    try:
+        contracts().validate('Args_register_runtime_unit',request)
+        row=await RuntimeUnits(settings,repository).register(project_id,**request)
+        return RuntimeUnits.registration(row)
+    except PermissionError as exc:raise HTTPException(status_code=403,detail=str(exc)) from exc
+    except ValueError as exc:raise HTTPException(status_code=422,detail=str(exc)) from exc
+
+
+@app.post('/v1/projects/{project_id}/runtime-units/control',dependencies=[Depends(require_kernel_token)])
+async def control_project_finite_unit(project_id:str,request:dict)->dict:
+    from assistant_kernel.services.runtime_units import RuntimeUnits
+    from assistant_kernel.services.document_runtime import TaskDocumentService
+    try:
+        units=RuntimeUnits(settings,repository)
+        definition=units.read_definition(project_id,request['runtime_unit_ref'])
+        if definition['lifecycle_kind']=='service':
+            from assistant_kernel.services.service_runtime import ServiceRuntime
+            ref=await ServiceRuntime(settings,repository).control(project_id,request,authenticated_operator=True)
+        else:ref=await units.control_finite(project_id,request,authenticated_operator=True)
+        return TaskDocumentService(settings).read(project_id,ref)['payload']
+    except PermissionError as exc:raise HTTPException(status_code=403,detail=str(exc)) from exc
+    except ValueError as exc:raise HTTPException(status_code=422,detail=str(exc)) from exc
+
+
+@app.get('/v1/projects/{project_id}/runtime-units',dependencies=[Depends(require_kernel_token)])
+async def list_project_runtime_units(project_id:str,limit:int=20,cursor:str|None=None)->dict:
+    from assistant_kernel.services.runtime_units import RuntimeUnits
+    return await RuntimeUnits(settings,repository).list(project_id,limit,cursor)
+
+
+@app.post('/v1/projects/{project_id}/operation-policies/control',dependencies=[Depends(require_kernel_token)])
+async def control_operation_policy(project_id:str,request:dict)->dict:
+    from assistant_kernel.services.operation_records import OperationRecords
+    try:return await OperationRecords(settings,repository).activate_policy(project_id,request['policy_ref'],request['authorization_source_refs'],active=request['active'],authenticated_operator=True)
+    except PermissionError as exc:raise HTTPException(403,str(exc)) from exc
+    except ValueError as exc:raise HTTPException(422,str(exc)) from exc
+
+
 def run() -> None:
+    from assistant_kernel.services.config_consumers import startup_settings
+    startup_settings(settings,'api')
     uvicorn.run(app, host=settings.api_host, port=settings.api_port)
 
 

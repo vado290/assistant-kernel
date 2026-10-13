@@ -64,10 +64,10 @@ def main() -> None:
         print("DRY_RUN_OK; add --apply after creating a recoverable backup")
         return
     settings = KernelSettings.from_environment()
-    roots = [settings.data_root / "butler"]
+    roots = []
     vaults = settings.data_root / "vaults"
     if vaults.is_dir():
-        roots.extend(sorted(path for path in vaults.iterdir() if path.is_dir()))
+        roots.extend(sorted(path for path in vaults.iterdir() if path.is_dir() and path.name not in {"system", "butler-maintenance"}))
     rewritten = 0
     removed = 0
     for root in roots:

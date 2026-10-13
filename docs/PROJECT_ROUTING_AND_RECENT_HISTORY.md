@@ -1,60 +1,13 @@
-# Project routing and recent history
+# Project 路由与历史读取
 
-Date: 2026-09-12
+2026-10-13 当前源码规则，尚未部署生产。
 
-Application: Assistant Kernel 0.10.0
+- 已绑定频道继续进入绑定 Project 的 PM；专用 Supervisor 频道保持自身接口归属。
+- 相关回复保持其原 Project/Run 关联。旧 Butler 身份只能读取历史，不能恢复执行。
+- 无绑定或历史 Butler 入口返回提示，不默认新建 Kernel PM 任务。
+- `/butler` 不再注册；遗留文字命令只给出退役提示，不更改绑定。
+- `/bind_project`、`/unbind_project` 继续使用现有权限和归属检查；解绑后没有默认 Agent。
+- `list_projects` 只返回现有可用项目，不提供独立管理入口；创建能力本轮下线。
 
-Schema: core4.v5 (no database migration)
-
-## Project Card
-
-Each Runtime v2 Project keeps its routing description in `project.yaml`. The optional
-`routing` object contains `aliases`, `topics`, `typical_requests`, `exclusions`, and
-`related_projects`. `ProjectDirectoryService.list()` combines the registered Project
-entry with this file and returns one `project-card.v1` plus a content hash. The LLM
-therefore receives the complete routing catalog through one `list_projects` call and
-does not read each PM Role.
-
-Project Card matching remains an LLM classification over a small catalog. No vector
-table, embedding request, or semantic index is part of this release. The Butler Skill
-requires ambiguity clarification and treats exclusions as negative evidence.
-
-## Route resolution
-
-`RouteResolver` is shared by generic API intake and Feishu intake. Its precedence is:
-
-1. a correlated reply;
-2. an explicit Project supplied by an authorized intake adapter;
-3. the latest durable `(channel, chat_id, user_id)` route binding;
-4. file-owned channel binding;
-5. `system-butler`.
-
-Feishu `/butler` writes a durable binding back to `system-butler` without starting an
-LLM Run. Project handoff continues to write the target binding and enqueue the target
-PM Run transactionally.
-
-## Recent history Tool
-
-`list_recent_history` is a read-only per-invocation MCP Tool. The Kernel fixes its
-Project from the leased Run; the LLM cannot pass another Project ID. Parameters are:
-
-- `lookback_days`: 1 through 3650, default 365;
-- `scope`: `current_conversation` or the fixed current `project`;
-- `limit`: 1 through 100, default 50;
-- `cursor`: opaque descending-time pagination cursor.
-
-Only a bounded readable projection is returned: IDs, channel/chat, direction, message
-type, time, and up to 4000 characters of text. Raw channel payloads are not returned.
-System routing records are excluded. The Tool performs no keyword, semantic, or vector
-search.
-
-The `assistant-history-retrieval` Skill defines when the LLM should call this Tool,
-how to expand from current conversation to Project scope, and how to cite original
-message IDs rather than treating summaries as authority.
-
-## Deferred
-
-- Vector or hybrid semantic retrieval.
-- Topic/month summaries and a summary index.
-- Tool-trace indexing and retention/redaction policy.
-- Automatic topic-switch classification against an existing sticky binding.
+`list_recent_history` 保持限定 Project/会话、分页及撤销过滤；历史消息、批准和 URI 不迁移或重编号。
+当前源码仅保留必要历史标识解析与拒绝检查，不能把它们视为仍有 Butler Agent。

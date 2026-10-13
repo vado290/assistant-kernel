@@ -1,4 +1,13 @@
-# Assistant Kernel 0.24.6
+# Assistant Kernel 0.25.0
+
+0.25.0 实现 PM 五阶段项目主线：需求与设计批准、实施自测、独立只读 Review、发布与运营；每轮监督失败暂停、双入口问卷、项目 Brief/文件 Map/改动原因、公共背景、固定模板和安全边界迁移。部署与验证记录见 [五阶段实施报告](docs/FIVE_STAGE_IMPLEMENTATION.md)。生产切换仍受 Kernel 升级的最终批准门槛控制。
+
+普通 Discord 问答支持同一张卡片的上一问/下一问、推荐选项、每题自由填写和末页自由补充，
+统一提交后继续原 Task。实现与验收见 [多问题卡片 v1](docs/QUESTIONNAIRE_V1.md)。
+
+0.24.8 分离独立脚本与交互容量，精简旧执行分支并补齐输入消费和幂等。证据见 [瘦身与并发修复报告](docs/SLIMMING_0248.md)。
+
+0.24.9 删除 Kernel child Run 和 Operator Agent，项目仅保留平级的 PM、Supervisor 主 Agent。现有每轮评估和上下文/Skills 管线不变，见 [删除与回归验证报告](docs/REMOVE_AUX_AGENTS_0249.md)。
 
 Assistant Kernel is the durable control plane for a document-driven personal
 assistant. It uses short-lived `codex exec --json` turns; PostgreSQL and immutable
@@ -17,7 +26,7 @@ Discord / Feishu / local API
 → receipt-backed reply and recovery
 ```
 
-PostgreSQL `core5.v6` contains six tables: `kernel_meta`, `messages`,
+PostgreSQL `core5.v7` contains six tables: `kernel_meta`, `messages`,
 `model_invocations`, `project_grants`, `runs`, and `sessions`. It owns Run,
 Session, lease, idempotency, approval linkage and the parent Task's
 `accepted_documents`/`state_revision`.
@@ -28,13 +37,11 @@ rebuildable pointer and never a second writable authority.
 
 ## Project agents
 
-Every active Project uses `task_protocol: single-agent.v2` and exactly four active
+Every active Project uses `task_protocol: single-agent.v2` and exactly two active
 Agent configurations:
 
 - PM — the only business Task owner;
 - Supervisor — stateless per-Turn evaluation and Action Plan;
-- Child — one bounded Kernel child Run, parent-only result;
-- Operator — incident observation and repair proposal.
 
 The PM may also use Codex native subagents, one level deep and at most three in
 parallel. Their raw transcript remains in trace storage; the PM receives a
@@ -89,7 +96,7 @@ replayed.
 
 ## Maps
 
-- Runtime Global Catalog: `assistant-data/butler/knowledge/runtime-map/`;
+- Runtime Global Catalog: `assistant-data/vaults/kernel/knowledge/runtime-map/`;
 - Project Semantic Map: `<vault>/knowledge/map/`;
 - whole-system audit snapshots: maintained outside runtime by
   `assistant-kernel-system-map`.

@@ -29,6 +29,8 @@ class ProjectRuntimeManager:
         self.template_home = data_root / "system/codex-home-template"
 
     def ensure(self, project_id: str) -> ProjectRuntime:
+        from assistant_kernel.services.kernel_management import require_active_identity
+        require_active_identity(project_id, "")
         runtime = self.describe(project_id)
         vault_root, codex_home = runtime.vault_root, runtime.codex_home
         codex_home.mkdir(parents=True, exist_ok=True)
@@ -41,9 +43,9 @@ class ProjectRuntimeManager:
         """Derive the canonical locations without creating files on a read request."""
         if not PROJECT_ID_PATTERN.fullmatch(project_id):
             raise ValueError("project_id must be a safe slug containing letters, digits, dot, dash or underscore")
-        # The Butler is global routing configuration, not a fake Project Vault.
-        # Keep its files next to ``vaults`` while retaining the internal
-        # ``system`` runtime key for backward-compatible job/session records.
+        # Retired runtime keys retain their historical read-only locations.
+        # ``system`` runtime key and vault://system URIs keep their original
+        # directory so existing jobs, questions, Sessions and references survive.
         vault_root = (
             self.data_root / "butler"
             if project_id == "system"
@@ -84,5 +86,5 @@ class ProjectRuntimeManager:
                     os.chmod(target, 0o600)
 
     def resolve_vault_file(self, project_id: str, relative_path: str) -> Path:
-        runtime = self.ensure(project_id)
+        runtime = self.describe(project_id)
         return self.resolve_below(runtime.vault_root, relative_path)

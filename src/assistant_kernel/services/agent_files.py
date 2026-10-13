@@ -4,7 +4,7 @@ import hashlib
 import json
 import re
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -17,9 +17,24 @@ from assistant_kernel.storage import ProjectRuntimeManager
 DEFAULT_SHARED_SKILLS = (
     {"name": "assistant-volcengine-models", "source": "kernel"},
 )
-DEFAULT_SHARED_TOOLS = (
+VOLCENGINE_TOOL_NAMES = (
     "volcengine_model_status", "volcengine_generate", "volcengine_ocr",
 )
+
+
+def unbound_route(settings: KernelSettings) -> tuple[str, str]:
+    from assistant_kernel.services.kernel_management import MANAGEMENT_PROJECT, MANAGEMENT_AGENT
+    return MANAGEMENT_PROJECT, MANAGEMENT_AGENT
+
+def without_retired_tools(config):
+    from assistant_kernel.services.kernel_management import RETIRED_TOOLS
+    allowed = tuple(x for x in config.allowed_tools if x not in RETIRED_TOOLS)
+    available = tuple(x for x in config.available_tools if x not in RETIRED_TOOLS)
+    if (allowed, available) == (config.allowed_tools, config.available_tools):
+        return config
+    material = {**config.__dict__, "allowed_tools": allowed, "available_tools": available, "config_sha256": None}
+    digest = hashlib.sha256(json.dumps(material, sort_keys=True).encode()).hexdigest()
+    return replace(config, allowed_tools=allowed, available_tools=available, config_sha256=digest)
 
 if TYPE_CHECKING:
     from assistant_kernel.repositories import CoreRepository
@@ -53,6 +68,14 @@ class FileAgentConfig:
     triggers: tuple[str, ...]
     input_schema: str | None
     output_schema: str | None
+    available_skills: tuple[dict[str, Any], ...] = ()
+    common_role_text: str | None = None
+    phase_mode: str | None = None
+    available_tools: tuple[str, ...] = ()
+    available_mcp_servers: tuple[dict[str, Any], ...] = ()
+    foundation_revision: str | None = None
+    config_bindings: tuple[dict[str, Any], ...] = ()
+    pinned_mcp_servers: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -87,6 +110,175 @@ class AgentFileLoader:
             raise ValueError(f"YAML document must be an object: {path}")
         return data
 
+    @staticmethod
+    def _skill_spec(item: Any) -> dict[str, str]:
+        name = str((item.get("name") or item.get("skill")) if isinstance(item, dict) else item).strip()
+        AgentFileLoader._safe_slug(name, "Skill name")
+        source = str(item.get("source") or "auto") if isinstance(item, dict) else "auto"
+        if source not in {"project", "kernel", "auto"}:
+            raise ValueError(f"unsupported Skill source: {source}")
+        return {"name": name, "source": source}
+
+    def _load_skills(
+        self, project_id: str, items: list[Any],
+    ) -> tuple[tuple[str, ...], tuple[dict[str, Any], ...], tuple[str, ...]]:
+        root = self.runtime.describe(project_id).vault_root
+        texts, bindings, source_files = [], [], []
+        seen: set[str] = set()
+        for item in items:
+            spec = self._skill_spec(item)
+            name, source = spec["name"], spec["source"]
+            if name in seen:
+                continue
+            seen.add(name)
+            project_path = self.runtime.resolve_below(root, f".agents/skills/{name}/SKILL.md")
+            legacy_path = self.runtime.resolve_below(root, f"capabilities/skills/{name}/SKILL.md")
+            kernel_path = Path(__file__).parents[1] / "prompts" / "skills" / name / "SKILL.md"
+            candidates = (
+                (project_path,) if source == "project" else
+                (kernel_path,) if source == "kernel" else
+                (project_path, legacy_path, kernel_path)
+            )
+            path = next((candidate for candidate in candidates if candidate.is_file()), None)
+            if path is None:
+                raise FileNotFoundError(f"required Skill is missing: {name}")
+            texts.append(path.read_text(encoding="utf-8"))
+            files = [
+                candidate for candidate in sorted(path.parent.rglob("*"))
+                if candidate.is_file()
+                and not any(part in {"__pycache__", ".pytest_cache", ".git"}
+                            for part in candidate.relative_to(path.parent).parts)
+            ]
+            entries = [{
+                "path": candidate.relative_to(path.parent).as_posix(),
+                "sha256": hashlib.sha256(candidate.read_bytes()).hexdigest(),
+                "size": candidate.stat().st_size,
+            } for candidate in files]
+            source_files.extend(str(candidate) for candidate in files)
+            bindings.append({
+                "name": name, "source": "project" if root in path.parents else "kernel",
+                "bundle_hash": hashlib.sha256(json.dumps(
+                    entries, sort_keys=True, separators=(",", ":"),
+                ).encode("utf-8")).hexdigest(),
+                "files": entries, "source_root": str(path.parent),
+            })
+        return tuple(texts), tuple(bindings), tuple(source_files)
+
+    def apply_phase_profile(
+        self, config: FileAgentConfig, profile: dict[str, Any], *,
+        requested_skills: list[str] | None = None,
+    ) -> FileAgentConfig:
+        """Resolve a published phase into one exact, snapshot-ready capability set.
+
+        The Agent configuration is the capability ceiling. A phase can select
+        configured Skills and narrower MCP/tool sets, but cannot grant new ones.
+        Legacy profiles containing only role_append/disabled_tools remain readable.
+        """
+        if not isinstance(profile, dict):
+            raise ValueError("Project phase profile must be an object")
+        aliases = {"implementation": "build", "review": "audit", "operation": "operate", "repair": "build"}
+        mode = str(profile.get("mode_id") or "").strip()
+        mode = aliases.get(mode, mode)
+        if mode not in {"requirements", "design", "build", "audit", "operate"}:
+            raise ValueError("unknown Project phase profile")
+        project_id = (
+            config.agent_key.split(":", 2)[1]
+            if config.agent_key.startswith("project:") else "system"
+        )
+        common_role = config.common_role_text if config.common_role_text is not None else config.role_text
+        append = str(profile.get("role_append") or "").strip()
+        role = common_role.rstrip() + ("\n\n" + append if append else "")
+        texts, bindings = config.skill_texts, config.skill_bindings
+        source_files = list(config.source_files)
+        phase_skills = profile.get("skills")
+        if phase_skills is not None:
+            if not isinstance(phase_skills, dict):
+                raise ValueError("phase Skills must declare required and available lists")
+            required = phase_skills.get("required") or []
+            available = phase_skills.get("available") or []
+            if not isinstance(required, list) or not isinstance(available, list):
+                raise ValueError("phase required/available Skills must be lists")
+            ceiling = {
+                str(item["name"]): dict(item)
+                for item in (config.available_skills or config.skill_bindings)
+            }
+            permitted = {
+                self._skill_spec(item)["name"]: self._skill_spec(item)
+                for item in [*required, *available]
+            }
+            if profile.get("schema_version") == "project-agent-profile.v2" and config.kind == "manager":
+                mandatory = {"assistant-task-continuity", "assistant-project-agent", "assistant-source-scope"}
+                if mandatory - {self._skill_spec(item)["name"] for item in required}:
+                    raise ValueError("PM phase must retain continuity, common Role and source-scope Skills")
+            for name, spec in permitted.items():
+                if name not in ceiling:
+                    raise PermissionError(f"phase Skill is not configured for this Agent: {name}")
+                allowed_source = str(ceiling[name].get("source") or "auto")
+                if allowed_source != "auto" and spec["source"] not in {"auto", allowed_source}:
+                    raise PermissionError(f"phase cannot change Skill source: {name}")
+                if spec["source"] == "auto" and allowed_source != "auto":
+                    permitted[name] = {"name": name, "source": allowed_source}
+            requested = list(dict.fromkeys(requested_skills or []))
+            if set(requested) - set(permitted):
+                raise PermissionError("requested Skill is not available in this phase")
+            selected = [*(permitted[self._skill_spec(item)["name"]] for item in required),
+                        *(permitted[name] for name in requested)]
+            texts, bindings, selected_files = self._load_skills(project_id, selected)
+            old_roots = [Path(str(binding["source_root"])) for binding in config.skill_bindings]
+            source_files = [
+                path for path in source_files
+                if not any(Path(path) == base or base in Path(path).parents for base in old_roots)
+            ]
+            source_files.extend(selected_files)
+        elif requested_skills:
+            raise PermissionError("legacy phase profile does not declare optional Skills")
+        tools = profile.get("tools", list(config.allowed_tools))
+        if not isinstance(tools, list) or any(not isinstance(item, str) for item in tools):
+            raise ValueError("phase tools must be a list of tool names")
+        from assistant_kernel.services.kernel_management import RETIRED_TOOLS
+        tools = [item for item in tools if item not in RETIRED_TOOLS]
+        if set(tools) - set(config.available_tools or config.allowed_tools):
+            raise PermissionError("phase cannot grant additional MCP tools")
+        disabled = set(profile.get("disabled_tools") or [])
+        allowed_tools = tuple(dict.fromkeys(item for item in tools if item not in disabled))
+        if mode != "build" and {"write_candidate_file", "delete_candidate_file"}.intersection(allowed_tools):
+            raise PermissionError("analysis, review and operation phases cannot expose candidate writes")
+        servers = config.mcp_servers
+        if "mcp_servers" in profile:
+            raw_servers = profile["mcp_servers"]
+            if not isinstance(raw_servers, dict):
+                raise ValueError("phase mcp_servers must be an object")
+            by_id = {str(item["server_id"]): dict(item) for item in
+                     (config.available_mcp_servers or config.mcp_servers)}
+            selected_servers = []
+            for server_id, selection in sorted(raw_servers.items()):
+                if server_id not in by_id or not isinstance(selection, dict):
+                    raise PermissionError("phase MCP server is not configured for this Agent")
+                base = by_id[server_id]
+                enabled = selection.get("enabled_tools") or []
+                if not isinstance(enabled, list) or set(enabled) - set(base.get("enabled_tools") or []):
+                    raise PermissionError("phase cannot grant additional MCP server tools")
+                if any(key != "enabled_tools" and base.get(key) != value
+                       for key, value in selection.items()):
+                    raise PermissionError("phase cannot change MCP server configuration")
+                selected_servers.append({**base, "enabled_tools": list(dict.fromkeys(enabled))})
+            servers = tuple(selected_servers)
+        resolved = replace(
+            config, role_text=role, common_role_text=common_role, phase_mode=mode,
+            skill_texts=texts, skill_bindings=bindings,
+            source_files=tuple(dict.fromkeys(source_files)),
+            allowed_tools=allowed_tools, mcp_servers=servers,
+            input_schema=str(profile["input_schema"]) if profile.get("input_schema") else config.input_schema,
+            output_schema=str(profile["output_schema"]) if profile.get("output_schema") else config.output_schema,
+            available_tools=config.available_tools or config.allowed_tools,
+            available_mcp_servers=config.available_mcp_servers or config.mcp_servers,
+        )
+        payload = {**resolved.__dict__, "config_sha256": None, "profile": profile}
+        digest = hashlib.sha256(json.dumps(
+            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8")).hexdigest()
+        return without_retired_tools(replace(resolved, config_sha256=digest))
+
     def project_layout_version(self, project_id: str) -> int:
         root = self.runtime.ensure(project_id).vault_root
         project_path = root / "project.yaml"
@@ -110,7 +302,11 @@ class AgentFileLoader:
         seen_keys: set[str] = set()
         seen_aliases: dict[str, str] = {}
         for config_path in sorted(agents_root.glob("*/config.yaml")):
+            if project_id == "kernel" and config_path.parent.name == "intake":
+                continue
             data = self._read_yaml(config_path)
+            if data.get("kind") == "butler":
+                continue
             if str(data.get("schema_version") or "") != "agent-config.v2":
                 raise ValueError(f"v2 Agent must use agent-config.v2: {config_path}")
             agent_id = self._safe_slug(
@@ -141,6 +337,8 @@ class AgentFileLoader:
         return entries
 
     def list_agents(self, project_id: str) -> list[AgentDescriptor]:
+        if project_id in {"system", "butler-maintenance"}:
+            return []
         root = self.runtime.ensure(project_id).vault_root
         if self.project_layout_version(project_id) == 2:
             result = []
@@ -169,6 +367,8 @@ class AgentFileLoader:
         result = []
         for config_path in config_paths:
             data = self._read_yaml(config_path)
+            if data.get("kind") == "butler":
+                continue
             agent_key = str(data.get("agent_key") or "")
             agent_id = (
                 "pm" if agent_key.endswith(":manager") else
@@ -226,6 +426,8 @@ class AgentFileLoader:
         self, project_id: str, agent_key: str, *, task_kind: str | None = None,
         requested_skills: list[str] | None = None,
     ) -> FileAgentConfig:
+        from assistant_kernel.services.kernel_management import require_active_identity
+        require_active_identity(project_id, agent_key)
         root = self.runtime.ensure(project_id).vault_root
         agent_root = self._agent_root(project_id, agent_key)
         layout_version = self.project_layout_version(project_id)
@@ -234,6 +436,8 @@ class AgentFileLoader:
         source_files: list[Path] = []
         if config_path.is_file():
             data = self._read_yaml(config_path)
+            if data.get("kind") == "butler":
+                raise PermissionError("Butler configuration is retired")
             source_files.append(config_path)
             if data.get("status") in {"archived", "disabled"}:
                 raise ValueError(f"Agent configuration is archived: {agent_key}")
@@ -259,7 +463,7 @@ class AgentFileLoader:
         }
         required = [
             *(
-                item for item in DEFAULT_SHARED_SKILLS
+                item for item in (DEFAULT_SHARED_SKILLS if set(data.get("tools") or []) & set(VOLCENGINE_TOOL_NAMES) else ())
                 if str(item["name"]) not in existing_required
             ),
             *required,
@@ -284,64 +488,12 @@ class AgentFileLoader:
                 for item in available_items
             }
             required.extend(by_name[name] for name in requested)
-        skill_texts: list[str] = []
-        skill_bindings: list[dict[str, Any]] = []
-        seen_skills: set[str] = set()
-        for item in required:
-            name = str(
-                (item.get("name") or item.get("skill")) if isinstance(item, dict) else item
-            ).strip()
-            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", name):
-                raise ValueError("Skill name must be a safe slug")
-            if name in seen_skills:
-                continue
-            seen_skills.add(name)
-            source = str(item.get("source") or "auto") if isinstance(item, dict) else "auto"
-            project_path = root / ".agents" / "skills" / name / "SKILL.md"
-            legacy_path = root / "capabilities" / "skills" / name / "SKILL.md"
-            kernel_path = Path(__file__).parents[1] / "prompts" / "skills" / name / "SKILL.md"
-            if source == "project":
-                candidates = (project_path,)
-            elif source == "kernel":
-                candidates = (kernel_path,)
-            elif source == "auto":
-                candidates = (project_path, legacy_path, kernel_path)
-            else:
-                raise ValueError(f"unsupported Skill source: {source}")
-            path = next((candidate for candidate in candidates if candidate.is_file()), None)
-            if path is None:
-                raise FileNotFoundError(f"required Skill is missing: {name}")
-            skill_texts.append(path.read_text(encoding="utf-8"))
-            skill_root = path.parent
-            files = [
-                candidate for candidate in sorted(skill_root.rglob("*"))
-                if candidate.is_file()
-                and not any(part in {"__pycache__", ".pytest_cache", ".git"}
-                            for part in candidate.relative_to(skill_root).parts)
-            ]
-            source_files.extend(files)
-            file_entries = []
-            for candidate in files:
-                payload = candidate.read_bytes()
-                file_entries.append({
-                    "path": candidate.relative_to(skill_root).as_posix(),
-                    "sha256": hashlib.sha256(payload).hexdigest(),
-                    "size": len(payload),
-                })
-            binding_source = (
-                "project" if root in path.parents
-                else "kernel"
-            )
-            binding_hash = hashlib.sha256(
-                json.dumps(file_entries, sort_keys=True, separators=(",", ":")).encode("utf-8")
-            ).hexdigest()
-            skill_bindings.append({
-                "name": name,
-                "source": binding_source,
-                "bundle_hash": binding_hash,
-                "files": file_entries,
-                "source_root": str(skill_root),
-            })
+        skill_texts, skill_bindings, skill_files = self._load_skills(project_id, required)
+        source_files.extend(Path(path) for path in skill_files)
+        available_by_name = {
+            self._skill_spec(item)["name"]: self._skill_spec(item)
+            for item in [*required, *list(skill_policy.get("available") or [])]
+        }
 
         harness = data.get("harness_defaults") or {}
         if data.get("harness") is not None:
@@ -388,7 +540,7 @@ class AgentFileLoader:
             digest.update(b"\0")
             digest.update(path.read_bytes())
             digest.update(b"\0")
-        return FileAgentConfig(
+        return without_retired_tools(FileAgentConfig(
             agent_id=agent_id,
             agent_key=str(data.get("agent_key") or data.get("agent_id") or agent_key),
             kind=str(data.get("kind") or ("manager" if stage in {"manager", "system-butler"} else "stage")),
@@ -398,6 +550,7 @@ class AgentFileLoader:
             role_text=role_text,
             skill_texts=tuple(skill_texts),
             skill_bindings=tuple(skill_bindings),
+            available_skills=tuple(available_by_name.values()),
             provider=data.get("provider") or harness.get("provider"),
             model=data.get("model") or harness.get("model"),
             reasoning_effort=str(data.get("reasoning_effort") or harness.get("reasoning_effort") or "medium"),
@@ -418,7 +571,6 @@ class AgentFileLoader:
             source_files=tuple(str(path) for path in source_files),
             allowed_tools=tuple(dict.fromkeys([
                 *(str(item) for item in (data.get("tools") or [])),
-                *DEFAULT_SHARED_TOOLS,
             ])),
             scope_profile=str(data.get("scope_profile") or "current-project"),
             mcp_servers=tuple(normalized_mcp),
@@ -426,7 +578,7 @@ class AgentFileLoader:
             triggers=triggers,
             input_schema=str(data["input_schema"]) if data.get("input_schema") else None,
             output_schema=str(data["output_schema"]) if data.get("output_schema") else None,
-        )
+        ))
 
     def snapshot(self, project_id: str, config: FileAgentConfig) -> tuple[str, str]:
         runtime = self.runtime.ensure(project_id)
@@ -470,7 +622,16 @@ class AgentFileLoader:
             "triggers": list(config.triggers),
             "input_schema": config.input_schema,
             "output_schema": config.output_schema,
+            "available_skills": list(config.available_skills),
+            "common_role_text": config.common_role_text,
+            "phase_mode": config.phase_mode,
+            "available_tools": list(config.available_tools),
+            "available_mcp_servers": list(config.available_mcp_servers),
         }
+        if config.foundation_revision is not None:
+            payload['foundation_revision']=config.foundation_revision
+        if config.config_bindings:payload['config_bindings']=list(config.config_bindings)
+        if config.pinned_mcp_servers:payload['pinned_mcp_servers']=list(config.pinned_mcp_servers)
         encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2)
         if target.exists():
             existing = json.loads(target.read_text(encoding="utf-8"))
@@ -541,6 +702,14 @@ class AgentFileLoader:
             triggers=tuple(str(item) for item in payload.get("triggers") or []),
             input_schema=str(payload["input_schema"]) if payload.get("input_schema") else None,
             output_schema=str(payload["output_schema"]) if payload.get("output_schema") else None,
+            available_skills=tuple(dict(item) for item in payload.get("available_skills") or []),
+            common_role_text=payload.get("common_role_text"),
+            phase_mode=payload.get("phase_mode"),
+            foundation_revision=payload.get('foundation_revision'),
+            config_bindings=tuple(payload.get('config_bindings') or []),
+            pinned_mcp_servers=tuple(payload.get('pinned_mcp_servers') or []),
+            available_tools=tuple(str(item) for item in payload.get("available_tools") or []),
+            available_mcp_servers=tuple(dict(item) for item in payload.get("available_mcp_servers") or []),
         )
 
 
@@ -555,9 +724,10 @@ class ChannelRouter:
         project_id: str | None = None, agent_key: str | None = None,
     ) -> tuple[str, str]:
         if project_id:
-            return project_id, agent_key or (
+            from assistant_kernel.services.kernel_management import management_route
+            return management_route(self.settings.data_root, (project_id, agent_key or (
                 "system-butler" if project_id == "system" else f"project:{project_id}:manager"
-            )
+            )))
         path = self.settings.data_root / "config" / "channel-bindings.yaml"
         if path.is_file():
             data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
@@ -570,10 +740,12 @@ class ChannelRouter:
                 if expected_user and str(expected_user) != str(user_id):
                     continue
                 selected = str(item["project_id"])
-                return selected, str(item.get("agent_key") or (
+                route = selected, str(item.get("agent_key") or (
                     "system-butler" if selected == "system" else f"project:{selected}:manager"
                 ))
-        return "system", "system-butler"
+                from assistant_kernel.services.kernel_management import management_route
+                return unbound_route(self.settings) if route == ("system", "system-butler") else management_route(self.settings.data_root, route)
+        return unbound_route(self.settings)
 
 
 class RouteResolver:
@@ -617,5 +789,8 @@ class RouteResolver:
             )
         durable = await self.repository.resolve_route_binding(channel, chat_id, user_id)
         if durable is not None:
-            return durable
+            if durable == ("system", "system-butler"):
+                return unbound_route(self.fallback.settings)
+            from assistant_kernel.services.kernel_management import management_route
+            return management_route(self.fallback.settings.data_root, durable)
         return self.fallback.resolve(channel, chat_id, user_id)

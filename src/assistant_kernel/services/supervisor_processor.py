@@ -2,8 +2,8 @@
 
 Owns the hard budget gate, the snapshot → panels
 → handoff → two-pass evaluation pipeline, decision persistence, and the
-status card. Never triggers another consultation (recursion guard) and never
-writes task artifacts — the Supervisor stays purely advisory.
+status card. Never triggers another consultation (recursion guard); only
+Kernel-accepted Action Plans can change the PM control state.
 """
 from __future__ import annotations
 
@@ -13,6 +13,9 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import UUID
+from psycopg.types.json import Jsonb
+import yaml
 
 from assistant_kernel.config import KernelSettings
 from assistant_kernel.repositories.core import CoreRepository, json_compatible
@@ -29,6 +32,7 @@ CARD_TEXT_LIMIT = 1900
 class SupervisorPipelineError(RuntimeError):
     def __init__(self, step: str, cause: Exception):
         self.step = step
+        self.cause = cause
         self.cause = cause
         super().__init__(f"Supervisor {step} failed: {type(cause).__name__}: {cause}")
 
@@ -185,17 +189,257 @@ class SupervisorProcessor:
             source_supervisor_run_id=str(run["run_id"]),
         )
 
+    async def _pause(self, run: dict[str, Any], request: dict[str, Any], reason: str) -> None:
+        task_id = str(request.get("task_id") or "")
+        archive_key = task_id or str(request.get("consultation_id") or f"consult-{run['run_id']}")
+        failed_brief = self.task_documents.write_revision(
+            project_id=str(run["project_id"]), task_id=archive_key, document_kind="supervisor-brief",
+            document_schema="supervisor-brief.v1", status="failed", actor_type="kernel", actor_id="kernel",
+            run_id=str(run["run_id"]), reason=reason, source_refs=[],
+            payload={"schema_version": "supervisor-brief.v1", "evaluation_status": "not_evaluated",
+                     "source": {"supervisor_run_id": str(run["run_id"]), "context_epoch": request.get("source_context_epoch")},
+                     "project_assessment": {"status": "not_evaluated", "confidence": "low"},
+                     "user_intent_context": {"status": "not_evaluated", "scope": "project_only", "hypotheses": []}},
+        )
+        request["failure_brief_ref"] = failed_brief
+        self._update_supervisor_current(str(run["project_id"]), archive_key, {
+            "schema_version": "supervisor-current.v2", "status": "paused",
+            "evaluation_status": "not_evaluated", "failure_reason": reason,
+            "last_attempt_run_id": str(run["run_id"]),
+            "failure_brief_ref": failed_brief,
+        })
+        if task_id:
+            await self.repository.pause_supervision(
+                task_id=task_id, turn_number=int(request.get("turn_number") or 0),
+                reason=reason, retry_run_id=str(run["run_id"]),
+            )
+            return
+        await self.repository.create_outbound(
+            project_id=str(run["project_id"]), session_id=None, run_id=str(run["run_id"]),
+            channel=str(request.get("channel") or "discord"), chat_id=str(request.get("chat_id") or ""),
+            user_id=request.get("user_id"), message_type="kernel_notice",
+            content={"text": f"⏸️ 本次只读咨询尚未完成：{reason}。可重试或取消；未执行项目变更。",
+                     "origin": "kernel", "context_visibility": "ui_only",
+                     "interaction_kind": "supervision_recovery", "task_id": None,
+                     "action_status": "waiting",
+                     "supervisor_run_id": str(run["run_id"]), "turn_number": 0,
+                     "phase": "consultation", "context_epoch": 0, "cancel_only_mainline": False,
+                     "actions": [{"id": "retry", "label": "重试监督"},
+                                 {"id": "wait", "label": "暂时等待"},
+                                 {"id": "cancel", "label": "取消咨询"}]},
+            reply_to_message_id=run.get("trigger_message_id"),
+            idempotency_key=f"supervision-recovery:{run['run_id']}:{run.get('attempt', 0)}",
+        )
+
+    async def _wait_on_questions(
+        self, run: dict[str, Any], request: dict[str, Any], decision: dict[str, Any],
+        decision_ref: dict[str, Any], archive_key: str, worker_instance_id: str,
+    ) -> dict[str, Any]:
+        project_id = str(run["project_id"])
+        channel = str(request.get("channel") or "discord")
+        chat_id = str(request.get("chat_id") or "")
+        mainline_task_id = str(request.get("task_id") or "")
+        request['control_run_id']=str(run['run_id'])
+        if mainline_task_id:
+            mainline = await self.repository.get_run(mainline_task_id)
+            if (mainline or {}).get("waiting_question_message_id") or (
+                (mainline or {}).get("request_json") or {}
+            ).get("pending_interaction_ref"):
+                await self.repository.defer_supervisor_questions(
+                    task_id=mainline_task_id, supervisor_run_id=str(run["run_id"]),
+                    questions=decision["clarifications"], decision_ref=decision_ref,
+                )
+                self._update_supervisor_current(project_id, archive_key, {
+                    "schema_version": "supervisor-current.v2", "status": "questions_deferred",
+                    "evaluation_status": "evaluated",
+                    "brief_ref": decision.get("brief_ref"),
+                    "project_assessment": decision.get("project_assessment"),
+                    "user_intent_context": decision.get("user_intent_context"),
+                    "pending_supervisor_questions": decision["clarifications"],
+                    "last_decision": decision_ref,
+                })
+                await self._queue_status(run, request,
+                    "Supervisor补充问题已保存。请先完成当前业务问卷；提交后统一评估是否仍需补问。",
+                    "questions_deferred", None, confirmation_class="invalid")
+                return await self._finish(str(run["run_id"]), worker_instance_id,
+                    str(run.get("claim_token") or ""),
+                    {"outcome": "questions_deferred", "decision_ref": decision_ref},
+                    artifact_refs=[decision_ref["uri"]])
+        session = await self.repository.ensure_session(
+            project_id, str(run["agent_key"]), channel, chat_id,
+        )
+        self._update_supervisor_current(project_id, archive_key, {
+            "schema_version": "supervisor-current.v2", "status": "waiting_user",
+            "evaluation_status": "evaluated",
+            "brief_ref": decision.get("brief_ref"),
+            "project_assessment": decision.get("project_assessment"),
+            "user_intent_context": decision.get("user_intent_context"),
+            "open_questions": decision["clarifications"], "last_decision": decision_ref,
+        })
+        message = await self.repository.finalize_agent_waiting(
+            run_id=str(run["run_id"]), worker_instance_id=worker_instance_id,
+            claim_token=str(run.get("claim_token") or ""),
+            session_id=str(session["session_id"]),
+            native_session_id=str(decision.get("request_id") or session.get("native_session_id") or ""),
+            input_tokens=0,  # Interaction archive only; Supervisor never resumes this native Session.
+            context_window_tokens=self.settings.default_context_window_tokens,
+            archive_uri=decision.get("trace_uri"), archive_sha256=decision.get("trace_sha256"),
+            project_id=project_id, channel=channel, chat_id=chat_id, user_id=request.get("user_id"),
+            source_message_id=str(run.get("trigger_message_id") or ""),
+            question={"questions": decision["clarifications"],
+                      "summary": str(decision.get("user_message") or ""),
+                      "stage": "Supervisor", "owner_role": "supervisor",
+                      "task_id": request.get("task_id"), "consultation_id": request.get("consultation_id")},
+            artifact_refs=[decision_ref["uri"]], usage_snapshot=decision.get("usage") or {},
+        )
+        if mainline_task_id and message.get("message_id"):
+            await self.repository.bind_supervisor_interaction(
+                task_id=mainline_task_id, supervisor_run_id=str(run["run_id"]),
+                message_id=str(message["message_id"]),
+            )
+        return {"outcome": "needs_input", "question_message_ids": message.get("question_message_ids") or [],
+                "decision_ref": decision_ref["uri"], "task_id": request.get("task_id")}
+
+    async def _finish_readonly_mainline(
+        self, run: dict[str, Any], request: dict[str, Any], decision: dict[str, Any],
+        decision_ref: dict[str, Any], worker_instance_id: str, *, reason: str,
+    ) -> dict[str, Any]:
+        # Preserve research and its evidence without changing phase, approvals,
+        # blocking interactions or the mainline's active execution contract.
+        await self.repository.create_outbound(
+            project_id=str(run["project_id"]), session_id=None, run_id=str(run["run_id"]),
+            channel=str(request.get("channel") or "discord"), chat_id=str(request.get("chat_id") or ""),
+            user_id=request.get("user_id"), message_type="reply",
+            content={"text": str(decision.get("user_message") or "\n".join(decision.get("reason") or []))
+                     + "\n本轮建议已只读归档；主线运行或恢复状态保持原状。",
+                     "origin": "supervisor", "context_visibility": "semantic",
+                     "decision_ref": decision_ref, "readonly_reason": reason},
+            reply_to_message_id=run.get("trigger_message_id"),
+            idempotency_key=f"supervisor-readonly:{run['run_id']}:{run.get('attempt', 0)}",
+        )
+        return await self._finish(str(run["run_id"]), worker_instance_id,
+            str(run.get("claim_token") or ""),
+            {"outcome": "consultation_readonly", "decision_ref": decision_ref,
+             "brief_ref": decision.get("brief_ref"), "reason": reason},
+            artifact_refs=[decision_ref["uri"]])
+
+    async def _prepare_task_actions(self, project_id, request, snapshot, decision):
+        actions = []
+        for index, raw in enumerate(decision.get("proposed_actions") or []):
+            action = dict(raw)
+            candidates = [action.get("source_message_id")] if action.get("source_message_id") else [
+                request.get("source_message_id"),
+                *(item.get("message_id") for item in reversed(snapshot.get("interaction_delta") or [])
+                  if item.get("direction") == "inbound"),
+            ]
+            source = None
+            for source_id in candidates:
+                if not source_id:
+                    continue
+                try:
+                    UUID(str(source_id))
+                except (ValueError, TypeError):
+                    continue
+                message = await self.repository.get_message(str(source_id))
+                content = (message or {}).get("content_json") or {}
+                if (message and str(message.get("project_id")) == project_id
+                    and message.get("direction") == "inbound" and message.get("message_type") in {"text", "answer"}
+                    and message.get("user_id") and content.get("context_visibility") not in {"ui_only", "audit_only"}
+                    and not (content.get("discord") or {}).get("author_bot")):
+                    source = str(message["message_id"])
+                    break
+            if not source or (action["kind"] == "queue_task" and not str(action.get("goal") or "").strip()):
+                decision.setdefault("clarifications", []).append({"question_id": f"sup-task-action-{index}",
+                    "question_text": "请确认任务路由目标；当前建议没有完整目标或可核验的本项目用户消息来源。", "required": True})
+                continue
+            action["source_message_id"] = source
+            if action["kind"] != "queue_task":
+                target = str(action.get("target_task_id") or request.get("task_id") or "")
+                try:
+                    UUID(target)
+                except (ValueError, TypeError):
+                    target = ""
+                found = await self.repository.get_run(target) if target else None
+                valid = found and str(found.get("project_id")) == project_id
+                if action["kind"] == "suspend_task":
+                    valid = valid and target == str(request.get("task_id") or "")
+                else:
+                    valid = valid and (found.get("request_json") or {}).get("task_activation") == "suspended"
+                if not valid:
+                    decision.setdefault("clarifications", []).append({"question_id": f"sup-task-action-{index}",
+                        "question_text": "请确认本项目内要挂起或恢复的任务；建议目标不是合法的当前主线或已挂起任务。", "required": True})
+                    continue
+                action["target_task_id"] = target
+            actions.append(action)
+        decision["proposed_actions"] = actions
+
+    async def _execute_task_actions(self, project_id, decision):
+        from assistant_kernel.services.task_queue import ProjectTaskQueue
+        queue = ProjectTaskQueue(self.settings, self.repository)
+        results = []
+        for action in decision.get("proposed_actions") or []:
+            try:
+                if action["kind"] == "queue_task":
+                    item = await queue.queue(project_id, str(action["goal"]), action["source_message_id"],
+                                             priority=str(action.get("priority") or "normal"))
+                    ref = resource_ref(kind="message", identity=str(item["message_id"]), purpose="queued_work_request")
+                elif action["kind"] == "suspend_task":
+                    item = await queue.suspend(action["target_task_id"], str(action.get("reason") or "Supervisor safe-boundary suspension"))
+                    ref = resource_ref(kind="source", identity=str(item["run_id"]), purpose="suspended_project_task")
+                else:
+                    item = await queue.resume(action["target_task_id"])
+                    ref = resource_ref(kind="source", identity=str(item["run_id"]), purpose="resumed_project_task")
+                results.append({"kind": action["kind"], "status": "accepted", "ref": ref})
+            except Exception as exc:
+                results.append({"kind": action["kind"], "status": "blocked", "error_type": type(exc).__name__, "reason": str(exc)[:500]})
+        if any(item.get("kind") == "queue_task" and item.get("status") == "accepted" for item in results):
+            try:
+                activated = await queue.activate_next(project_id)
+                results.append({"kind": "activate_next", "result": activated})
+            except Exception as exc:
+                results.append({"kind": "activate_next", "status": "pending", "error_type": type(exc).__name__})
+        return results
+
+    async def _capture_brief_map(self, run, decision, *, previous_ref=None, state_revision=0, context_epoch=0):
+        ref = decision.get("brief_ref")
+        if not isinstance(ref, dict) or ref.get("kind") != "document":
+            return
+        try:
+            from assistant_kernel.services.project_changes import ProjectChangeService
+            from assistant_kernel.services.workspace_scope import WorkspaceScopeService
+            previous = previous_ref if isinstance(previous_ref, dict) and previous_ref.get("kind") == "document" else None
+            receipt = self.task_documents.change_receipt(str(run["project_id"]), ref,
+                previous_ref=previous, purpose="Supervisor project assessment and short-lived intent context",
+                state_revision=state_revision, context_epoch=context_epoch)
+            if receipt:
+                roots = WorkspaceScopeService(self.settings).resolve(str(run["project_id"]),
+                    str((run.get("request_json") or {}).get("task_id") or run["run_id"]), "requirements")
+                captured = await ProjectChangeService(self.settings, self.repository.database).capture_batch(
+                    str(run["project_id"]), batch_id=f"supervisor-brief:{run['run_id']}:{ref['revision_id']}",
+                    roots=roots, changes=[receipt], task_id=(run.get("request_json") or {}).get("task_id"),
+                    run_id=str(run["run_id"]), actor="kernel", scope_kind="artifact",
+                    reason="Kernel recorded this Supervisor assessment document; it grants no approval or permissions.",
+                    reason_source_refs=[ref])
+                if captured.get("map_refresh_pending"):
+                    logging.warning("Supervisor brief accepted; Map refresh is pending")
+        except Exception:
+            logging.exception("Supervisor brief reference preserved; Map capture pending without model replay")
+
     async def process(
         self, run: dict[str, Any], worker_instance_id: str,
         cancel_event: Any = None,
     ) -> dict[str, Any]:
         request = dict(run.get("request_json") or {})
+        request["supervisor_run_id"] = str(run["run_id"])
+        request["control_run_id"] = str(run["run_id"])
         if request.get("interaction_kind") != "supervisor_consultation":
             raise ValueError("SupervisorProcessor requires interaction_kind supervisor_consultation")
         project_id = str(run["project_id"])
-        task_id = str(request.get("task_id") or "")
-        if not task_id:
-            raise ValueError("supervisor consultation requires request.task_id")
+        mainline_task_id = str(request.get("task_id") or "")
+        task_id = mainline_task_id or str(request.get("consultation_id") or f"consult-{run['run_id']}")
+        if not mainline_task_id:
+            request["consultation_id"] = task_id
+            request["consultation_run_id"] = str(run["run_id"])
         trigger = str(request.get("trigger") or "user_consultation")
         run_id = str(run["run_id"])
         claim_token = str(run.get("claim_token") or "")
@@ -207,18 +451,19 @@ class SupervisorProcessor:
             )
             if not recorded:
                 raise RuntimeError("Supervisor consultation lease was lost at process start")
-        config = self.supervisor.configuration(project_id)
+        try:
+            resolver = getattr(self.supervisor, 'invocation_configuration', None)
+            config = (await resolver(project_id, run) if callable(resolver)
+                else self.supervisor.configuration(project_id))
+        except (ValueError, OSError, yaml.YAMLError) as exc:
+            await self._pause(run, request, f"Supervisor configuration unavailable: {type(exc).__name__}")
+            return await self._finish(run_id, worker_instance_id, claim_token,
+                {"outcome": "paused_configuration_error", "error_type": type(exc).__name__, "brief_ref": request.get("failure_brief_ref")})
         if not config["enabled"]:
-            resume_degraded = getattr(self.repository, "resume_supervision_degraded", None)
-            if callable(resume_degraded):
-                await resume_degraded(
-                    task_id=task_id,
-                    turn_number=int(request.get("turn_number") or 0),
-                    reason="Supervisor disabled",
-                )
+            await self._pause(run, request, "Supervisor disabled")
             return await self._finish(
                 run_id, worker_instance_id, claim_token,
-                {"outcome": "skipped_disabled", "summary": "supervisor disabled"},
+                {"outcome": "skipped_disabled", "summary": "supervisor disabled", "brief_ref": request.get("failure_brief_ref")},
             )
 
         turn_number = int(request.get("turn_number") or 0)
@@ -245,20 +490,10 @@ class SupervisorProcessor:
                 "budget_reason": budget_reason,
                 "usage_rollup": usage_rollup,
             })
-            await self._queue_status(
-                run, request,
-                f"⏸️ Supervisor预算门禁已触发：{budget_reason}。本轮未调用模型。",
-                "skipped_due_to_budget", None,
-            )
-            resume_degraded = getattr(self.repository, "resume_supervision_degraded", None)
-            if callable(resume_degraded):
-                await resume_degraded(
-                    task_id=task_id, turn_number=turn_number,
-                    reason=f"Supervisor budget gate: {budget_reason}",
-                )
+            await self._pause(run, request, f"Supervisor budget gate: {budget_reason}")
             return await self._finish(
                 run_id, worker_instance_id, claim_token,
-                {"outcome": "skipped_due_to_budget", "reason": budget_reason},
+                {"outcome": "skipped_due_to_budget", "reason": budget_reason, "brief_ref": request.get("failure_brief_ref")},
             )
 
         trigger_message = (
@@ -266,13 +501,25 @@ class SupervisorProcessor:
             if run.get("trigger_message_id") else None
         )
         try:
-            snapshot = await self.supervisor.build_snapshot(
-                project_id=project_id, task_id=task_id, trigger=trigger,
-                current_message=trigger_message,
-                agent_turn_report=request.get("agent_turn_report"),
-                consultation_context=request,
-            )
+            if config.get('result_protocol_revision')=='1.2':
+                from assistant_kernel.services.supervisor_v12 import SupervisorV12
+                protocol=SupervisorV12(self.settings,self.repository)
+                compilation_context=await protocol.prepare_context(run)
+                snapshot=protocol.model_context(run,compilation_context,trigger_message)
+                snapshot['meta']['trigger']=trigger
+            else:
+                snapshot = await self.supervisor.build_snapshot(
+                    project_id=project_id, task_id=task_id, trigger=trigger,
+                    current_message=trigger_message,
+                    agent_turn_report=request.get("agent_turn_report"),
+                    consultation_context=request,
+                )
+            snapshot['supervisor_configuration'] = config
         except Exception as exc:
+            if isinstance(exc, (ValueError, PermissionError, yaml.YAMLError)):
+                await self._pause(run, request, f"Supervisor evidence unavailable: {type(exc).__name__}")
+                return await self._finish(run_id, worker_instance_id, claim_token,
+                    {"outcome": "paused_evidence_error", "error_type": type(exc).__name__, "brief_ref": request.get("failure_brief_ref")})
             raise SupervisorPipelineError("snapshot", exc) from exc
 
         supervisor_now = dict(
@@ -290,7 +537,7 @@ class SupervisorProcessor:
             str(trigger_snapshot.get("direction") or "") == "inbound"
             and bool(str(trigger_snapshot.get("text") or "").strip())
         )
-        if has_new_user_text:
+        if has_new_user_text and config.get('result_protocol_revision')!='1.2':
             try:
                 intent_panel = await self.supervisor.run_intent_panel(
                     project_id=project_id, task_id=task_id, snapshot=snapshot,
@@ -312,22 +559,13 @@ class SupervisorProcessor:
                 process_started_callback=process_started,
             )
         except SupervisorDecisionContractError as exc:
-            resume_degraded = getattr(
-                self.repository, "resume_supervision_degraded", None
-            )
-            resumed = None
-            if callable(resume_degraded):
-                resumed = await resume_degraded(
-                    task_id=task_id,
-                    turn_number=int(request.get("turn_number") or 0),
-                    reason="Supervisor returned an invalid decision contract",
-                )
+            await self._pause(run, request, "Supervisor returned an invalid decision contract")
             try:
                 await self._queue_status(
                     run, request,
                     (
                         "Supervisor本轮输出合同无效，未采用任何Action Plan。"
-                        "PM Task保持原状态；若原本在等待Supervisor，已按当前Work Mode受限降级继续。"
+                        "PM主线保持暂停，请使用恢复卡重新评估；未放行执行。"
                     ),
                     "degraded_invalid_decision", None,
                     card_revision=int(supervisor_now.get("card_revision") or 0) + 1,
@@ -343,14 +581,19 @@ class SupervisorProcessor:
                 run_id, worker_instance_id, claim_token,
                 {
                     "outcome": "degraded_invalid_decision",
-                    "task_resumed": resumed is not None,
+                    "task_resumed": False,
                     "invalid_decision": exc.invalid_decision,
                     "trace_uri": exc.trace_uri,
                     "trace_sha256": exc.trace_sha256,
+                    "brief_ref": request.get("failure_brief_ref"),
                 },
                 artifact_refs=[exc.trace_uri] if exc.trace_uri else [],
             )
         except Exception as exc:
+            if isinstance(exc, (ValueError, PermissionError)):
+                await self._pause(run, request, f"Supervisor decision evidence invalid: {type(exc).__name__}")
+                return await self._finish(run_id, worker_instance_id, claim_token,
+                    {"outcome": "paused_invalid_evidence", "error_type": type(exc).__name__, "brief_ref": request.get("failure_brief_ref")})
             raise SupervisorPipelineError("main_evaluation", exc) from exc
         if not await self.repository.run_claim_is_active(
             run_id, worker_instance_id, claim_token
@@ -358,6 +601,10 @@ class SupervisorProcessor:
             raise RuntimeError(
                 "Supervisor consultation lease was lost before persistence"
             )
+        if decision.get('protocol_revision')=='1.2':
+            from assistant_kernel.services.supervisor_v12 import SupervisorV12
+            return await SupervisorV12(self.settings,self.repository).settle(control=run,
+                worker_instance_id=worker_instance_id,decision=decision,cancel_event=cancel_event)
         try:
             decision_ref = self._persist_decision(
                 project_id, task_id, decision,
@@ -367,8 +614,16 @@ class SupervisorProcessor:
             raise SupervisorPipelineError("persistence", exc) from exc
         decision_id = "supdec-" + decision_ref["sha256"][:16]
 
+        if mainline_task_id and callable(getattr(self.repository, "get_run", None)):
+            head = await self.repository.get_run(mainline_task_id)
+            if head and (str(head.get("status")) in {
+                "running", "reconciling", "succeeded", "failed", "cancelled", "dead_letter",
+            } or head.get("cancel_requested_at")):
+                return await self._finish_readonly_mainline(run, request, decision, decision_ref,
+                    worker_instance_id, reason=f"mainline_{head.get('status')}")
+
         source_context_epoch = int(request.get("source_context_epoch") or 0)
-        if not await self.repository.supervisor_context_is_current(
+        if mainline_task_id and not await self.repository.supervisor_context_is_current(
             task_id=task_id, source_context_epoch=source_context_epoch,
         ):
             return await self._finish(
@@ -384,6 +639,36 @@ class SupervisorProcessor:
                 artifact_refs=[decision_ref["uri"]],
             )
 
+        await self._prepare_task_actions(project_id, request, snapshot, decision)
+        if decision.get("clarifications"):
+            return await self._wait_on_questions(
+                run, request, decision, decision_ref, task_id, worker_instance_id,
+            )
+        if not mainline_task_id:
+            task_action_results = await self._execute_task_actions(project_id, decision)
+            await self._capture_brief_map(run, decision, previous_ref=supervisor_now.get("brief_ref"))
+            self._update_supervisor_current(project_id, task_id, {
+                "schema_version": "supervisor-current.v2", "status": "ready",
+                "evaluation_status": "evaluated",
+                "consultation_id": task_id, "project_assessment": decision.get("project_assessment"),
+                "user_intent_context": decision.get("user_intent_context"),
+                "brief_ref": decision.get("brief_ref"), "last_decision": decision_ref,
+            })
+            await self.repository.create_outbound(
+                project_id=project_id, session_id=None, run_id=run_id,
+                channel=str(request.get("channel") or (trigger_message or {}).get("channel")),
+                chat_id=str(request.get("chat_id") or (trigger_message or {}).get("chat_id")),
+                user_id=request.get("user_id"), message_type="reply",
+                content={"text": str(decision.get("user_message") or "\n".join(decision.get("reason") or [])),
+                         "origin": "supervisor", "context_visibility": "semantic",
+                         "consultation_id": task_id, "decision_ref": decision_ref},
+                reply_to_message_id=str((trigger_message or {}).get("message_id") or "") or None,
+                idempotency_key=f"supervisor-consultation-result:{run_id}:{attempt}",
+            )
+            return await self._finish(run_id, worker_instance_id, claim_token,
+                {"outcome": "consultation_reply", "decision_ref": decision_ref,
+                 "consultation_id": task_id, "task_action_results": task_action_results, "brief_ref": decision.get("brief_ref")}, artifact_refs=[decision_ref["uri"]])
+
         recommended_prompt = str(
             (decision.get("next_prompt") or {}).get("recommended_user_prompt")
             or (decision.get("next_prompt") or {}).get("assembled_prompt")
@@ -392,7 +677,11 @@ class SupervisorProcessor:
         confirmation_class = (
             "safe"
             if (
-                trigger == "after_agent_turn"
+                (trigger == "after_agent_turn" or (
+                    trigger == "user_consultation" and bool(decision.get("proposed_actions"))
+                    and not decision.get("delegations") and decision.get("session_action", "keep") == "keep"
+                    and decision.get("target_work_mode") in {None, (snapshot.get("task_state") or {}).get("state", {}).get("current_stage")}
+                ))
                 and str(decision.get("decision") or "") not in {
                     "needs_user_input", "reconcile_required", "blocked", "failed",
                 }
@@ -443,6 +732,8 @@ class SupervisorProcessor:
             "delegations": delegation_records,
             "confirmation_class": confirmation_class,
             "pm_instruction": recommended_prompt,
+            "selected_skills": list(decision.get("selected_skills") or []),
+            "proposed_actions": list(decision.get("proposed_actions") or []),
         }
         action_ref = self.task_documents.write_revision(
             project_id=project_id, task_id=task_id,
@@ -458,28 +749,37 @@ class SupervisorProcessor:
         )
         commit_action = getattr(self.repository, "commit_supervisor_action", None)
         if callable(commit_action):
-            commit_result = await commit_action(
-                supervisor_run_id=run_id, worker_instance_id=worker_instance_id,
-                claim_token=claim_token, task_id=task_id,
-                source_context_epoch=source_context_epoch,
-                source_turn_number=int(
-                    request.get("source_turn_number") or request.get("turn_number") or 0
-                ),
-                action_ref=action_ref, confirmation_class=confirmation_class,
-                pm_instruction=recommended_prompt,
-                target_work_mode=target_work_mode,
-                delegations=delegation_records,
-                result={
-                    "outcome": "evaluated",
-                    "decision": decision.get("decision"),
-                    "decision_ref": decision_ref["uri"],
-                    "action_plan_ref": action_ref,
-                    "confirmation_class": confirmation_class,
-                    "usage": decision.get("usage"),
-                },
-                artifact_refs=[decision_ref["uri"], action_ref["uri"]],
-                session_action=str(action_payload["session_action"]),
-            )
+            try:
+                commit_result = await commit_action(
+                    supervisor_run_id=run_id, worker_instance_id=worker_instance_id,
+                    claim_token=claim_token, task_id=task_id,
+                    source_context_epoch=source_context_epoch,
+                    source_turn_number=int(
+                        request.get("source_turn_number") or request.get("turn_number") or 0
+                    ),
+                    action_ref=action_ref, confirmation_class=confirmation_class,
+                    pm_instruction=recommended_prompt,
+                    target_work_mode=target_work_mode,
+                    delegations=delegation_records,
+                    result={
+                        "outcome": "evaluated",
+                        "decision": decision.get("decision"),
+                        "decision_ref": decision_ref["uri"],
+                        "action_plan_ref": action_ref,
+                        "confirmation_class": confirmation_class,
+                        "usage": decision.get("usage"),
+                        "selected_skills": list(decision.get("selected_skills") or []),
+                        "brief_ref": decision.get("brief_ref"),
+                    },
+                    artifact_refs=[decision_ref["uri"], action_ref["uri"]],
+                    session_action=str(action_payload["session_action"]),
+                )
+            except PermissionError:
+                # Cancellation/new input can win after the preflight. A stale
+                # control proposal is settled as evidence, never retried as a
+                # temporary execution failure that might block the PM.
+                return await self._finish_readonly_mainline(run, request, decision, decision_ref,
+                    worker_instance_id, reason="control_commit_superseded")
         else:
             await self._finish(
                 run_id, worker_instance_id, claim_token,
@@ -487,12 +787,27 @@ class SupervisorProcessor:
                 artifact_refs=[decision_ref["uri"], action_ref["uri"]],
             )
             commit_result = {"state_revision": 1}
+        await self._capture_brief_map(run, decision,
+            previous_ref=(snapshot.get("task_state", {}).get("supervisor_brief") or {}).get("ref"),
+            state_revision=int(commit_result["state_revision"]), context_epoch=source_context_epoch)
         self.task_documents.update_current(
             project_id=project_id, task_id=task_id,
             document_kind="supervisor-action-plan", ref=action_ref,
             commit_id=f"supervisor-action:{run_id}",
             state_revision=int(commit_result["state_revision"]),
         )
+        task_action_results = await self._execute_task_actions(project_id, decision) if confirmation_class == "safe" else []
+        if (commit_result.get("task") or {}).get("status") == "succeeded":
+            from assistant_kernel.services.task_queue import ProjectTaskQueue
+            try:
+                task_action_results.append({"kind": "activate_next", "result": await ProjectTaskQueue(self.settings, self.repository).activate_next(project_id)})
+            except Exception as exc:
+                task_action_results.append({"kind": "activate_next", "status": "pending", "error_type": type(exc).__name__})
+        if task_action_results:
+            async with self.repository.database.connection() as connection:
+                await connection.execute("UPDATE assistant.runs SET result_json=COALESCE(result_json,'{}'::jsonb) || %s WHERE run_id=%s AND project_id=%s AND status='succeeded'",
+                    (Jsonb(json_compatible({"task_action_results": task_action_results})), run_id, project_id))
+                await connection.commit()
 
         watermark_ts = datetime.now(timezone.utc).isoformat()
         delta = list(snapshot.get("interaction_delta") or [])
@@ -529,7 +844,8 @@ class SupervisorProcessor:
         )
         self._update_supervisor_current(project_id, task_id, {
             "schema_version": "supervisor-current.v2",
-            "status": "ready",
+            "status": "historical_routing_receipt" if task_action_results else "ready",
+            "evaluation_status": "evaluated",
             "task_id": task_id,
             "watermark": {"ts": watermark_ts, "message_id": last_message_id},
             "dialogue": dialogue[-6:],
@@ -558,31 +874,34 @@ class SupervisorProcessor:
             "card_revision": card_revision,
             "context_epoch": source_context_epoch,
             "interaction_head": interaction_head,
+            "project_assessment": decision.get("project_assessment"),
+            "user_intent_context": decision.get("user_intent_context"),
+            "brief_ref": decision.get("brief_ref"),
         })
 
-        if hypotheses:
+        if task_action_results:
+            receipts = []
+            for item in task_action_results:
+                activated = item.get("result") or {}
+                receipts.append({"kind": item["kind"], "status": item.get("status") or activated.get("outcome"),
+                    "ref": item.get("ref"), "active_task_id": (activated.get("task") or {}).get("run_id")})
             try:
-                self.supervisor.memory.append(project_id, {
-                    "task_id": task_id,
-                    "status": "proposed",
-                    "created_by": "supervisor",
-                    "user_text_excerpt": next(
-                        (str(item.get("text") or "") for item in reversed(delta)
-                         if item.get("direction") == "inbound"),
-                        "",
-                    ),
-                    "source_message_ids": [
-                        str(item["message_id"]) for item in delta[-5:]
-                    ],
-                    "intent_statement": str(hypotheses[0].get("statement") or ""),
-                    "tags": [
-                        str(item.get("statement") or "").split()[:3][0]
-                        for item in hypotheses if item.get("statement")
-                    ][:3],
-                    "decision_ref": decision_ref["uri"],
-                })
-            except ValueError:
-                logging.exception("supervisor memory append rejected for %s", task_id)
+                await self.repository.create_outbound(
+                    project_id=project_id, session_id=None, run_id=run_id,
+                    channel=str(request.get("channel") or "discord"), chat_id=str(request.get("chat_id") or ""),
+                    user_id=request.get("user_id"), message_type="kernel_notice",
+                    content={"text": "任务路由结果已存档：\n" + "\n".join(
+                        f"{item['kind']}: {item.get('status')}" + (f" · Task {item['active_task_id']}" if item.get("active_task_id") else "")
+                        for item in receipts), "origin": "kernel", "context_visibility": "ui_only",
+                        "interaction_kind": "task_action_receipt", "receipts": receipts, "decision_ref": decision_ref},
+                    reply_to_message_id=run.get("trigger_message_id"),
+                    idempotency_key=f"supervisor-task-action-receipt:{run_id}:{attempt}",
+                )
+            except Exception:
+                logging.exception("Task routing committed; receipt UI remains pending without replay")
+            return {"outcome": "evaluated", "decision": decision.get("decision"), "decision_ref": decision_ref["uri"],
+                    "action_plan_ref": action_ref, "confirmation_class": confirmation_class,
+                    "task_action_results": task_action_results}
 
         card = render_status_card(
             task_id=task_id, trigger=trigger,
@@ -611,6 +930,7 @@ class SupervisorProcessor:
             "action_plan_ref": action_ref,
             "confirmation_class": confirmation_class,
             "usage": decision.get("usage"),
+            "task_action_results": task_action_results,
         }
 
     async def _finish(

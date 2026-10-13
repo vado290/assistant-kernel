@@ -1,3 +1,5 @@
+> 历史版本记录：其中 Butler/intake 的入口描述已失效。当前退役规则见 [KERNEL_MANAGEMENT_MERGE.md](KERNEL_MANAGEMENT_MERGE.md)；本次未部署生产。
+
 # Project Runtime v2 foundation
 
 Date: 2026-09-11

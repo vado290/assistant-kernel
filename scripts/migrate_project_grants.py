@@ -69,7 +69,7 @@ def main() -> None:
         version = connection.execute(
             "SELECT value #>> '{}' FROM assistant.kernel_meta WHERE key='schema_version'"
         ).fetchone()[0]
-        if version not in {"core5.v1", "core5.v2", "core5.v3", "core5.v4", "core5.v5", "core5.v6"}:
+        if version not in {"core5.v1", "core5.v2", "core5.v3", "core5.v4", "core5.v5", "core5.v6", "core5.v7"}:
             raise RuntimeError(f"grant import requires core5.v1+, got {version}")
         imported = 0
         for project_id, key, policy in pending:

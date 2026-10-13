@@ -208,10 +208,12 @@ class _Supervisor:
 
 async def test_turn_handoff_persists_top_level_pm_evidence(tmp_path: Path) -> None:
     processor = RunProcessor.__new__(RunProcessor)
+    processor._project_configuration = lambda project_id, task=None: {}
     processor.repository = _Repository()
     processor.goal_supervisor = _Supervisor()
     processor.runtime = SimpleNamespace(
-        ensure=lambda project_id: SimpleNamespace(vault_root=tmp_path)
+        ensure=lambda project_id: SimpleNamespace(vault_root=tmp_path),
+        describe=lambda project_id: SimpleNamespace(vault_root=tmp_path),
     )
     usage = {
         "pm_evidence": summarize_pm_tool_evidence(

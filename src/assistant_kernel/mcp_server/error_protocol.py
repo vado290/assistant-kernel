@@ -110,3 +110,34 @@ def install_error_protocol(server: Any) -> None:
         return decorator
 
     server.tool = tool
+
+
+def v12_tool_errors(*, mutating: bool = False):
+    """Strict new-tool DTO while retaining the legacy ABI for unadopted tools."""
+    def decorate(fn):
+        @functools.wraps(fn)
+        async def wrapped(*args, **kwargs):
+            try:
+                return await fn(*args, **kwargs)
+            except Exception as exc:
+                # Mutation may have committed before an I/O failure. Do not tell
+                # a model to blindly retry an uncertain side effect.
+                effect = "unknown" if mutating else "none"
+                if isinstance(exc, PermissionError):
+                    code = "SCOPE_DENIED"; effect = "not_started"
+                elif isinstance(exc, ValueError):
+                    code = "CONFLICT" if "stale" in str(exc).lower() else "INVALID_INPUT"
+                elif isinstance(exc, FileNotFoundError):
+                    code = "SOURCE_CHANGED"
+                else:
+                    code = "EFFECT_UNKNOWN" if mutating else "EXECUTION_FAILED"
+                message = str(exc)[:1500] if isinstance(exc,(ValueError,PermissionError,FileNotFoundError)) else type(exc).__name__ + ": operation did not produce a verified receipt"
+                LOGGER.warning("v1.2 tool %s failed: %s",fn.__name__,type(exc).__name__)
+                result={"ok":False,"tool":fn.__name__,"error_type":code,"message":message,
+                        "hint":"先查询当前状态及原操作回执；效果未确定时不要重放。" if mutating else "核对参数、固定引用和当前能力后读取。",
+                        "effect_status":effect,"receipt_refs":[]}
+                from assistant_kernel.services.contracts import contracts
+                contracts().validate("ToolError",result)
+                return result
+        return wrapped
+    return decorate

@@ -9,7 +9,7 @@ metadata:
 
 ## 任务目标
 
-在当前Project内创建、迭代或修复一个可发现、可执行、可验证的Skill Bundle，并保持其任务目标、触发边界、配套脚本、引用和测试自洽。正式路径默认只保留当前最新版；Run快照和candidate基线用于证据与冲突保护，不建设历史版本选择或一键回退功能。所有新建或修改的Skill必须包含明确的 `## 任务目标`；涉及Schedule、MCP、Agent或Workflow细节时，由PM为本任务绑定相应专项Skill。
+在当前Project内创建、迭代或修复一个可发现、可执行、可验证的Skill Bundle，并保持其任务目标、触发边界、配套脚本、引用和测试自洽。正式路径默认只保留当前最新版；Run快照和candidate基线用于证据与冲突保护，不建设历史版本选择或一键回退功能。所有新建或修改的Skill必须包含明确的 `## 任务目标`；涉及MCP、Agent或Workflow细节时，由PM为本任务绑定相应专项Skill。
 
 从已接受Task Contract、Action Plan和固定基线读取目标Skill与`change_mode`。不得自行改变模式或绕过candidate、Validation和Publisher。
 

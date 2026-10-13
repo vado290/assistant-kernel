@@ -34,6 +34,8 @@ class CatalogChatProvider:
         model_config = self.config.chat_models.get(model)
         if model_config is None:
             raise ValueError(f"unknown model {model!r} for provider {self.provider_name}")
+        if ('model_id' in model_config or 'endpoint_id' in model_config) and not (model_config.get('endpoint_id') or model_config.get('model_id')):
+            raise ValueError('The selected model identifier is explicitly unconfigured')
         return str(model_config.get("endpoint_id") or model_config.get("model_id") or model), model_config
 
     def _base_url(self) -> str:
