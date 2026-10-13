@@ -1,5 +1,6 @@
 """Consume accepted values and record actual per-field use; never claim an external restart."""
-import hashlib,json,logging,os
+import hashlib,json,logging,os,signal,threading,time
+import psycopg
 from datetime import datetime,timezone
 from pathlib import Path
 from assistant_kernel.config.system_config import leaf_values
@@ -35,9 +36,60 @@ def effective_providers(settings):
         providers[name]=base.model_copy(update=values)
     result.providers=providers;return result
 
+def _temporary_database_error(error):
+    """Retry connection availability, never authentication or invalid configuration."""
+    state = error.sqlstate
+    if state:
+        return state.startswith('08') or state in {'57P01', '57P02', '57P03', '53300'}
+    message = str(error).lower()
+    if any(text in message for text in (
+        'authentication failed', 'no password supplied', 'no pg_hba.conf entry',
+        'does not exist', 'invalid connection option', 'invalid sslmode',
+    )):
+        return False
+    return any(text in message for text in (
+        'connection refused', 'timeout expired', 'connection timed out',
+        'database system is starting up', 'server closed the connection unexpectedly',
+        'network is unreachable', 'no route to host', 'temporary failure in name resolution',
+        'could not receive data from server', 'connection reset by peer',
+    ))
+
+
+def _startup_configuration(settings, component):
+    # Called before the event loop can make progress. Handle stop signals here,
+    # then restore each entrypoint's existing handlers before normal operation.
+    previous = {}
+    def stop(signum, frame):
+        raise SystemExit(0 if signum == signal.SIGTERM else 130)
+    if threading.current_thread() is threading.main_thread():
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            previous[sig] = signal.signal(sig, stop)
+    delay = 1
+    attempts = 0
+    try:
+        while True:
+            try:
+                result = accepted_configuration(settings)
+                if attempts:
+                    logging.info('%s database ready; continuing startup', component)
+                return result
+            except psycopg.OperationalError as exc:
+                if not _temporary_database_error(exc):
+                    raise
+                attempts += 1
+                # Do not log connection strings or credential-bearing exceptions.
+                logging.warning('%s waiting for database; attempt=%d retry_in=%ds',
+                                component, attempts, delay)
+                time.sleep(delay)
+                delay = min(10, delay * 2)
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+
+
 def startup_settings(settings,component):
     """Bootstrap DB/path identity stays external until an explicit migration; listeners use accepted values."""
-    state,config=accepted_configuration(settings)
+    state,config=_startup_configuration(settings,component)
     if not state:return settings # Original unconfigured reader remains usable for initial setup.
     updates={'api_host':config['kernel']['api']['listen_host'],'api_port':config['kernel']['api']['port'],
         'mcp_host':config['kernel']['mcp']['listen_host'],'mcp_port':config['kernel']['mcp']['port'],

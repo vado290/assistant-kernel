@@ -8,6 +8,7 @@ import os
 import socket
 import time
 import uuid
+import psycopg
 
 from assistant_kernel.config import KernelSettings
 from assistant_kernel.harness import CodexCliHarness
@@ -678,12 +679,20 @@ async def run_worker_loop(
             else:
                 await processor.process(run, worker_instance_id, cancel_event)
         except RuntimeCapacityUnavailable as exc:
-            if not await repository.defer_model_capacity(run_id,worker_instance_id,claim_token,str(exc)):
-                raise RuntimeError('Cannot defer a launched or superseded model claim') from exc
+            try:
+                if not await repository.defer_model_capacity(run_id,worker_instance_id,claim_token,str(exc)):
+                    raise RuntimeError('Cannot defer a launched or superseded model claim') from exc
+            except psycopg.OperationalError:
+                logging.warning('Capacity settlement unavailable; Run %s retained for recovery', run_id)
         except asyncio.CancelledError:
-            await repository.finish_cancelled_run(
-                run_id, worker_instance_id, claim_token,
-            )
+            try:
+                await repository.finish_cancelled_run(
+                    run_id, worker_instance_id, claim_token,
+                )
+            except psycopg.OperationalError:
+                # Preserve the durable lease/state. Recovery must reconcile the
+                # stopped attempt; never replay it just because the DB reconnects.
+                logging.warning('Cancellation settlement unavailable; Run %s retained for recovery', run_id)
         except Exception as exc:
             logging.exception("run %s failed", run_id)
             health.update(

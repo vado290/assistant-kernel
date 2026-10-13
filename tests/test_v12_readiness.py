@@ -19,6 +19,7 @@ async def test_readiness_requires_v8_ledger_and_tolerates_unrelated_tables(core_
     monkeypatch.setattr(api,'read_worker_health',lambda *args: {
         'fresh_by_queue':{'interactive':2,'runtime':4}})
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=api.app),base_url='http://isolated') as client:
+        assert (await client.get('/health/ready')).status_code==503
         before=(await client.get('/health/ready')).json()
         assert before['schema_version']=='core5.v7' and before['status']=='not_ready'
         await migrate(core_settings,apply=True)
@@ -28,6 +29,15 @@ async def test_readiness_requires_v8_ledger_and_tolerates_unrelated_tables(core_
             for version in (9,10,11):await c.execute((Path(__file__).parents[1]/'migrations'/f'upgrade_core5_v{version}.sql').read_text())
             await c.commit()
         assert (await client.get('/health/ready')).json()['status']=='ready'
+        monkeypatch.setattr(api,'read_worker_health',lambda *args: {
+            'fresh_by_queue':{'interactive':0,'runtime':0}})
+        missing=await client.get('/health/ready')
+        assert missing.status_code==503 and missing.json()['status']=='not_ready'
+        assert 'run_worker_missing' in missing.json()['degraded_reasons']
+        assert (await client.get('/health/live')).status_code==200
+        monkeypatch.setattr(api,'read_worker_health',lambda *args: {
+            'fresh_by_queue':{'interactive':2,'runtime':4}})
+        assert (await client.get('/health/ready')).status_code==200
         async with repository.database.connection() as c:
             await c.execute('CREATE TABLE assistant.unrelated_fixture (value integer)')
             await c.commit()

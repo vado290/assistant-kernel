@@ -25,6 +25,7 @@ class AssistantDatabase:
             password=self.settings.postgres_password.get_secret_value(),
             row_factory=dict_row,
             autocommit=False,
+            connect_timeout=10,
         )
         try:
             yield connection

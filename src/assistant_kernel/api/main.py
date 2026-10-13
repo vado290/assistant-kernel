@@ -6,7 +6,7 @@ import uuid
 
 import httpx
 import uvicorn
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from assistant_kernel import __version__, __schema_version__
@@ -128,7 +128,7 @@ async def health_live() -> dict:
 
 
 @app.get("/health/ready")
-async def health_ready() -> dict:
+async def health_ready(response: Response) -> dict:
     secrets = settings.load_provider_secrets()
     qwen = secrets.providers.get("dashscope")
     database_ready = await repository.database.ping()
@@ -204,6 +204,9 @@ async def health_ready() -> dict:
         and int(execution.get("oldest_queued_seconds") or 0) <= 300
     )
     degraded_reasons: list[str] = []
+    if not database_ready:degraded_reasons.append('database_unavailable')
+    elif not schema_ready:degraded_reasons.append('schema_incompatible')
+    if not maintenance_ready:degraded_reasons.append('maintenance_unavailable')
     if not scheduler_ready:degraded_reasons.append('scheduler_unavailable')
     if not discord_health.get("connected") or discord_health.get("stale"):
         degraded_reasons.append("discord_disconnected")
@@ -215,11 +218,10 @@ async def health_ready() -> dict:
         degraded_reasons.append("queued_run_stale")
     if int(discord_delivery.get("failed_recent_15m") or 0) > 0:
         degraded_reasons.append("discord_delivery_failed")
+    ready = database_ready and schema_ready and maintenance_ready and scheduler_ready and execution_ready
+    response.status_code = 200 if ready else 503
     return {
-        "status": (
-            "ready" if database_ready and schema_ready and maintenance_ready and scheduler_ready
-            else "not_ready"
-        ),
+        "status": "ready" if ready else "not_ready",
         "database": database_ready,
         "schema_version": schema_version,
         "tables": tables,
