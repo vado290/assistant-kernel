@@ -7,6 +7,7 @@ from assistant_kernel.services.contracts import canonical_json
 from assistant_kernel.services.document_runtime import resource_ref
 from assistant_kernel.services.published_agents import PublishedAgentService
 from assistant_kernel.services.template_bundle import TemplateBundle
+from assistant_kernel.services.kernel_management import retired_identity
 from scripts.adopt_c26_templates import refresh_config
 from assistant_kernel import __version__
 
@@ -31,8 +32,11 @@ def adopt(settings,decision,*,apply=False):
             if manifest['files'].get('profiles.json')==package['template_ref']['sha256'] and any(
                 Path(name).is_relative_to(path.parent) for config in loaded.values() for name in config.source_files):roots.append(path.parent)
         if len(roots)!=1:raise ValueError('Published template provenance is ambiguous')
-        old=TemplateBundle(roots[0]);target=new.preserve(settings.data_root) if apply else new;configs={}
+        old=TemplateBundle(roots[0]);target=new.preserve(settings.data_root) if apply else new;configs={};retired=[]
         for selector,config in loaded.items():
+            if retired_identity(project,config.agent_key):
+                retired.append(selector)
+                continue
             updated=refresh_config(config,old,target)
             actor='pm' if config.agent_key.endswith(':manager') else config.agent_key.rsplit(':',1)[-1]
             policy=target.profiles['mcp_tool_policy']
@@ -40,7 +44,8 @@ def adopt(settings,decision,*,apply=False):
             updated=replace(updated,allowed_tools=tuple(tools))
             configs[selector]=replace(updated,config_sha256=hashlib.sha256(canonical_json({**updated.__dict__,'config_sha256':None})).hexdigest())
         result={'project_id':project,'previous_ref':old_ref,'old_tasks_rebound':False,
-            'tool_counts':{k:len(v.allowed_tools) for k,v in configs.items()},'applied':False}
+            'tool_counts':{k:len(v.allowed_tools) for k,v in configs.items()},
+            'retired_selectors_omitted':retired,'applied':False}
         if apply:
             raw=Path(decision).read_bytes();root=service.loader.runtime.describe(project).vault_root
             relative='operations/upgrade-decisions/mcp-'+__version__+'.json';path=root/relative;path.parent.mkdir(parents=True,exist_ok=True)
