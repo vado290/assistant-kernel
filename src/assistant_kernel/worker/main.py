@@ -14,9 +14,7 @@ from assistant_kernel.config import KernelSettings
 from assistant_kernel.harness import CodexCliHarness
 from assistant_kernel.repositories import CoreRepository
 from assistant_kernel.services.runtime_admission import RuntimeCapacityUnavailable
-from assistant_kernel.services.recovery import RecoveryService
 from assistant_kernel.services.run_processor import RunProcessor
-from assistant_kernel.services.incidents import IncidentService
 from assistant_kernel.services.capability_bundle import CapabilityBundleService
 from assistant_kernel.services.reconciliation import ReconciliationService
 from assistant_kernel.services.supervisor_processor import SupervisorProcessor
@@ -368,19 +366,14 @@ async def _poll_or_shutdown(
 async def run_maintenance_loop(
     settings: KernelSettings, shutdown_event: asyncio.Event | None = None,
 ) -> None:
-    """Periodic maintenance: tiered recovery, quarantine, and cards.
+    """Quarantine expired attempts, clean processes, then request reconciliation.
 
-    v6.1 order matters: expired runs are quarantined and their processes
-    terminated first, then the recovery classifier sweeps every unresolved
-    reconciling Run (covering both the lease-expiry and the exception-path
-    entries), and only the remaining T3 Runs reach the card queue.
+    Uncertain attempts stay quarantined until an explicit reconciliation action.
     """
     repository = CoreRepository(settings)
     reconciliations = ReconciliationService(
         settings, CoreRepository(settings)
     )
-    recovery = RecoveryService(settings, repository)
-    incidents = IncidentService(settings)
     from assistant_kernel.services.config_consumers import ConfigConsumers
     configuration=ConfigConsumers(settings)
     while shutdown_event is None or not shutdown_event.is_set():
@@ -404,22 +397,6 @@ async def run_maintenance_loop(
                 await terminate_recorded_process_group(
                     abandoned.get("process_pid"), abandoned.get("process_start_ticks")
                 )
-            for decision in await recovery.sweep():
-                if decision.get("notify"):
-                    dead = await repository.get_run(str(decision["run_id"]))
-                    if dead is not None:
-                        incidents.record(
-                            project_id=str(dead["project_id"]),
-                            incident_key=f"reconciliation:{dead['run_id']}",
-                            severity="high",
-                            summary=str(decision.get("reason") or "Run requires reconciliation"),
-                            evidence_refs=[{
-                                "kind": "run", "run_id": str(dead["run_id"]),
-                                "status": str(dead["status"]),
-                            }],
-                            source_run_id=str(dead["run_id"]),
-                        )
-                        await _notify_terminal_failure(repository, dead)
             try:
                 await repository.reconcile_pending_supervision()
             except Exception:

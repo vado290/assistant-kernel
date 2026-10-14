@@ -87,7 +87,7 @@ async def test_unknown_cleanup_stays_reconciling_and_blocks_every_retry_path(cor
     monkeypatch.setattr('assistant_kernel.services.validation_process_v12.cleanup_python_group',unknown)
     with pytest.raises(RuntimeError,match='never replay'):await ValidationProcessV12(core_settings,repo).run(task=task,policy={},bundle={'bundle_sha256':'3'*64})
     assert await repo.retry_run(str(task['run_id']),str(task['worker_instance_id']),str(task['claim_token']),{'type':'UnknownCleanup'})=='reconciling'
-    assert await repo.auto_requeue_reconciled(run_id=str(task['run_id']),reason='test automatic recovery')=='not_reconciling'
+    assert await repo.claim_run('cleanup-test',str(uuid.uuid4()),60) is None
     with pytest.raises(PermissionError,match='cleanup is unresolved'):
         await repo.reconcile_run(str(task['run_id']),'retry','test manual recovery')
     current=await repo.get_run(str(task['run_id']))

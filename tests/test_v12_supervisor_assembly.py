@@ -52,8 +52,6 @@ async def test_supervisor_uses_leased_control_actor_fixed_skills_and_discovered_
     assert selected['models']['main_evaluation']['model'] == 'gpt-5.6-sol'
     refreshed = await repo.get_run(str(run['run_id']))
     assert await supervisor.invocation_configuration('demo', refreshed) == selected
-    from assistant_kernel.services.recovery import RecoveryService
-    assert RecoveryService(core_settings, repo)._tier(refreshed, {}) == 3
     await supervisor._codex_ephemeral(project_id='demo',prompt='bounded purpose',invocation_id='sup-proof',
         model='gpt-5.6-sol',reasoning_effort='medium',timeout_seconds=90,
         task_run_id=str(run['run_id']),control_run_id=str(run['run_id']))

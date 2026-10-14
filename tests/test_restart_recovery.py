@@ -9,6 +9,53 @@ import pytest
 from assistant_kernel.config import KernelSettings
 from assistant_kernel.services.run_processor import RunProcessor
 from assistant_kernel.worker import main as worker_main
+from test_core4 import core_settings, prepare_agent
+
+
+@pytest.mark.parametrize('old_process_alive',[False,True])
+async def test_maintenance_keeps_legacy_supervisor_quarantined_for_manual_action(
+    core_settings, monkeypatch, old_process_alive,
+) -> None:
+    import os
+    import uuid
+    from pathlib import Path
+    from psycopg.types.json import Jsonb
+    from assistant_kernel.repositories import CoreRepository
+    from assistant_kernel.worker.process_control import process_start_ticks
+    from assistant_kernel.services.reconciliation import ReconciliationService
+
+    prepare_agent(core_settings)
+    repo=CoreRepository(core_settings)
+    async with repo.database.connection() as c:
+        for version in (8,9,10,11):
+            await c.execute((Path(__file__).parents[1]/'migrations'/f'upgrade_core5_v{version}.sql').read_text())
+        await c.commit()
+    incoming=await repo.ingest_message(project_id='demo',agent_key='project:demo:supervisor',
+        channel='discord',chat_id='manual-recovery',user_id='test-owner',external_event_id=str(uuid.uuid4()),
+        external_message_id=None,content={'text':'isolated recovery test'})
+    run=await repo.create_run(project_id='demo',agent_key='project:demo:supervisor',run_type='chat',
+        trigger_message_id=str(incoming['message']['message_id']),
+        request={'interaction_kind':'supervisor_consultation','task_id':str(uuid.uuid4())})
+    async with repo.database.connection() as c:
+        if incoming.get('run'):
+            await c.execute("UPDATE assistant.runs SET status='cancelled' WHERE run_id=%s",(incoming['run']['run_id'],))
+        await c.execute("UPDATE assistant.runs SET status='reconciling',attempt=1,process_pid=%s,process_start_ticks=%s,error_json=%s WHERE run_id=%s",
+            (os.getpid() if old_process_alive else None,process_start_ticks(os.getpid()) if old_process_alive else None,
+             Jsonb({'type':'LeaseExpired','message':'isolated old attempt'}),run['run_id']))
+        await c.commit()
+    stop=asyncio.Event()
+    async def one_iteration(*args):stop.set()
+    monkeypatch.setattr(worker_main,'_poll_or_shutdown',one_iteration)
+    await asyncio.wait_for(worker_main.run_maintenance_loop(core_settings,stop),15)
+    current=await repo.get_run(str(run['run_id']))
+    assert current['status']=='reconciling' and current['attempt']==1
+    assert await repo.claim_run('isolated',str(uuid.uuid4()),60) is None
+    card_id=current['executor_json']['reconciliation']['card_message_id']
+    card=await repo.get_message(card_id)
+    assert card['message_type']=='reconciliation'
+    actions={action['id'] for action in card['content_json']['actions']}
+    assert ('wait' in actions) if old_process_alive else ('retry' in actions)
+    assert await ReconciliationService(core_settings,repo).notify_due()==[]
 
 
 @pytest.mark.asyncio

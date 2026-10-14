@@ -61,7 +61,6 @@ async def test_historical_run_cannot_resume_retry_answer_or_be_claimed(core_sett
         await c.commit()
     before=await repo.get_run(run_id)
     calls=[repo.unblock_run(run_id,'old unblock'),repo.reconcile_run(run_id,'retry','old card'),
-        repo.auto_requeue_reconciled(run_id=run_id,reason='old retry'),
         repo.resume_waiting_run(run_id=run_id,project_id='kernel',channel='test',chat_id='history',user_id='owner',
             source_message_id=str(created['message']['message_id']),idempotency_key='old-resume'),
         repo.record_question_choice(project_id='kernel',channel='test',chat_id='history',user_id='owner',

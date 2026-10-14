@@ -5323,61 +5323,6 @@ class CoreRepository:
             )).fetchall())
         return rows
 
-    async def list_reconciling_runs(self, limit: int = 20) -> list[dict[str, Any]]:
-        """All reconciling Runs not yet resolved by a card decision."""
-        async with self.database.connection() as connection:
-            rows = list(await (await connection.execute(
-                """
-                SELECT * FROM assistant.runs
-                WHERE status='reconciling' AND project_id NOT IN ('system','butler-maintenance') AND agent_key NOT IN ('system-butler','project:kernel:intake','project:butler-maintenance:intake','retired:management')
-                  AND COALESCE(executor_json#>>'{reconciliation,resolved_action}','')=''
-                ORDER BY updated_at LIMIT %s
-                """,
-                (min(max(limit, 1), 100),),
-            )).fetchall())
-        return rows
-
-    async def auto_requeue_reconciled(
-        self, *, run_id: str, reason: str,
-    ) -> str:
-        """v6.1 tiered recovery: requeue a reconciling Run with bounded backoff.
-
-        Mirrors retry_run's queued/dead_letter branches but operates on the
-        reconciling state (the lease is already cleared). The caller must
-        only send Runs whose side effects are provably absent; publish and
-        python Runs always stay on the manual card path.
-        """
-        async with self.database.connection() as connection:
-            await self._require_active_run(connection, run_id)
-            cursor = await connection.execute(
-                """
-                UPDATE assistant.runs
-                SET status=CASE WHEN attempt>=max_attempts THEN 'dead_letter'
-                                ELSE 'queued' END,
-                    available_at=CASE
-                      WHEN attempt>=max_attempts THEN available_at
-                      WHEN request_json->>'interaction_kind'='supervisor_consultation'
-                        THEN now() + (CASE GREATEST(max_attempts-attempt,0)
-                          WHEN 3 THEN 30 WHEN 2 THEN 120 ELSE 600 END) * interval '1 second'
-                      ELSE now()+(LEAST(attempt,6)*interval '5 seconds') END,
-                    ended_at=CASE WHEN attempt>=max_attempts THEN now()
-                                  ELSE ended_at END,
-                    error_json=COALESCE(error_json,'{}'::jsonb) || %s,
-                    updated_at=now()
-                WHERE run_id=%s AND status='reconciling'
-                    AND (NOT executor_json ? 'validation_process' OR executor_json#>>'{validation_process,cleanup,status}'='verified')
-                RETURNING run_id,status
-                """,
-                (
-                    Jsonb(json_compatible({
-                        "type": "AutoRequeued", "message": reason[:1000],
-                    })),
-                    run_id,
-                ),
-            )
-            row = await cursor.fetchone()
-            await connection.commit()
-            return str(row["status"]) if row else "not_reconciling"
 
     async def reconciliation_health(self) -> dict[str, Any]:
         async with self.database.connection() as connection:
