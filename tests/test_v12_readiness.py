@@ -7,6 +7,46 @@ from scripts.migrate_core5_v8 import migrate
 from test_core4 import core_settings
 
 
+async def test_readiness_uses_scheduler_heartbeat_updated_during_config_read(monkeypatch):
+    from datetime import datetime, timezone, timedelta
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    import assistant_kernel.api.main as api
+    import assistant_kernel.services.system_config as config_module
+
+    now=lambda:datetime.now(timezone.utc).isoformat()
+    stale=(datetime.now(timezone.utc)-timedelta(seconds=20)).isoformat()
+    heartbeat={'process_running':True,'connected':True,'stale':False,'last_scan_at':stale}
+    refresh=True
+    def config(_ref):
+        # The scheduler advances while the health request is loading config.
+        if refresh:heartbeat['last_scan_at']=now()
+        return {'kernel':{'scheduler':{'enabled':True,'poll_seconds':1}}}
+    monkeypatch.setattr(config_module,'SystemConfigService',lambda _:SimpleNamespace(
+        state=AsyncMock(return_value={'desired_ref':{}}),_config=config))
+    monkeypatch.setattr(api,'settings',SimpleNamespace(
+        load_provider_secrets=lambda:SimpleNamespace(providers={})))
+    monkeypatch.setattr(api,'repository',SimpleNamespace(
+        database=SimpleNamespace(ping=AsyncMock(return_value=True)),
+        schema_version=AsyncMock(return_value=api.__schema_version__),
+        table_names=AsyncMock(return_value=['kernel_meta','messages','model_invocations',
+            'project_grants','runs','sessions','project_file_changes','project_runtime_units',
+            'service_instances','project_schedules','schedule_ticks']),
+        reconciliation_health=AsyncMock(return_value={}),execution_health=AsyncMock(return_value={}),
+        delivery_health=AsyncMock(return_value={})))
+    monkeypatch.setattr(api,'read_channel_health',lambda settings,channel:dict(heartbeat) if channel=='scheduler'
+        else {'process_running':True,'connected':True,'stale':False})
+    monkeypatch.setattr(api,'read_worker_health',lambda _: {'fresh_by_queue':{'interactive':2,'runtime':4}})
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=api.app),base_url='http://isolated') as client:
+        ready=await client.get('/health/ready')
+        assert ready.status_code==200 and ready.json()['scheduler_ready'] is True
+        assert ready.json()['scheduler']['last_scan_at']==heartbeat['last_scan_at']
+        refresh=False;heartbeat['last_scan_at']=stale
+        unavailable=await client.get('/health/ready')
+        assert unavailable.status_code==503 and unavailable.json()['scheduler_ready'] is False
+        assert 'scheduler_unavailable' in unavailable.json()['degraded_reasons']
+
+
 async def test_readiness_requires_v8_ledger_and_tolerates_unrelated_tables(core_settings, monkeypatch):
     import assistant_kernel.api.main as api
     repository=CoreRepository(core_settings)

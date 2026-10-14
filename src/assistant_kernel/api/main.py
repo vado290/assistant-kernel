@@ -161,7 +161,6 @@ async def health_ready(response: Response) -> dict:
         "project_schedules", "schedule_ticks",
     }
     schema_ready = schema_version == __schema_version__ and required_tables <= set(tables)
-    scheduler = read_channel_health(settings, 'scheduler')
     from assistant_kernel.services.system_config import SystemConfigService
     scheduler_enabled=False
     scheduler_lag_seconds=None
@@ -173,6 +172,8 @@ async def health_ready(response: Response) -> dict:
         scheduler_poll_seconds=scheduler_config.get('poll_seconds',1)
     except Exception:
         if database_ready:scheduler_enabled=True
+    # Config loading can take time; judge the latest heartbeat, not a pre-load snapshot.
+    scheduler = read_channel_health(settings, 'scheduler')
     if scheduler.get('last_scan_at'):
         from datetime import datetime,timezone
         try:scheduler_lag_seconds=max(0,(datetime.now(timezone.utc)-datetime.fromisoformat(scheduler['last_scan_at'])).total_seconds())
