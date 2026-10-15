@@ -2,7 +2,9 @@
 
 Files in ``core/sql`` are applied in name order, each in its own transaction,
 and recorded in ``assistant.schema_migrations``. An applied file must never be
-edited; add a new file instead.
+edited; add a new file instead. Hashes are taken over the content with CRLF
+normalized to LF, so a Windows (CRLF) and a Git (LF) checkout of the same file
+match; rows recorded from CRLF bytes before that normalization still match.
 """
 from __future__ import annotations
 
@@ -37,6 +39,13 @@ def connection_args(settings: KernelSettings) -> dict[str, Any]:
     }
 
 
+def digests(raw: bytes) -> tuple[str, str]:
+    """Return (hash to record, legacy CRLF-bytes hash) for a migration file."""
+    text = raw.replace(b"\r\n", b"\n")
+    return (hashlib.sha256(text).hexdigest(),
+            hashlib.sha256(text.replace(b"\n", b"\r\n")).hexdigest())
+
+
 def apply(args: dict[str, Any], directory: Path = SQL_DIR, *, dry_run: bool = False) -> list[str]:
     """Apply pending migrations; return the names applied (or pending, for a dry run)."""
     with psycopg.connect(**args) as connection:
@@ -46,9 +55,9 @@ def apply(args: dict[str, Any], directory: Path = SQL_DIR, *, dry_run: bool = Fa
             "SELECT name, sha256 FROM assistant.schema_migrations").fetchall())
         names = []
         for path in sorted(directory.glob("*.sql")):
-            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            digest, crlf_digest = digests(path.read_bytes())
             if path.name in applied:
-                if applied[path.name] != digest:
+                if applied[path.name] not in (digest, crlf_digest):
                     raise RuntimeError(f"applied migration {path.name} was edited")
                 continue
             names.append(path.name)

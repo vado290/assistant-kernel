@@ -1,6 +1,8 @@
 """Self-checks for the phase-0 test harness and migration runner."""
 from __future__ import annotations
 
+import hashlib
+
 import psycopg
 import pytest
 
@@ -29,6 +31,28 @@ def test_migrations_apply_once_in_order(kernel_settings, tmp_path):
         assert [r[0] for r in connection.execute("SELECT value FROM assistant.probe ORDER BY value")] == ["a", "b"]
 
     (directory / "0001_a.sql").write_text("SELECT 1;", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="was edited"):
+        migrate.apply(args, directory)
+
+
+def test_crlf_recorded_migration_matches_lf_file(kernel_settings, tmp_path):
+    directory = tmp_path / "sql"
+    directory.mkdir()
+    crlf = b"CREATE TABLE assistant.eol(value text);\r\nINSERT INTO assistant.eol VALUES ('a');\r\n"
+    (directory / "0001_eol.sql").write_bytes(crlf)
+    args = migrate.connection_args(kernel_settings)
+    assert migrate.apply(args, directory) == ["0001_eol.sql"]
+    # Rows written before normalization hold the sha256 of the raw CRLF bytes.
+    with psycopg.connect(**args) as connection:
+        connection.execute("UPDATE assistant.schema_migrations SET sha256=%s WHERE name='0001_eol.sql'",
+                           (hashlib.sha256(crlf).hexdigest(),))
+
+    (directory / "0001_eol.sql").write_bytes(crlf.replace(b"\r\n", b"\n"))
+    assert migrate.apply(args, directory) == []
+    (directory / "0001_eol.sql").write_bytes(crlf)
+    assert migrate.apply(args, directory) == []
+
+    (directory / "0001_eol.sql").write_bytes(crlf.replace(b"'a'", b"'b'"))
     with pytest.raises(RuntimeError, match="was edited"):
         migrate.apply(args, directory)
 
