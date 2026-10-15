@@ -36,6 +36,7 @@ assistant-kernel-run-worker = "assistant_kernel.worker.run_main:run"
 assistant-kernel-maintenance = "assistant_kernel.worker.maintenance_main:run"
 assistant-kernel-scheduler = "assistant_kernel.worker.scheduler_main:run"
 assistant-kernel-feishu = "assistant_kernel.worker.feishu_main:run"
+assistant-kernel-migrate = "assistant_kernel.core.migrate:run"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -46,6 +47,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 assistant_kernel = [
   "contracts/*.json",
+  "core/sql/*.sql",
   "prompts/roles/*.md",
   "prompts/skills/*/SKILL.md",
   "prompts/skills/*/references/*.md",

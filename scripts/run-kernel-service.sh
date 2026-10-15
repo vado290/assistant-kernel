@@ -9,17 +9,12 @@ esac
 
 kernel_workspace="${AI_HOME:-/home/v/AI}"
 kernel_data="${ASSISTANT_DATA_ROOT:-${kernel_workspace}/assistant-data}"
-version_file="${kernel_data}/runtime/kernel-current.txt"
-if [[ ! -f "${version_file}" ]]; then
-  echo "Kernel version pointer is missing: ${version_file}" >&2
-  exit 66
+# Production always runs the fixed prod venv; scripts/deploy.ps1 installs into it.
+binary="${kernel_data}/runtime/kernel-venvs/prod/bin/${service_name}"
+# Transitional fallback until the first prod deploy exists (remove in rebuild phase 4).
+if [[ ! -x "${binary}" && -f "${kernel_data}/runtime/kernel-current.txt" ]]; then
+  binary="${kernel_data}/runtime/kernel-venvs/$(tr -d '\r\n' < "${kernel_data}/runtime/kernel-current.txt")/bin/${service_name}"
 fi
-version="$(tr -d '\r\n' < "${version_file}")"
-if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "invalid Kernel version pointer" >&2
-  exit 65
-fi
-binary="${kernel_data}/runtime/kernel-venvs/${version}/bin/${service_name}"
 if [[ ! -x "${binary}" ]]; then
   echo "Kernel executable is missing: ${binary}" >&2
   exit 66
