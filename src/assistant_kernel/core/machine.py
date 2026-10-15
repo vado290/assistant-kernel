@@ -241,6 +241,8 @@ def _supervisor_item(task, run_input: dict[str, Any], result: dict[str, Any]) ->
     """Turn a Supervisor decision into the task's card item, enforcing Kernel rules."""
     decision = result.get("decision")
     message = result.get("message", "")
+    if decision == "relay_pm_questions" and run_input.get("reason") != "pm_questions":
+        decision = "ask_user"   # no PM questions are pending: the model just means "ask the user"
     if run_input.get("reason") == "pm_questions":
         pm_questions = run_input["pm_questions"]
         if decision != "relay_pm_questions" or not _covers(pm_questions, result):
@@ -327,9 +329,13 @@ async def _review_input_result(c, task, run, result) -> None:
     if not task or task["state"] != "awaiting_user" or not item or item["item_id"] != run["base"].get("item_id"):
         await event(c, run["project_id"], "stale_result", task_id=run["task_id"], run_id=run["run_id"])
         return
-    if result.get("decision") == "keep":
-        return
-    await _upgrade_item(c, task, item, result.get("item") or {})
+    if result.get("decision") != "keep":
+        item = await _upgrade_item(c, task, item, result.get("item") or {})
+    newer = await one(c, """SELECT message_id FROM core.messages WHERE task_id=%s AND direction='inbound'
+                            AND created_at > %s ORDER BY created_at DESC LIMIT 1""", (task["task_id"], run["started_at"]))
+    if newer:   # the user wrote again while this review ran: review the card once more
+        await enqueue(c, task["project_id"], "supervisor", "review_input", {"message_id": str(newer["message_id"])},
+                      task=task, base={"item_id": item["item_id"]})
 
 
 async def _upgrade_item(c, task, old_item, proposal: dict[str, Any]) -> None:
@@ -340,6 +346,7 @@ async def _upgrade_item(c, task, old_item, proposal: dict[str, Any]) -> None:
     await cards.replace_task_item(c, task["project_id"], task["task_id"], new)
     await event(c, task["project_id"], "card_upgraded", task_id=task["task_id"],
                 old_item=old_item["item_id"], new_item=new["item_id"])
+    return new
 
 
 async def _consult_result(c, run, result) -> None:

@@ -125,6 +125,34 @@ async def test_s03_directional_input_upgrades_card(kernel, sim):
     assert (await sim.task(task_id))["state"] == "awaiting_user"
 
 
+async def test_s03b_relay_label_on_a_supervisor_card_is_accepted(kernel, sim):
+    """Real-run finding: the model labelled an upgraded Supervisor question card relay_pm_questions."""
+    task_id = await start_task(kernel, sim)
+    sim.script("supervisor:evaluate", {"decision": "ask_user", "message": "缺内容",
+                                       "questions": [{"id": "c1", "text": "三件待办是什么？"}]})
+    await sim.drain()
+    await kernel.receive("p1", role="pm", text="改成写 done.md")
+    sim.script("supervisor:review_input", {"decision": "upgrade", "item": {
+        "decision": "relay_pm_questions", "message": "已改为 done.md",
+        "questions": [{"id": "c1", "text": "今天完成的三件事是什么？"}]}})
+    await sim.drain()
+    item = await sim.item("p1", task_id)
+    assert item["content"]["questions"][0]["text"] == "今天完成的三件事是什么？" and item["deliver_to"] == "supervisor"
+
+
+async def test_s03c_message_during_review_is_reviewed_again(kernel, sim):
+    task_id = await start_task(kernel, sim)
+    sim.script("supervisor:evaluate", next_step("requirements", "日报"))
+    await sim.drain()
+    await kernel.receive("p1", role="pm", text="补充：字体大一点")
+    review = await kernel.claim("w1")                       # first review is running ...
+    await kernel.receive("p1", role="pm", text="不对，改成周报")   # ... when the user writes again
+    await kernel.complete(review, {"decision": "keep"})
+    sim.script("supervisor:review_input", {"decision": "upgrade", "item": next_step("requirements", "周报")})
+    await sim.drain()
+    assert (await sim.item("p1", task_id))["content"]["instruction"] == "周报"
+
+
 async def test_s04_plain_supplement_keeps_card(kernel, sim):
     task_id = await start_task(kernel, sim)
     await execute_next(kernel, sim, task_id, "requirements")
