@@ -71,7 +71,9 @@ Step "build wheel $version ($stamp)"
 InContainer $BasePython -m pip wheel --quiet --no-deps -w "$Wheels/$stamp" $Kernel
 $wheel = "$(docker exec AI sh -c "ls $Wheels/$stamp/*.whl")".Trim()
 if (-not $wheel) { throw "wheel build produced no file" }
-$previous = "$(docker exec AI sh -c "ls -1d $Wheels/*/ 2>/dev/null | sort | grep -v $stamp | tail -n 1")".Trim()
+# Only wheels that reached prod (marked .deployed) are rollback targets.
+$previous = "$(docker exec AI sh -c "ls -1d $Wheels/*/.deployed 2>/dev/null | sort | tail -n 1 | xargs -r dirname")".Trim()
+if ($previous) { $previous += "/" }
 
 # 2. verify in the test venv
 Step "install into test venv"
@@ -82,7 +84,11 @@ if (-not $SkipTests) {
     Step "pytest $TestPath (temporary databases)"
     InContainer sh -c "cd $Kernel && $testPython -m pytest $TestPath -q -p no:cacheprovider"
 }
-if ($TestOnly) { Write-Output "TEST_ONLY_OK; version=$version; wheel=$wheel"; return }
+if ($TestOnly) {
+    docker exec AI rm -rf "$Wheels/$stamp"
+    Write-Output "TEST_ONLY_OK; version=$version (test venv only; wheel discarded)"
+    return
+}
 
 # 3. promote the same wheel to prod
 $prodPython = Ensure-Venv "prod"
@@ -115,6 +121,7 @@ catch {
     throw "deploy failed, rolled back to $oldVersion (migrations are not reverted): $failure"
 }
 
-# 4. keep the two newest wheels
-docker exec AI sh -c "ls -1d $Wheels/*/ | sort | head -n -2 | xargs -r rm -rf"
+# 4. mark this wheel as deployed; keep the two newest deployed wheels, drop everything else
+docker exec AI touch "$Wheels/$stamp/.deployed"
+docker exec AI sh -c "cd $Wheels && for d in */; do [ -f `$d.deployed ] || rm -rf `$d; done; ls -1d */ | sort | head -n -2 | xargs -r rm -rf"
 Write-Output "ASSISTANT_KERNEL_DEPLOYED; version=$version; wheel=$wheel; previous=$previous"

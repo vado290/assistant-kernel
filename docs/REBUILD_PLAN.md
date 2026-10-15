@@ -399,6 +399,11 @@ IngressService.receive(event):
 - **交付物**：`assistant_kernel/core/` 包，以及对应的单元测试和场景测试。场景测试直接注入执行结果，不经过模型。
 - **退出标准**：第 9 节所有场景在"直接注入执行结果"的方式下全部通过；在多项目并发压力测试中，"每项目一个活动任务""每任务一个游标""每项目一张卡"三个不变式始终成立。
 - **不做**：不接入渠道、不调用模型、不碰生产。
+- **完成记录（2026-10-15，分支 `rebuild/core6`，未部署生产）**：
+  - 代码：`core/sql/0001_core6.sql`（独立的 `core` schema）、`core/rules.py`（阶段、门槛、批准推导，纯函数）、`core/cards.py`（每项目一张卡）、`core/machine.py`（状态机，唯一修改任务状态的地方）、`core/kernel.py`（对外入口，每个方法一个事务；领取、完成、失败、租约回收）、`core/invariants.py`（三条不变式检查），共约 1100 行。
+  - 测试：`tests/core` 共 25 项通过、5 项跳过。第 1 阶段的 15 个场景（S1–S6、S8–S17、S19）都在"注入执行结果"的方式下通过，并且每一步之后都自动检查三条不变式。另有 6 个 worker 并发领取的测试（同一项目只有一个能领到），以及源码扫描测试（只有所属模块能写各自的表）。
+  - 跳过的 5 项：S7 紧急挂起、S18 业务程序提问（按 MVP 原则推迟，见修订记录）；S20 凭据（阶段 3）；S21 每周进化（阶段 6）；S22 配置切换（阶段 2）。
+  - 打包后的 wheel 在 test 环境中也验证通过（`deploy.ps1 -TestOnly`）。
 
 ### 阶段 2：执行器与 Dispatcher
 - **内容**：按 5.3 把执行器移植到 `core/executors/`；新写 `supervisor-decision.v2` 输出格式，并改写 Supervisor 的角色说明和技能（`supervisor.md`、`assistant-goal-supervisor`、`assistant-prompt-assembly`）；PM 的 `agent-result.v1` 只做必要调整；Dispatcher；把 MCP 工具（`scoped_tools`）改为通过 `runs.task_id` 定位任务，并删除已退役的工具（stage 相关、propose/create_project 的旧实现等）。
@@ -481,6 +486,13 @@ IngressService.receive(event):
 | 10-15 | 常设 `assistant_test` 测试库 | 每次测试临时建库、跑完即删 | 沿用现有测试的成熟做法，避免测试之间互相污染 |
 | 10-15 | 阶段 0 同时提供 FakeGateway 和场景辅助函数 | 阶段 0 只提供 FakeHarness、临时库夹具和迁移执行器；FakeGateway 和 `send_pm_text`、`card()`、`click()` 等辅助函数随阶段 1 的服务接口一起实现 | 这些辅助函数依赖还不存在的接口，先写会是空转 |
 | 10-15 | 迁移执行器放在 `scripts/migrate.py` | 放进包内：`assistant_kernel/core/migrate.py`，SQL 放在 `core/sql/`，命令为 `assistant-kernel-migrate` | 部署和测试使用同一份随 wheel 发布的迁移代码 |
+| 10-15 | 新表与旧表同在 `assistant` schema，阶段 4 再迁走旧表 | 新表放在独立的 `core` schema；阶段 4 只需把旧的 `assistant.runs/messages` 等移入 `archive_core5` | 开发期间新旧表不会重名冲突；即使误把开发分支部署到生产，也只会多出一个空 schema |
+| 10-15 | 卡片按钮提交时带卡片版本号，用于识别旧卡 | 改为按条目 id 识别：条目一旦被处理或升级就换新 id，点击不存在的条目即视为旧卡 | 同一张卡上逐项提交时，其余条目不会被误判为旧卡；草稿修改也不再增加版本号 |
+| 10-15 | 卡片上的"补充说明"在提交时一并转交 | 补充消息挂在任务上，下一个 PM 回合领取时统一读取（`consumed_by_run_id`）；卡片上的补充区只做展示 | 补充内容只走一条路径，不会重复投递 |
+| 10-15 | 咨询类 Supervisor 执行绑定当前任务 | 咨询执行不绑定任务（`task_id` 为空，只在输入中记录相关任务） | 咨询不会阻塞 PM 执行，也不会被当作任务的游标 |
+| 10-15 | S7 紧急任务抢占挂起、S18 业务程序共用卡片 | 推迟到 MVP 之后：紧急任务暂时只在队列中排到最前，不抢占正在进行的任务；业务程序提问等运行单元启用后再做 | 依据 MVP 优先原则；运行单元相关表目前为空 |
+| 10-15 | Supervisor 在任务评估中可以提出新任务 | 只有咨询可以提出新任务；任务评估只产出 ask_user / propose_next / relay_pm_questions / propose_complete / propose_cancel | 保证每个任务同一时刻只有一个卡片条目 |
+| 10-15 | 回滚取"上一个 wheel" | 只有成功部署到生产的 wheel 才会被标记 `.deployed`，回滚和保留策略只看这些；`-TestOnly` 测完即删除构建出的 wheel | 避免回滚到从未上线过的版本 |
 | 10-15 | 网关同时接 Discord 和飞书 | 只接 Discord；飞书退出 Kernel 业务逻辑，保留供以后的 webhook、多维表格使用 | 用户决定 |
 
 ## 11. 用户确认记录

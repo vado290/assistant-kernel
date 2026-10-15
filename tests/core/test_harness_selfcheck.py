@@ -43,7 +43,8 @@ def test_failed_migration_leaves_no_partial_record(kernel_settings, tmp_path):
         migrate.apply(args, directory)
     with psycopg.connect(**args) as connection:
         assert connection.execute("SELECT to_regclass('assistant.half')").fetchone()[0] is None
-        assert connection.execute("SELECT count(*) FROM assistant.schema_migrations").fetchone()[0] == 0
+        assert connection.execute(
+            "SELECT count(*) FROM assistant.schema_migrations WHERE name='0001_bad.sql'").fetchone()[0] == 0
 
 
 async def test_fake_harness_replays_scripts_in_order(fake_harness, tmp_path):

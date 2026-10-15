@@ -42,3 +42,18 @@ def kernel_settings(tmp_path):
 @pytest.fixture
 def fake_harness():
     return FakeHarness()
+
+
+@pytest.fixture
+async def kernel(kernel_settings):
+    from assistant_kernel.core.kernel import Kernel
+    k = Kernel(kernel_settings, retry_backoff_seconds=0)
+    for project in ("p1", "p2"):
+        await k.ensure_project(project)
+    return k
+
+
+@pytest.fixture
+def sim(kernel):
+    from .sim import Sim
+    return Sim(kernel)
