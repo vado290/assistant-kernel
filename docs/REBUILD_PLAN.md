@@ -513,6 +513,20 @@ IngressService.receive(event):
   7. 重写 README 和文档（历史文档移入 `docs/archive`）。
 - **退出标准**：prod 健康检查通过；用户在真实 Discord 中验收 S1，以及至少一个返工场景。
 
+**阶段 4 进度（2026-10-15）**：
+- **4a 切换：已完成。** 提交为 `ce636ba`、`6bdbd54`。
+  - 生产进程从 13 个减为 5 个：`kernel-core-dispatcher`、`kernel-core-gateway`、`kernel-api`、`kernel-mcp`、`docling-serve`。旧的 worker、Discord、飞书、维护、调度进程已全部下线。
+  - `kernel`、`trading-risk-bot`、`kernel-v12-validation` 三个项目的 PM 和 Supervisor 频道全部由新核心接管（`config/core-discord.yaml`）。
+  - 旧系统里未完成的 kernel 任务已取消；测试程序已移除。
+  - 切换前已核对：三个项目的 PM（五个阶段）和 Supervisor 配置都能被新核心正常加载。
+  - 切换中发现并修复：Docker 对 AI 容器的健康检查访问旧的 `/health/ready`，旧 worker 下线后容器被标记为 unhealthy。现在 `/health/ready` 改为检查新核心（数据库和 core 表可用；运行积压和待发消息只作参考），容器已恢复 healthy。
+  - 部署脚本的就绪判断改为：所有 `kernel-*` 程序处于 RUNNING，且版本号一致。
+- **4b 删除旧代码：暂缓（按 MVP 原则）。**
+  - 依赖分析表明，旧代码是"缠在一起"而不是单纯不再使用：`agent_files`、`capability_bundle`、`project_changes` 等被复用的模块在文件开头就引入了旧仓库和旧服务；PM 使用的 `scoped_tools.py` 几乎引入了整个旧系统。新核心的依赖闭包因此仍有约 3.7 万行。
+  - 安全的做法是：先把新核心真正用到的少数函数抽出来，写一个精简的核心版 MCP 工具服务，再整批删除。这属于纯清理性重构，不增加功能，所以单独作为后续清理步骤；在此之前旧代码只是闲置，不会被生产执行。
+  - 旧数据移入 `archive_core5` 一项同样暂缓：被复用的服务仍会读取 `project_grants` 等少数旧表；新核心不读取旧的 runs 和 messages。
+  - `kernel-api`（访问几乎全部是健康检查和少量旧 `/v2` 查询）和 `kernel-mcp`（有外部客户端在用）暂时保持原样。
+
 ### 阶段 5：项目创建
 - **内容**：`project-spec.v1`（用途、目录授权、频道、所用角色和技能、业务背景档案、每周进化时间）；kernel 项目的项目创建技能（需求和设计阶段产出这份 spec）；BootstrapExecutor：在 kernel 任务的 build 阶段、设计已批准的前提下，**按固定规则**完成以下动作，可重复执行（幂等）：写 `projects` 表、建立 vault、采用模板 Agent 包、授权目录、创建 PM 和 Supervisor 频道并绑定、登记每周进化；Review 阶段核对每一项是否到位。
 - **退出标准**：从一句"帮我建一个 X 项目"出发，走完五阶段，生成一个可用的新项目。
