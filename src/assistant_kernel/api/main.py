@@ -129,120 +129,32 @@ async def health_live() -> dict:
 
 @app.get("/health/ready")
 async def health_ready(response: Response) -> dict:
-    secrets = settings.load_provider_secrets()
-    qwen = secrets.providers.get("dashscope")
-    database_ready = await repository.database.ping()
-    schema_version = None
-    tables: list[str] = []
-    reconciliation = {
-        "reconciling_count": 0,
-        "oldest_reconciling_seconds": 0,
-        "reconciliation_cards_pending": 0,
-    }
-    execution = {"queued": 0, "running": 0, "oldest_queued_seconds": 0}
-    discord_delivery = {
-        "pending": 0, "delivering": 0, "failed_recent_15m": 0,
-        "oldest_pending_delivery_seconds": 0,
-    }
-    if database_ready:
-        try:
-            schema_version = await repository.schema_version()
-            tables = await repository.table_names()
-            reconciliation = await repository.reconciliation_health()
-            execution = await repository.execution_health()
-            discord_delivery = await repository.delivery_health("discord")
-        except Exception:
-            database_ready = False
-    required_tables = {
-        "kernel_meta", "messages", "model_invocations", "project_grants", "runs", "sessions",
-        "project_file_changes",
-        "project_runtime_units",
-        "service_instances",
-        "project_schedules", "schedule_ticks",
-    }
-    schema_ready = schema_version == __schema_version__ and required_tables <= set(tables)
-    from assistant_kernel.services.system_config import SystemConfigService
-    scheduler_enabled=False
-    scheduler_lag_seconds=None
-    scheduler_poll_seconds=1
+    """Readiness of the rebuilt core (docs/REBUILD_PLAN.md phase 4): database and core schema reachable.
+
+    Run backlog and undelivered messages are reported for information; they do not fail readiness.
+    """
+    from assistant_kernel.core.db import Database
+    detail: dict = {"database": False, "core_schema": False}
     try:
-        service=SystemConfigService(settings);state=await service.state()
-        scheduler_config=service._config(state['desired_ref'])['kernel'].get('scheduler',{}) if state else {}
-        scheduler_enabled=bool(scheduler_config.get('enabled'))
-        scheduler_poll_seconds=scheduler_config.get('poll_seconds',1)
-    except Exception:
-        if database_ready:scheduler_enabled=True
-    # Config loading can take time; judge the latest heartbeat, not a pre-load snapshot.
-    scheduler = read_channel_health(settings, 'scheduler')
-    if scheduler.get('last_scan_at'):
-        from datetime import datetime,timezone
-        try:scheduler_lag_seconds=max(0,(datetime.now(timezone.utc)-datetime.fromisoformat(scheduler['last_scan_at'])).total_seconds())
-        except (ValueError,TypeError):pass
-    scheduler_ready=not scheduler_enabled or bool(scheduler.get('process_running') and scheduler.get('connected') and not scheduler.get('stale')
-        and scheduler_lag_seconds is not None and scheduler_lag_seconds<=max(5,3*scheduler_poll_seconds))
-    maintenance = read_channel_health(settings, "maintenance")
-    maintenance_ready = bool(
-        maintenance.get("process_running")
-        and maintenance.get("connected")
-        and not maintenance.get("stale")
-    )
-    discord_health = read_channel_health(settings, "discord")
-    worker_health = read_worker_health(settings)
-    gateway_latency = discord_health.get("gateway_latency_seconds")
-    event_loop_lag = discord_health.get("event_loop_lag_seconds")
-    discord_ready = bool(
-        discord_health.get("process_running")
-        and discord_health.get("connected")
-        and not discord_health.get("stale")
-        and (gateway_latency is None or float(gateway_latency) <= 2.0)
-        and (event_loop_lag is None or float(event_loop_lag) <= 2.0)
-    )
-    queue_health = worker_health.get("fresh_by_queue") or {}
-    interactive_ready = int(queue_health.get("interactive") or 0) > 0
-    runtime_ready = int(queue_health.get("runtime") or 0) > 0
-    execution_ready = bool(
-        interactive_ready and runtime_ready
-        and int(execution.get("oldest_queued_seconds") or 0) <= 300
-    )
-    degraded_reasons: list[str] = []
-    if not database_ready:degraded_reasons.append('database_unavailable')
-    elif not schema_ready:degraded_reasons.append('schema_incompatible')
-    if not maintenance_ready:degraded_reasons.append('maintenance_unavailable')
-    if not scheduler_ready:degraded_reasons.append('scheduler_unavailable')
-    if not discord_health.get("connected") or discord_health.get("stale"):
-        degraded_reasons.append("discord_disconnected")
-    elif not discord_ready:
-        degraded_reasons.append("discord_gateway_lag")
-    if not interactive_ready or not runtime_ready:
-        degraded_reasons.append("run_worker_missing")
-    if int(execution.get("oldest_queued_seconds") or 0) > 300:
-        degraded_reasons.append("queued_run_stale")
-    if int(discord_delivery.get("failed_recent_15m") or 0) > 0:
-        degraded_reasons.append("discord_delivery_failed")
-    ready = database_ready and schema_ready and maintenance_ready and scheduler_ready and execution_ready
+        async with Database(settings).tx() as c:
+            detail["database"] = True
+            row = await (await c.execute("SELECT to_regclass('core.tasks') AS t")).fetchone()
+            detail["core_schema"] = row["t"] is not None
+            if detail["core_schema"]:
+                runs = await (await c.execute(
+                    """SELECT count(*) FILTER (WHERE status='queued' AND available_at <= now()) AS queued,
+                              count(*) FILTER (WHERE status='running') AS running,
+                              COALESCE(EXTRACT(EPOCH FROM now() - min(created_at) FILTER (
+                                  WHERE status='queued' AND available_at <= now())), 0)::int AS oldest_queued_seconds
+                       FROM core.runs""")).fetchone()
+                outbox = await (await c.execute(
+                    "SELECT count(*) AS n FROM core.messages WHERE direction='outbound' AND delivery_status='pending'")).fetchone()
+                detail.update(runs=dict(runs), outbox_pending=outbox["n"])
+    except Exception as exc:
+        detail["error"] = type(exc).__name__
+    ready = detail["database"] and detail["core_schema"]
     response.status_code = 200 if ready else 503
-    return {
-        "status": "ready" if ready else "not_ready",
-        "database": database_ready,
-        "schema_version": schema_version,
-        "tables": tables,
-        "maintenance_ready": maintenance_ready,
-        "maintenance": maintenance,
-        "scheduler": scheduler, "scheduler_enabled": scheduler_enabled, "scheduler_ready": scheduler_ready,
-        "scheduler_lag_seconds": scheduler_lag_seconds,
-        "discord_ready": discord_ready,
-        "execution_ready": execution_ready,
-        "interactive_ready": interactive_ready, "runtime_ready": runtime_ready,
-        "degraded": bool(degraded_reasons),
-        "degraded_reasons": degraded_reasons,
-        "discord": discord_health,
-        "run_workers": worker_health,
-        "execution": execution,
-        "discord_delivery": discord_delivery,
-        **reconciliation,
-        "dashscope_embedding_configured": bool(qwen and QwenProvider(qwen).configured()),
-        "dashscope_rerank_configured": bool(qwen and QwenProvider(qwen).rerank_configured()),
-    }
+    return {"status": "ready" if ready else "not_ready", **detail}
 
 
 @app.get("/version")
