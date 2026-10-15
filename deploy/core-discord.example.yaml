@@ -1,0 +1,10 @@
+# Copy to assistant-data/config/core-discord.yaml and fill in the ids (ids are not secrets).
+# The bot token itself goes into assistant-data/config/core-discord.env (see deploy/core-test.supervisord.conf).
+bot_token_env: CORE_DISCORD_BOT_TOKEN
+guild_id: "1481086241414975562"
+allowed_user_ids:
+  - "YOUR_DISCORD_USER_ID"
+projects:
+  kernel-v12-validation:
+    pm_channel_id: "TEST_PM_CHANNEL_ID"
+    supervisor_channel_id: "TEST_SUPERVISOR_CHANNEL_ID"

@@ -105,6 +105,34 @@ class Kernel:
                                              source_message_id=record["message_id"])
             return {"action": action, "task_id": str(result["task_id"]) if result.get("task_id") else None}
 
+    async def displayed_cards(self, project_id: str) -> list[dict[str, Any]]:
+        """The open card plus closed cards whose channel messages still need tidying up."""
+        async with self.db.tx() as c:
+            return list(await (await c.execute(
+                """SELECT * FROM core.interactions WHERE project_id=%s
+                   AND (status='open' OR display->'messages' <> '{}'::jsonb) ORDER BY created_at""",
+                (project_id,))).fetchall())
+
+    async def set_card_display(self, interaction_id, display: dict[str, Any]) -> None:
+        async with self.db.tx() as c:
+            await cards.set_display(c, interaction_id, display)
+
+    async def pending_outbound(self, limit: int = 20) -> list[dict[str, Any]]:
+        async with self.db.tx() as c:
+            return list(await (await c.execute(
+                """SELECT * FROM core.messages WHERE direction='outbound' AND delivery_status='pending'
+                   ORDER BY created_at LIMIT %s""", (limit,))).fetchall())
+
+    async def mark_delivered(self, message_id, *, external_id: str | None, ok: bool = True) -> None:
+        async with self.db.tx() as c:
+            await c.execute("""UPDATE core.messages SET delivery_status=%s, external_event_id=COALESCE(%s, external_event_id)
+                               WHERE message_id=%s""", ("sent" if ok else "failed", external_id, message_id))
+
+    async def active_task(self, project_id: str) -> dict[str, Any] | None:
+        async with self.db.tx() as c:
+            return await one(c, "SELECT * FROM core.tasks WHERE project_id=%s AND state = ANY(%s)",
+                             (project_id, list(rules.ACTIVE_STATES)))
+
     async def save_draft(self, project_id: str, task_id, answers: dict[str, Any]) -> None:
         async with self.db.tx() as c:
             await lock_project(c, project_id)

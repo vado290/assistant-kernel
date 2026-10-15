@@ -485,6 +485,13 @@ IngressService.receive(event):
 ### 阶段 3：入口与交互卡片
 - **内容**：`IngressService`、`CommandService`；Discord 的卡片渲染器（4 类条目、分页、版本、撤下旧卡；须遵守 Discord 每条消息最多 5 行、25 个组件的限制）；不做飞书渲染器；提醒；PM 频道和 Supervisor 频道的路由规则；开始写入反馈事件（草稿与最终版本的差异、修改或拒绝原因、问题数量、返工记录、各阶段耗时和 token 用量）。
 - **退出标准**：在 test 环境，使用真实 Discord 测试频道和真实模型，跑通 S1、S3、S4、S5、S7、S8。
+- **进度（2026-10-15，分支 `rebuild/core6`；阶段 2 已提交 `af78a11`）**：
+  - 已完成：`core/gateway/`。其中 `service.py` 处理全部渠道逻辑（入站消息、按钮、答题弹窗、卡片同步、发件箱、提醒、`/status` `/pending` `/cancel`）；`discord_app.py` 是 discord.py 的薄封装，按钮用 `DynamicItem` 实现，网关重启后旧按钮仍然可用；点击时先应答 Discord，再写数据库。另有 `core/dispatch_main.py` 和两个命令：`assistant-kernel-core-dispatcher`、`assistant-kernel-core-gateway`。
+  - 卡片在 Discord 上的形式：每个条目在 Supervisor 频道单独发一条消息，PM 频道发一条指引。条目被处理或被替代后，原消息改为"已处理"并撤下按钮。答题弹窗预填 Supervisor 的建议答案或推荐选项；超过 5 题时分页填写并保存草稿。内容超过 1900 字时，全文作为附件。
+  - 测试：`tests/core` 共 53 项通过（新增 8 项网关测试、1 项离线 Discord 组件测试）。
+  - 测试环境已就绪但尚未启动：测试库 `assistant_core_test` 已建好并完成迁移；supervisord 中已登记 `core-test-dispatcher` 和 `core-test-gateway` 两个程序，均使用 test venv，与生产互不影响；管理脚本为 `scripts/core_test_env.ps1`。
+  - 暂缓（按 MVP 原则）：凭据卡片（S20）留到有项目真正需要时再做；答题弹窗暂用文本框，不用下拉选择。
+  - **等待用户**：创建测试机器人和两个测试频道（步骤见本次汇报）。
 
 ### 阶段 4：切换与清理
 - **内容**：
@@ -565,6 +572,7 @@ IngressService.receive(event):
 | 10-15 | S7 紧急任务抢占挂起、S18 业务程序共用卡片 | 推迟到 MVP 之后：紧急任务暂时只在队列中排到最前，不抢占正在进行的任务；业务程序提问等运行单元启用后再做 | 依据 MVP 优先原则；运行单元相关表目前为空 |
 | 10-15 | Supervisor 在任务评估中可以提出新任务 | 只有咨询可以提出新任务；任务评估只产出 ask_user / propose_next / relay_pm_questions / propose_complete / propose_cancel | 保证每个任务同一时刻只有一个卡片条目 |
 | 10-15 | 回滚取"上一个 wheel" | 只有成功部署到生产的 wheel 才会被标记 `.deployed`，回滚和保留策略只看这些；`-TestOnly` 测完即删除构建出的 wheel | 避免回滚到从未上线过的版本 |
+| 10-15 | 阶段 3 另建测试机器人（方案 A） | **共用现有机器人**：新核心只接管 `kernel-v12-validation` 的两个频道（`config/core-discord.yaml` 中 `shared_bot: true`）；旧网关新增几行代码，跳过该配置文件里列出的频道；共用模式下新网关不注册斜杠命令（否则会覆盖旧机器人的命令），`/status`、`/pending`、`/cancel 确认` 改为在频道里直接发送文字；令牌沿用旧网关的来源。按钮不冲突：旧网关只认按消息登记的按钮，新核心按钮的 id 以 `core:` 开头 | 用户不必再创建机器人；阶段 4 切换时把其余频道也列入配置即可 |
 | 10-15 | 网关同时接 Discord 和飞书 | 只接 Discord；飞书退出 Kernel 业务逻辑，保留供以后的 webhook、多维表格使用 | 用户决定 |
 
 ## 11. 用户确认记录

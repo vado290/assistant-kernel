@@ -190,6 +190,18 @@ def load_discord_config(settings: KernelSettings) -> dict[str, Any]:
     return data
 
 
+def core_channel_ids(settings: KernelSettings) -> frozenset[str]:
+    """Channels handed to the rebuilt core (config/core-discord.yaml); the legacy gateway ignores them."""
+    path = settings.data_root / "config" / "core-discord.yaml"
+    try:
+        import yaml
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, ValueError):
+        return frozenset()
+    return frozenset(str(project.get(key)) for project in (data.get("projects") or {}).values()
+                     for key in ("pm_channel_id", "supervisor_channel_id") if project.get(key))
+
+
 def _member_snapshot(user: Any) -> dict[str, Any]:
     roles = getattr(user, "roles", None) or []
     return {
@@ -1729,6 +1741,8 @@ class KernelDiscordClient(discord.Client):
     async def on_message(self, message: discord.Message) -> None:
         if message.author.bot or (self.user is not None and message.author.id == self.user.id):
             return
+        if str(message.channel.id) in core_channel_ids(self.settings):
+            return  # this channel belongs to the rebuilt core's gateway (config/core-discord.yaml)
         self.health.update(last_event_at=now_iso())
         parent_id = getattr(message.channel, "parent_id", None)
         payload = {

@@ -24,8 +24,10 @@ def new_item(*, target_kind: str, target_id: str | None, kind: str, origin: str,
              content: dict[str, Any], deliver_to: str | None = None) -> dict[str, Any]:
     if kind not in ITEM_KINDS:
         raise ValueError(f"unknown card item kind {kind}")
+    from datetime import datetime, timezone
     return {"item_id": str(uuid.uuid4()), "target": {"kind": target_kind, "id": target_id},
-            "kind": kind, "origin": origin, "deliver_to": deliver_to, "content": content}
+            "kind": kind, "origin": origin, "deliver_to": deliver_to, "content": content,
+            "created_at": datetime.now(timezone.utc).isoformat()}
 
 
 async def open_card(c, project_id: str) -> dict[str, Any] | None:
@@ -111,6 +113,12 @@ async def add_supplement(c, project_id: str, task_id: str, message_id: str) -> N
     supplements[str(task_id)] = supplements.get(str(task_id), []) + [str(message_id)]
     await c.execute("UPDATE core.interactions SET supplements=%s, updated_at=now() WHERE interaction_id=%s",
                     (Jsonb(supplements), card["interaction_id"]))
+
+
+async def set_display(c, interaction_id, display: dict[str, Any]) -> None:
+    """Record where a channel shows this card's items (gateway bookkeeping; not task state)."""
+    await c.execute("UPDATE core.interactions SET display=%s WHERE interaction_id=%s",
+                    (Jsonb(display), interaction_id))
 
 
 async def clear_task_extras(c, project_id: str, task_id: str) -> None:

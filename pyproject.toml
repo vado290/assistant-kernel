@@ -37,6 +37,8 @@ assistant-kernel-maintenance = "assistant_kernel.worker.maintenance_main:run"
 assistant-kernel-scheduler = "assistant_kernel.worker.scheduler_main:run"
 assistant-kernel-feishu = "assistant_kernel.worker.feishu_main:run"
 assistant-kernel-migrate = "assistant_kernel.core.migrate:run"
+assistant-kernel-core-dispatcher = "assistant_kernel.core.dispatch_main:run"
+assistant-kernel-core-gateway = "assistant_kernel.core.gateway.discord_app:run"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
