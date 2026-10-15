@@ -6,7 +6,7 @@ from collections import defaultdict, deque
 from typing import Any
 
 from assistant_kernel.harness.base import AgentTurnRequest, AgentTurnResult
-from assistant_kernel.services.context_budget import TurnUsage
+from assistant_kernel.harness.context_budget import TurnUsage
 
 
 class FakeHarness:

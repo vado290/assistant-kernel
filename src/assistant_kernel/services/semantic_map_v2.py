@@ -131,7 +131,7 @@ class SemanticMapV2:
         self.compat.current_ref(project_id)
         manifest=json.loads((self.compat._root(project_id)/latest['manifest']).read_bytes())
         ids=manifest['source_change_ids']
-        cursor=connection.execute("""UPDATE assistant.project_file_changes SET map_applied_generation=%s
+        cursor=connection.execute("""UPDATE core.project_file_changes SET map_applied_generation=%s
             WHERE project_id=%s AND change_id=ANY(%s) AND map_applied_generation IS NULL""",
             (latest['generation_id'],project_id,ids))
         return cursor.rowcount
@@ -188,17 +188,14 @@ class SemanticMapV2:
             fcntl.flock(lock.fileno(),fcntl.LOCK_EX)
             try:
                 with self.connection() as connection:
-                    meta=connection.execute("SELECT value FROM assistant.kernel_meta WHERE key='project-file-ledger:v2'").fetchone()
-                    if not meta or not meta['value'].get('write_enabled') or not meta['value'].get('backfill_complete'):
-                        raise PermissionError('Map 2.1 writer requires the single committed change ledger')
                     self.repair_marks_locked(connection,project_id);connection.commit()
-                    pending=connection.execute("""SELECT record_json FROM assistant.project_file_changes
+                    pending=connection.execute("""SELECT record_json FROM core.project_file_changes
                         WHERE project_id=%s AND scope_kind<>'candidate' AND map_applied_generation IS NULL
                         ORDER BY recorded_at,change_id""",(project_id,)).fetchall()
                     facts=[row['record_json'] for row in pending]
                     known={item['change_id'] for item in facts}
                     if any(item['change_id'] not in known and not connection.execute(
-                            'SELECT 1 FROM assistant.project_file_changes WHERE project_id=%s AND change_id=%s',
+                            'SELECT 1 FROM core.project_file_changes WHERE project_id=%s AND change_id=%s',
                             (project_id,item['change_id'])).fetchone() for item in changes):
                         raise PermissionError('Map changes must be committed immutable ledger facts')
                     latest=self.latest(project_id);actual=latest['generation_id'] if latest else None
@@ -218,57 +215,16 @@ class SemanticMapV2:
                         keys={r.key for r in roots}
                         files={uri:item for uri,item in files.items() if item['root_key'] not in keys or uri in visited or item['kind']=='document'}
                     for change in facts:
-                        guard=change.get('accepted_head_guard')
-                        if guard:
-                            reference=change['document_ref']
-                            if guard['kind']=='task':
-                                owner=connection.execute('SELECT request_json FROM assistant.runs WHERE project_id=%s AND run_id=%s',
-                                    (project_id,guard['owner_id'])).fetchone()
-                                heads=list((owner['request_json'].get('accepted_documents') or {}).values()) if owner else []
-                                valid=reference in heads
-                            elif guard['kind']=='unit_control':
-                                owner=connection.execute('SELECT last_control_receipt_ref FROM assistant.project_runtime_units WHERE project_id=%s AND unit_id=%s',
-                                    (project_id,guard['owner_id'])).fetchone()
-                                valid=bool(owner and owner['last_control_receipt_ref']==reference)
-                            elif guard['kind']=='schedule_control':
-                                owner=connection.execute('SELECT control_json FROM assistant.project_schedules WHERE project_id=%s AND schedule_id=%s',
-                                    (project_id,guard['owner_id'])).fetchone()
-                                valid=bool(owner and owner['control_json'].get('last_control_receipt_ref')==reference)
-                            elif guard['kind']=='schedule_tick':
-                                owner=connection.execute('''SELECT m.content_json FROM assistant.schedule_ticks t
-                                    JOIN assistant.messages m ON m.message_id=t.notification_id WHERE t.project_id=%s AND t.tick_id=%s''',
-                                    (project_id,guard['owner_id'])).fetchone()
-                                valid=bool(owner and owner['content_json'].get('tick_receipt_ref')==reference)
-                            elif guard['kind']=='operation_record':
-                                owner=connection.execute('SELECT value FROM assistant.kernel_meta WHERE key=%s',(guard['owner_id'],)).fetchone()
-                                valid=bool(owner and owner['value'].get('project_id')==project_id and owner['value'].get('ref')==reference)
-                            elif guard['kind']=='python_attempt':
-                                owner=connection.execute('SELECT executor_json FROM assistant.runs WHERE project_id=%s AND run_id=%s',
-                                    (project_id,guard['owner_id'])).fetchone()
-                                attempt=(owner['executor_json'].get('python_attempt') or {}) if owner else {}
-                                valid=reference in [attempt.get('binding_ref'),attempt.get('settlement_ref')]
-                            else:
-                                from assistant_kernel.services.supervisor_assessment_v12 import SupervisorAssessmentV12
-                                from assistant_kernel.services.task_queue import ProjectTaskQueue
-                                key=SupervisorAssessmentV12.key(project_id) if guard['kind']=='project_snapshot' else ProjectTaskQueue.metadata_key(project_id)
-                                head=connection.execute('SELECT value FROM assistant.kernel_meta WHERE key=%s',(key,)).fetchone()
-                                valid=bool(head and head['value'].get('snapshot_ref' if guard['kind']=='project_snapshot' else 'operational_baseline_ref')==reference)
-                            if not valid:
-                                continue # Durable historical fact, never a replacement for a newer accepted semantic head.
+                        if change.get('accepted_head_guard'):
+                            # Accepted-document projections of the retired control core: their owners were
+                            # archived, so they stay historical facts and never replace the current map.
+                            continue
                         uri=change['target_uri'];previous=files.get(uri)
                         entry=self._file(project_id,uri,roots,change,previous)
                         if entry:
                             if entry['document_id']:
                                 files={u:f for u,f in files.items() if f.get('document_id')!=entry['document_id'] or u==uri}
                             files[uri]=entry
-                            if guard:
-                                identity='artifact-'+hashlib.sha256(entry['document_id'].encode()).hexdigest()[:32]
-                                component={'component_id':identity,'kind':'artifact','purpose':entry['purpose'],'status':'active',
-                                    'source_refs':[change['document_ref']]+change.get('reason_source_refs',[]),
-                                    'effective_ref':change['document_ref'],'applies_to':[project_id],'dependencies':[],'related_ids':[],
-                                    'updated_at':index['generated_at'],'relevance':{phase:'high' for phase in ('requirements','design','build','audit','operate')},'criticality':None}
-                                index['components']=[c for c in index['components'] if c['component_id']!=identity]+[component]
-                                entry['component_ids']=sorted(set(entry['component_ids']+[identity]))
                         elif change['operation']=='delete' and change.get('effect_status')=='verified' and change.get('after_sha256') is None:
                             files.pop(uri,None)
                         else:
@@ -285,13 +241,6 @@ class SemanticMapV2:
                         index['coverage']['notes']=['Managed source scan completed; transient exclusions and external coverage remain explicit.']
                     refs=[ref for change in facts for ref in change.get('reason_source_refs') or []]
                     versions={item['task_id']:item for item in index.get('source_basis',{}).get('task_versions',[])}
-                    for change in facts:
-                        if (change.get('accepted_head_guard') or {}).get('kind')=='task':
-                            owner=connection.execute('SELECT request_json FROM assistant.runs WHERE project_id=%s AND run_id=%s',
-                                (project_id,change['task_id'])).fetchone()
-                            if owner:
-                                state=owner['request_json'];versions[change['task_id']]={'task_id':change['task_id'],
-                                    'state_revision':int(state.get('state_revision') or 0),'context_epoch':int(state.get('supervisor_context_epoch') or 0)}
                     index['source_basis']={'source_batch_id':'map:'+hashlib.sha256(canonical_json(sorted(known))).hexdigest(),
                         'task_versions':list(versions.values()),'source_refs':refs,'as_of':index['generated_at']}
                     published=self.publish_locked(project_id,index,expected_generation=actual,source_change_ids=known)

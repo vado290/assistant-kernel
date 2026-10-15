@@ -12,7 +12,7 @@ import discord
 from discord import app_commands
 
 from assistant_kernel.config import KernelSettings
-from assistant_kernel.core.gateway.config import GatewayConfig, load_gateway_config
+from assistant_kernel.core.gateway.config import GatewayConfig, bot_token, load_gateway_config
 from assistant_kernel.core.gateway.service import GatewayService, Reply
 from assistant_kernel.core.kernel import Kernel
 
@@ -196,10 +196,7 @@ def run() -> None:
     settings = KernelSettings.from_environment()
     path = Path(os.environ.get("CORE_DISCORD_CONFIG") or settings.data_root / "config" / "core-discord.yaml")
     config = load_gateway_config(path)
-    token = os.environ.get(config.bot_token_env)
-    if not token and config.shared_bot:
-        from assistant_kernel.services.discord import load_discord_config
-        token = load_discord_config(settings).get("bot_token")   # same source as the legacy gateway
+    token = bot_token(settings, config, shared_fallback=config.shared_bot)
     if not token:
         raise SystemExit(f"no bot token: set {config.bot_token_env} or use shared_bot")
     CoreDiscordClient(Kernel(settings), config, path).run(token, log_handler=None)

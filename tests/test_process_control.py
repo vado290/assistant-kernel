@@ -2,7 +2,7 @@ import sys
 import asyncio
 import pytest
 
-from assistant_kernel.worker.process_control import run_managed_process
+from assistant_kernel.harness.process_control import run_managed_process
 
 
 async def test_managed_process_receives_stdin_eof(tmp_path) -> None:

@@ -197,15 +197,6 @@ async def test_evolve_command_queues_one_review(gateway, sim):
     assert task["kind"] == "evolution" and task["state"] == "pm" and task["origin"] == "user"
 
 
-def test_legacy_gateway_skips_core_channels(kernel_settings):
-    from assistant_kernel.services.discord import core_channel_ids
-    config = kernel_settings.data_root / "config" / "core-discord.yaml"
-    assert core_channel_ids(kernel_settings) == frozenset()
-    config.parent.mkdir(parents=True, exist_ok=True)
-    config.write_text('guild_id: "1"\nprojects:\n  p1:\n    pm_channel_id: "11"\n    supervisor_channel_id: "12"\n', "utf-8")
-    assert core_channel_ids(kernel_settings) == {"11", "12"}
-
-
 async def test_status_and_cancel_commands(gateway, sim):
     await say(gateway, "做日报工具")
     sim.script("supervisor:evaluate", next_step("requirements"))

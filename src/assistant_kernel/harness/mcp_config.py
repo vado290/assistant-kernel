@@ -1,15 +1,17 @@
-"""Compile the one managed MCP entry point and exclude inherited custom servers."""
+"""Expose the Kernel tool server to one Codex invocation and close every inherited MCP server."""
 import asyncio,hashlib,json,os,sys
-from pathlib import Path
-from assistant_kernel.services.contracts import canonical_json
-from assistant_kernel.services.mcp_runtime import resolve_binding,declaration
-from assistant_kernel.mcp_server.managed import exposed_name
-from assistant_kernel.worker.process_control import terminate_process_group
+from assistant_kernel.harness.process_control import terminate_process_group
 
 SOURCE_FLAGS=['-c','features.apps=false','-c','features.plugins=false','-c','features.remote_plugin=false',
               '-c','features.skill_mcp_dependency_install=false']
 CONTROL_ENV=('AI_HOME','ASSISTANT_DATA_ROOT','ASSISTANT_PROVIDER_SECRETS','ASSISTANT_POSTGRES_HOST',
              'ASSISTANT_POSTGRES_PORT','POSTGRES_DB','POSTGRES_USER','POSTGRES_PASSWORD','RAG_ENV_FILE','PYTHONPATH')
+TOOL_SERVER='assistant_kernel.core.tools'
+
+
+def canonical_json(value):
+    return json.dumps(value,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode('utf-8')
+
 
 async def configured_servers(binary,cwd,environment,flags,cancel_event):
     # Config/read has no thread/start or MCP tools/list. It reveals effective
@@ -60,41 +62,29 @@ async def compile_mcp(request,environment,binary,archive_dir):
     if inherited:
         effective=await configured_servers(binary,request.cwd,environment,flags,request.cancel_event)
         if any(x['enabled'] for x in effective):raise PermissionError('Managed policy prevents closing inherited MCP servers')
-    bindings=[];exposed=list(request.scoped_tools)
-    for server in request.mcp_servers:
-        if server['server_id']=='kernel_scoped':raise ValueError('Reserved MCP server identity')
-        source={**environment,**server.get('_environment',{})}
-        binding,env=resolve_binding({k:v for k,v in server.items() if k!='_environment'},source,require_credentials=False)
-        bindings.append({'binding':binding,'environment':env})
-        exposed.extend(exposed_name(binding['server_id'],name) for name in binding['enabled_tools'])
     source_receipt={'apps':False,'plugins':False,'remote_plugin':False,
         'disabled_inherited_servers':sorted(x['name'] for x in inherited),
         'verification':'effective configuration, not an observed CLI-wide live tool inventory'}
     (archive_dir/'mcp-source-policy.json').write_bytes(canonical_json(source_receipt))
-    if not exposed:return flags,None
+    if not request.scoped_tools:return flags,None
     control={key:str(os.environ[key]) for key in CONTROL_ENV if key in os.environ}
-    control.update(request.mcp_control_environment)
-    # Scope-selected values belong to this Run, never a daemon's implicit state.
+    # Scope-selected values belong to this run, never a daemon's implicit state.
     payload={'invocation_id':archive_dir.name,'scope_context':request.scope_context,'control_environment':control,
-        'scoped_tools':list(request.scoped_tools),'bindings':bindings,'expected':list(request.mcp_expected),
-        'business_context':request.business_mcp_context,'receipt_path':str(archive_dir/'mcp-runtime.json'),
-        'selected':exposed,'declared':[declaration(x['binding']) for x in bindings]}
+        'scoped_tools':list(request.scoped_tools),'receipt_path':str(archive_dir/'mcp-runtime.json')}
     raw=canonical_json(payload);private=archive_dir/'mcp-private.json'
     fd=os.open(private,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
     with os.fdopen(fd,'wb') as stream:stream.write(raw)
     environment['KERNEL_MCP_CONFIG_PATH']=str(private)
     environment['KERNEL_MCP_CONFIG_SHA256']=hashlib.sha256(raw).hexdigest()
     environment['KERNEL_MCP_INVOCATION_ID']=archive_dir.name
-    # Credentials are read only by the trusted MCP process, never serialized in argv.
+    # Credentials are read only by the trusted tool process, never serialized in argv.
     flags+=['-c','mcp_servers.kernel_scoped.command='+json.dumps(sys.executable),
-        '-c','mcp_servers.kernel_scoped.args=["-m","assistant_kernel.mcp_server.managed"]',
+        '-c','mcp_servers.kernel_scoped.args='+json.dumps(['-m',TOOL_SERVER]),
         '-c','mcp_servers.kernel_scoped.enabled=true','-c','mcp_servers.kernel_scoped.required=true',
         '-c','mcp_servers.kernel_scoped.disabled_tools=[]',
-        '-c','mcp_servers.kernel_scoped.enabled_tools='+json.dumps(exposed),
+        '-c','mcp_servers.kernel_scoped.enabled_tools='+json.dumps(list(request.scoped_tools)),
         '-c','mcp_servers.kernel_scoped.default_tools_approval_mode="auto"',
-        '-c','mcp_servers.kernel_scoped.startup_timeout_sec='+str(int(30+sum(x['binding']['startup_timeout_sec'] for x in bindings))),
-        '-c','mcp_servers.kernel_scoped.tool_timeout_sec='+str(int(max([60,*[x['binding']['tool_timeout_sec'] for x in bindings]]))),
+        '-c','mcp_servers.kernel_scoped.startup_timeout_sec=30',
+        '-c','mcp_servers.kernel_scoped.tool_timeout_sec=60',
         '-c','mcp_servers.kernel_scoped.env_vars=["KERNEL_MCP_CONFIG_PATH","KERNEL_MCP_CONFIG_SHA256","KERNEL_MCP_INVOCATION_ID","PYTHONPATH"]']
-    for name in exposed:
-        if name not in request.scoped_tools:flags+=['-c','mcp_servers.kernel_scoped.tools.'+name+'.approval_mode="approve"']
     return flags,private

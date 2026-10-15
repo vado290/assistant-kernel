@@ -21,6 +21,10 @@ class ProjectRuntime:
         return {"CODEX_HOME": str(self.codex_home)}
 
 
+# Historical Butler projects are never executable again.
+RETIRED_PROJECTS = frozenset({"system", "butler-maintenance"})
+
+
 class ProjectRuntimeManager:
     """Creates one durable, isolated Codex state directory per project."""
 
@@ -29,8 +33,8 @@ class ProjectRuntimeManager:
         self.template_home = data_root / "system/codex-home-template"
 
     def ensure(self, project_id: str) -> ProjectRuntime:
-        from assistant_kernel.services.kernel_management import require_active_identity
-        require_active_identity(project_id, "")
+        if project_id in RETIRED_PROJECTS:
+            raise PermissionError("Butler is retired; select an existing Project PM")
         runtime = self.describe(project_id)
         vault_root, codex_home = runtime.vault_root, runtime.codex_home
         codex_home.mkdir(parents=True, exist_ok=True)

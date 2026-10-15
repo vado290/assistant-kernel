@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import uuid
 from typing import Any
 
 import psycopg
@@ -34,28 +33,13 @@ class ProjectGrantService:
             user=self.settings.postgres_user,
             password=self.settings.postgres_password.get_secret_value(),
         ) as connection:
-            if connection.execute(
-                "SELECT to_regclass('assistant.project_grants')"
-            ).fetchone()[0] is None:
-                # Fail closed during a rolling migration or an isolated
-                # filesystem-only test: no table means no external grants.
+            if connection.execute("SELECT to_regclass('core.project_grants')").fetchone()[0] is None:
+                # Fail closed on a database without the grant ledger: no external grants.
                 return []
-            if run_id:
-                try:
-                    uuid.UUID(run_id)
-                except ValueError:
-                    pass  # isolated tests and administrative inspection
-                else:
-                    row = connection.execute(
-                        "SELECT created_at FROM assistant.runs WHERE run_id=%s AND project_id=%s",
-                        (run_id, project_id),
-                    ).fetchone()
-                    if row is None:
-                        raise ValueError("Run identity was not found while resolving grants")
             rows = connection.execute(
                 """
                 SELECT resource_key,policy_json,policy_sha256,grant_id
-                FROM assistant.project_grants
+                FROM core.project_grants
                 WHERE project_id=%s AND grant_kind='file'
                   AND subject_kind='project' AND status='active'
                   AND (expires_at IS NULL OR expires_at>now())

@@ -10,6 +10,8 @@
 """
 from __future__ import annotations
 
+import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -44,6 +46,21 @@ class GatewayConfig:
 
     def allowed(self, user_id: str) -> bool:
         return not self.allowed_user_ids or user_id in self.allowed_user_ids
+
+
+def bot_token(settings, config: GatewayConfig, *, shared_fallback: bool) -> str | None:
+    """The bot token from ``config.bot_token_env``; with ``shared_fallback`` also the shared bot's source
+    (``DISCORD_BOT_TOKEN`` or ``services.discord.bot_token`` in the service credentials file)."""
+    token = os.environ.get(config.bot_token_env)
+    if token or not shared_fallback:
+        return token or None
+    if os.environ.get("DISCORD_BOT_TOKEN"):
+        return os.environ["DISCORD_BOT_TOKEN"]
+    path = settings.service_credentials_path
+    if not path.is_file():
+        return None
+    services = json.loads(path.read_text(encoding="utf-8-sig")).get("services") or {}
+    return (services.get("discord") or {}).get("bot_token") or None
 
 
 def load_gateway_config(path: Path) -> GatewayConfig:

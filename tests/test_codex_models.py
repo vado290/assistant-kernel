@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from assistant_kernel.services.codex_models import CodexModelCatalog
+from assistant_kernel.harness.codex_models import CodexModelCatalog
 
 
 MODELS = (

@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Awaitable, Callable, Protocol
 import asyncio
 
-from assistant_kernel.services.context_budget import TurnUsage
+from assistant_kernel.harness.context_budget import TurnUsage
 
 
 @dataclass(frozen=True)
@@ -33,10 +33,6 @@ class AgentTurnRequest:
     base_environment: dict[str, str] | None = None
     codex_home: Path | None = None
     writable_roots: tuple[Path, ...] = ()
-    mcp_servers: tuple[dict, ...] = ()
-    mcp_expected: tuple[dict, ...] = ()
-    business_mcp_context: dict = field(default_factory=dict)
-    mcp_control_environment: dict[str, str] = field(default_factory=dict)
     multi_agent_enabled: bool = False
     max_concurrent_subagents: int = 3
     process_started_callback: Callable[[int, int | None], Awaitable[None]] | None = None

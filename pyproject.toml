@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "assistant-kernel"
-version = "0.32.3"
-description = "Durable control plane and MCP tools for the personal super assistant"
+version = "0.33.0"
+description = "Control core (tasks, runs, cards), Discord gateway and Kernel tools for the personal super assistant"
 requires-python = ">=3.10,<3.11"
 dependencies = [
   "croniter==6.2.4",
@@ -31,11 +31,6 @@ test = [
 [project.scripts]
 assistant-kernel-api = "assistant_kernel.api.main:run"
 assistant-kernel-mcp = "assistant_kernel.mcp_server.server:run"
-assistant-kernel-discord = "assistant_kernel.services.discord:run"
-assistant-kernel-run-worker = "assistant_kernel.worker.run_main:run"
-assistant-kernel-maintenance = "assistant_kernel.worker.maintenance_main:run"
-assistant-kernel-scheduler = "assistant_kernel.worker.scheduler_main:run"
-assistant-kernel-feishu = "assistant_kernel.worker.feishu_main:run"
 assistant-kernel-migrate = "assistant_kernel.core.migrate:run"
 assistant-kernel-core-dispatcher = "assistant_kernel.core.dispatch_main:run"
 assistant-kernel-core-gateway = "assistant_kernel.core.gateway.discord_app:run"
@@ -56,14 +51,9 @@ assistant_kernel = [
   "core/project_template/agents/*/*.yaml",
   "core/project_template/agents/pm/profiles/*.yaml",
   "core/project_template/knowledge/*.md",
-  "prompts/roles/*.md",
   "prompts/skills/*/SKILL.md",
   "prompts/skills/*/references/*.md",
   "prompts/skills/*/scripts/*.py",
-  "prompts/v12/*.json",
-  "prompts/v12/roles/*.md",
-  "prompts/v12/skills/*/SKILL.md",
-  "prompts/v12/schemas/*.json",
 ]
 
 [tool.pytest.ini_options]

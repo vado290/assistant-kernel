@@ -1,9 +1,13 @@
+"""kernel-mcp: shared services over streamable HTTP for the user's own MCP clients (bearer token).
+
+Project Vault reads, embeddings, rerank, chat, the model list and service credentials. It holds no
+task or run state; the rebuilt core's tools for PM / Supervisor turns live in ``core/tools.py``.
+"""
 from __future__ import annotations
 
 import argparse
 import json
 import secrets as secret_compare
-import uuid
 from pathlib import Path
 
 from mcp.server.auth.provider import AccessToken
@@ -12,17 +16,13 @@ from mcp.server.mcpserver import MCPServer
 from pydantic import AnyHttpUrl
 
 from assistant_kernel.config import KernelSettings
-from assistant_kernel.services.config_consumers import effective_providers
 from assistant_kernel.mcp_server.error_protocol import install_error_protocol
 from assistant_kernel.model_providers import CatalogChatProvider, QwenProvider
-from assistant_kernel.repositories import CoreRepository
-from assistant_kernel.services.context_budget import ContextBudgetManager, TurnUsage
 from assistant_kernel.storage import ProjectRuntimeManager
 
 
 settings = KernelSettings.from_environment()
 runtime_manager = ProjectRuntimeManager(settings.data_root)
-repository = CoreRepository(settings)
 
 class JsonTokenVerifier:
     """Reload the bearer token from JSON on every request so key rotation needs no restart."""
@@ -47,9 +47,7 @@ mcp = MCPServer(
     name="assistant-kernel",
     instructions=(
         "Use these tools as the durable Assistant Kernel boundary. Always pass project_id. "
-        "Read and write only inside that project's Vault. Query run/session state here instead "
-        "of inventing local state. Embedding and reranking are model calls; arbitrary Python code "
-        "must be submitted through the persistent execution API, not executed as an MCP tool."
+        "Read only inside that project's Vault. Embedding, reranking and chat are model calls."
     ),
     token_verifier=JsonTokenVerifier(settings),
     auth=AuthSettings(
@@ -121,19 +119,6 @@ def assistant_vault_read_text(
 
 
 @mcp.tool()
-async def assistant_run_status(run_id: str) -> dict:
-    """Read one durable run record."""
-    run = await repository.get_run(run_id)
-    return run or {"run_id": run_id, "status": "not_found"}
-
-
-@mcp.tool()
-async def assistant_project_runs(project_id: str, limit: int = 100) -> dict:
-    """Read recent durable runs for a Project."""
-    return {"runs": await repository.list_runs(project_id, limit)}
-
-
-@mcp.tool()
 async def assistant_embed_texts(
     project_id: str, texts: list[str], dimensions: int = 1024, provider: str = "dashscope"
 ) -> dict:
@@ -141,7 +126,7 @@ async def assistant_embed_texts(
     runtime_manager.ensure(project_id)
     if provider != "dashscope":
         raise NotImplementedError("provider adapter is not implemented")
-    config = effective_providers(settings).providers.get("dashscope")
+    config = settings.load_provider_secrets().providers.get("dashscope")
     if config is None:
         raise RuntimeError("dashscope provider is not configured")
     result = await QwenProvider(config).embed(texts, dimensions)
@@ -160,7 +145,7 @@ async def assistant_rerank(
     runtime_manager.ensure(project_id)
     if provider != "dashscope":
         raise NotImplementedError("provider adapter is not implemented")
-    config = effective_providers(settings).providers.get("dashscope")
+    config = settings.load_provider_secrets().providers.get("dashscope")
     if config is None:
         raise RuntimeError("dashscope provider is not configured")
     result = await QwenProvider(config).rerank(query, documents, top_n)
@@ -168,25 +153,9 @@ async def assistant_rerank(
 
 
 @mcp.tool()
-def assistant_context_budget(
-    input_tokens: int,
-    context_window_tokens: int,
-    cached_input_tokens: int = 0,
-    output_tokens: int = 0,
-) -> dict:
-    """Evaluate the configured context rotation thresholds after a turn."""
-    usage = TurnUsage(
-        input_tokens=input_tokens,
-        cached_input_tokens=cached_input_tokens,
-        output_tokens=output_tokens,
-    )
-    return ContextBudgetManager().evaluate(usage, context_window_tokens).model_dump()
-
-
-@mcp.tool()
 def assistant_model_catalog() -> dict:
     """List configured chat providers and their model aliases without returning secrets."""
-    providers = effective_providers(settings).providers
+    providers = settings.load_provider_secrets().providers
     return {
         name: {
             "enabled": provider.enabled,
@@ -210,61 +179,13 @@ async def assistant_chat(
     """Call one model from the merged callModels catalog and return text plus usage."""
     runtime_manager.ensure(project_id)
     normalized = {"qwen": "dashscope", "doubao": "volcengine"}.get(provider, provider)
-    config = effective_providers(settings).providers.get(normalized)
+    config = settings.load_provider_secrets().providers.get(normalized)
     if config is None:
         raise ValueError("provider is not configured")
     result = await CatalogChatProvider(normalized, config).chat(
         prompt, model, system_prompt, max_output_tokens, temperature
     )
     return result.model_dump()
-
-
-@mcp.tool()
-async def assistant_python_submit(
-    project_id: str,
-    relative_script_path: str,
-    args: list[str] | None = None,
-    timeout_seconds: int = 300,
-    parent_run_id: str | None = None,
-) -> dict:
-    """Queue a Vault-hosted Python script for durable, cancellable worker execution."""
-    if not 1 <= timeout_seconds <= 3600:
-        raise ValueError("timeout_seconds must be between 1 and 3600")
-    runtime = runtime_manager.ensure(project_id)
-    source = runtime_manager.resolve_vault_file(project_id, relative_script_path)
-    if not source.is_file() or source.suffix.lower() != ".py":
-        raise ValueError("relative_script_path must be an existing .py file")
-    source_uri = f"vault://{project_id}/{source.relative_to(runtime.vault_root).as_posix()}"
-    return await repository.create_run(
-        project_id=project_id,
-        agent_key=f"project:{project_id}:python",
-        run_type="python",
-        parent_run_id=parent_run_id,
-        request={"source_uri": source_uri, "source_sha256":__import__('hashlib').sha256(source.read_bytes()).hexdigest(),
-            "args": args or [], "timeout_seconds": timeout_seconds},
-        idempotency_key=f"python:{uuid.uuid4()}",
-    )
-
-
-@mcp.tool()
-async def assistant_python_status(execution_id: str) -> dict:
-    """Read a durable Python execution record."""
-    row = await repository.get_run(execution_id)
-    return row or {"execution_id": execution_id, "status": "not_found"}
-
-
-@mcp.tool()
-async def submit_project_python(project_id:str,request:dict)->dict:
-    """Submit the exact approved finite manifest; service programs use their lifecycle adapter."""
-    from assistant_kernel.services.project_python import ProjectPython
-    return await ProjectPython(settings,repository).submit(project_id,request)
-
-
-@mcp.tool()
-async def assistant_python_cancel(execution_id: str) -> dict:
-    """Request cancellation; the worker terminates the complete process group."""
-    accepted = await repository.request_cancel(execution_id)
-    return {"execution_id": execution_id, "cancel_requested": accepted}
 
 
 @mcp.resource("assistant://configuration")
@@ -312,8 +233,6 @@ def run() -> None:
     parser.add_argument("--transport", choices=("stdio", "streamable-http"), default="stdio")
     args = parser.parse_args()
     if args.transport == "streamable-http":
-        from assistant_kernel.services.config_consumers import startup_settings
-        startup_settings(settings,'mcp')
         mcp.run(
             transport=args.transport,
             host=settings.mcp_host,

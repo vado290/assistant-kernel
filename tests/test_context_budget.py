@@ -1,4 +1,4 @@
-from assistant_kernel.services.context_budget import ContextBudgetManager, TurnUsage
+from assistant_kernel.harness.context_budget import ContextBudgetManager, TurnUsage
 
 
 def test_does_not_rotate_at_exactly_seventy_percent() -> None:

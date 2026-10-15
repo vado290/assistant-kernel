@@ -12,10 +12,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from assistant_kernel.harness.base import AgentTurnRequest, AgentTurnResult
-from assistant_kernel.services.codex_models import CodexModelCatalog, ResolvedCodexModel
-from assistant_kernel.services.context_budget import ContextBudgetDecision, ContextBudgetManager, TurnUsage
+from assistant_kernel.harness.codex_models import CodexModelCatalog, ResolvedCodexModel
+from assistant_kernel.harness.context_budget import ContextBudgetDecision, ContextBudgetManager, TurnUsage
 from assistant_kernel.storage import ProjectRuntimeManager
-from assistant_kernel.worker.process_control import run_managed_process
+from assistant_kernel.harness.process_control import run_managed_process
 
 
 @dataclass(frozen=True)
@@ -175,7 +175,6 @@ class CodexCliHarness:
         archive_dir.mkdir(parents=True, exist_ok=True)
         from assistant_kernel.harness.mcp_config import compile_mcp
         scoped_overrides, mcp_private = await compile_mcp(request, environment, self.codex_binary, archive_dir)
-        project_mcp_overrides = []
         writable_root_args = [
             value
             for root in request.writable_roots
@@ -189,7 +188,6 @@ class CodexCliHarness:
                 "resume",
                 *runtime_overrides,
                 *scoped_overrides,
-                *project_mcp_overrides,
                 "--json",
                 "--skip-git-repo-check",
             ]
@@ -207,7 +205,6 @@ class CodexCliHarness:
                 *profile_overrides,
                 *runtime_overrides,
                 *scoped_overrides,
-                *project_mcp_overrides,
                 "--json",
                 "--skip-git-repo-check",
                 "-C",
@@ -239,14 +236,6 @@ class CodexCliHarness:
                     "permission_profile_sha256": request.permission_profile_sha256,
                     "scoped_tools": list(request.scoped_tools),
                     "writable_roots": [str(item) for item in request.writable_roots],
-                    "mcp_servers": [
-                        {
-                            "server_id": item.get("server_id"),
-                            "transport": item.get("transport"),
-                            "enabled_tools": list(item.get("enabled_tools") or []),
-                        }
-                        for item in request.mcp_servers
-                    ],
                 },
                 ensure_ascii=False,
             ),
@@ -265,7 +254,7 @@ class CodexCliHarness:
                 on_started=request.process_started_callback,
             )
         finally:
-            from assistant_kernel.worker.mcp_process import cleanup_mcp_processes
+            from assistant_kernel.harness.mcp_cleanup import cleanup_mcp_processes
             process_cleanup=await asyncio.shield(cleanup_mcp_processes(invocation_id))
             (archive_dir/'mcp-cleanup.json').write_text(json.dumps(process_cleanup))
             if mcp_private is not None:mcp_private.unlink(missing_ok=True)
@@ -274,15 +263,14 @@ class CodexCliHarness:
         if code != 0:
             raise RuntimeError(f"Codex exited with code {code}: {stderr.decode('utf-8', 'replace')[-2000:]}")
         mcp_receipts = []
-        if request.scoped_tools or request.mcp_servers:
-            from assistant_kernel.mcp_server.managed import exposed_name
-            permitted = set(request.scoped_tools) | {exposed_name(s['server_id'],t) for s in request.mcp_servers for t in s.get('enabled_tools',[])}
+        if request.scoped_tools:
+            permitted = set(request.scoped_tools)
             paths=list(archive_dir.glob('mcp-runtime.*.json'))
             mcp_receipts=[json.loads(path.read_text()) for path in paths]
             if not mcp_receipts or process_cleanup['status']!='verified':
-                raise RuntimeError('Managed MCP initialization or connection cleanup is unverified')
+                raise RuntimeError('Kernel tool server initialization or connection cleanup is unverified')
             if any(not set(r.get('exposed',[])) <= permitted for r in mcp_receipts):
-                raise PermissionError('Managed MCP exposed tools outside the fixed selection')
+                raise PermissionError('Kernel tool server exposed tools outside the fixed selection')
         content = stdout.decode("utf-8", "replace")
         parsed = self.parse_jsonl(content)
         native_usage = self.read_native_context_usage(

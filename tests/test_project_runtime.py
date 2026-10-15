@@ -14,9 +14,10 @@ def test_project_codex_home_is_isolated(tmp_path: Path) -> None:
     assert second.codex_home.is_dir()
 
 
-def test_global_butler_home_is_not_a_project_vault(tmp_path: Path) -> None:
-    runtime = ProjectRuntimeManager(tmp_path).ensure("system")
-    assert runtime.vault_root == tmp_path / "butler"
+def test_retired_butler_projects_are_refused(tmp_path: Path) -> None:
+    for project in ("system", "butler-maintenance"):
+        with pytest.raises(PermissionError, match="retired"):
+            ProjectRuntimeManager(tmp_path).ensure(project)
     assert not (tmp_path / "vaults" / "system").exists()
 
 

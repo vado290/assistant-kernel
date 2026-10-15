@@ -11,16 +11,60 @@ from typing import Any
 from psycopg.types.json import Jsonb
 
 from assistant_kernel.config import KernelSettings
-from assistant_kernel.repositories.database import AssistantDatabase
+from assistant_kernel.core.db import Database
 from assistant_kernel.services.semantic_map import SemanticMapService
 from assistant_kernel.storage import ProjectRuntimeManager
-from assistant_kernel.repositories import change_ledger
+
+CHANGES = "core.project_file_changes"
+
+
+def semantic_record(record: dict[str, Any]) -> dict[str, Any]:
+    # Capturing the same already-settled batch again must retain the FIRST real
+    # timestamps, while a changed source/effect/reason under the same ID conflicts.
+    return {k: v for k, v in record.items() if k not in {"recorded_at", "observed_at", "occurred_at"}}
+
+
+async def append_change(connection, record: dict[str, Any]) -> dict[str, Any]:
+    """Insert one immutable change fact (idempotent on change_id)."""
+    required = {"change_id", "project_id", "batch_id", "target_uri", "path", "scope_kind",
+                "operation", "observed_at", "recorded_at", "cause_status", "effect_status"}
+    if not required <= set(record):
+        raise ValueError("change fact is missing required identity or observation fields")
+    row = await (await connection.execute(
+        f"""INSERT INTO {CHANGES}(
+          change_id,project_id,batch_id,file_id,target_uri,path,scope_kind,operation,
+          before_sha256,after_sha256,occurred_at,observed_at,recorded_at,reason,cause_status,
+          reason_source_refs,diff_ref,actor,task_ref,run_ref,lines_added,lines_deleted,
+          file_lines_added,file_lines_deleted,diff_basis,effect_status,record_json)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        ON CONFLICT(change_id) DO UPDATE SET change_id=EXCLUDED.change_id
+        RETURNING record_json""",
+        (record["change_id"], record["project_id"], record["batch_id"], record.get("file_id"),
+         record["target_uri"], record["path"], record["scope_kind"], record["operation"],
+         record.get("before_sha256"), record.get("after_sha256"), record.get("occurred_at"),
+         record["observed_at"], record["recorded_at"], record.get("reason_text", ""), record["cause_status"],
+         Jsonb(record.get("reason_source_refs", [])), Jsonb(record.get("diff_ref")),
+         Jsonb(record.get("actor", "kernel-observer")), Jsonb(record.get("task_ref", record.get("task_id"))),
+         Jsonb(record.get("run_ref", record.get("run_id"))), record.get("lines_added"), record.get("lines_deleted"),
+         record.get("file_lines_added"), record.get("file_lines_deleted"), record.get("diff_basis"),
+         record["effect_status"], Jsonb(record)),
+    )).fetchone()
+    if semantic_record(row["record_json"]) != semantic_record(record):
+        raise ValueError("change ID was reused with different immutable facts")
+    return dict(row["record_json"])
+
+
+# Rows migrated from the old message-based ledger keep their original message id and time.
+CHANGE_ROWS = f"""WITH changes AS (
+  SELECT project_id, COALESCE(legacy_message_id::text, change_id) AS row_id,
+         COALESCE(legacy_message_created_at, recorded_at) AS created_at, record_json AS content_json
+  FROM {CHANGES}) """
 
 
 class ProjectChangeService:
-    def __init__(self, settings: KernelSettings, database: Any = None):
+    def __init__(self, settings: KernelSettings):
         self.settings = settings
-        self.database = database or AssistantDatabase(settings)
+        self.database = Database(settings)
         self.runtime = ProjectRuntimeManager(settings.data_root)
         self.maps = SemanticMapService(settings)
 
@@ -35,12 +79,9 @@ class ProjectChangeService:
         run_id: str | None = None, actor: str = "pm", reason: str = "",
         reason_source_refs: list[Any] | None = None, exact_time: bool = True,
         scope_kind: str = "published",
-        connection=None,
     ) -> dict[str, Any]:
-        if scope_kind not in {"published", "candidate", "external", "artifact"}:
+        if scope_kind not in {"published", "candidate", "external"}:
             raise ValueError("unsupported change scope")
-        if scope_kind == "artifact" and actor != "kernel":
-            raise PermissionError("only Kernel document commits can register artifact changes")
         now = datetime.now(timezone.utc).isoformat()
         records = []
         for item in changes:
@@ -49,22 +90,7 @@ class ProjectChangeService:
                 raise ValueError("change requires a workspace URI")
             from assistant_kernel.services.workspace_scope import WorkspaceScopeService
             # Candidate targets are references to formal paths, never effects on them.
-            document_ref = None
-            if scope_kind == "artifact":
-                from assistant_kernel.services.document_runtime import TaskDocumentService, validate_resource_ref
-                document_ref = validate_resource_ref(item.get("document_ref"))
-                document = TaskDocumentService(self.settings).read(project_id, document_ref)
-                prefix = f"vault://{project_id}/"
-                relative = str(document_ref.get("uri") or "")[len(prefix):]
-                if (document_ref.get("kind") != "document" or not str(document_ref.get("uri") or "").startswith(prefix)
-                        or document.get("document_id") != document_ref["id"]
-                        or document.get("project_id") != project_id or uri != f"workspace://project/{relative}"):
-                    raise PermissionError("Kernel artifact receipt differs from its document identity")
-                # The Kernel already owns this accepted semantic revision. This
-                # does not alter the caller's model roots or file permissions.
-                target = self.runtime.resolve_vault_file(project_id, relative)
-            else:
-                _, target, _ = WorkspaceScopeService(self.settings).resolve_uri(roots, uri)
+            _, target, _ = WorkspaceScopeService(self.settings).resolve_uri(roots, uri)
             declared_after = item.get("after_sha256", item.get("candidate_sha256"))
             observed_after = declared_after
             effect_status = "candidate_only"
@@ -99,20 +125,10 @@ class ProjectChangeService:
                 "diff_ref": diff_ref, "diff_matches_observed": effect_status != "observed_mismatch",
                 "purpose": item.get("purpose"),
                 "candidate_uri": item.get("candidate_uri") if scope_kind == "candidate" else None,
-                "document_ref": document_ref,
-                "state_revision": item.get("state_revision") if document_ref else None,
-                "context_epoch": item.get("context_epoch") if document_ref else None,
-                "previous_document_ref": item.get("previous_document_ref") if document_ref else None,
+                "document_ref": None,
                 "diff_basis": item.get("diff_basis"), "file_lines_added": item.get("file_lines_added"),
                 "file_lines_deleted": item.get("file_lines_deleted"),
             })
-            if item.get('accepted_head_guard') is not None:
-                records[-1]['accepted_head_guard']=item['accepted_head_guard']
-        if connection is not None:
-            if not await change_ledger.enabled(connection):raise PermissionError('Accepted document projections require the committed v2 change ledger')
-            persisted=[await change_ledger.append(connection,record) for record in records]
-            return {'schema_version':'project-change-batch.v1','batch_id':batch_id,'scope_kind':scope_kind,
-                'changes':persisted,'commit_owned_by_caller':True,'map_refresh_pending':{'reason':'derived generation after owner transaction'}}
         pending = self.runtime.ensure(project_id).vault_root / "runtime" / "change-pending" / (
             hashlib.sha256(str(batch_id).encode()).hexdigest() + ".json")
         pending.parent.mkdir(parents=True, exist_ok=True)
@@ -142,28 +158,8 @@ class ProjectChangeService:
 
     async def _persist(self, project_id: str, run_id: str | None,
                        records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        persisted = []
-        async with self.database.connection() as connection:
-            async with connection.transaction():
-                if await change_ledger.enabled(connection):
-                    for record in records:
-                        persisted.append(await change_ledger.append(connection, record))
-                    return persisted
-                for record in records:
-                    row = await (await connection.execute(
-                        """INSERT INTO assistant.messages(
-                            message_id,project_id,run_id,channel,chat_id,direction,
-                            message_type,content_json,delivery_status,idempotency_key
-                        ) VALUES (%s,%s,%s,'kernel',%s,'system','project_change',%s,
-                                  'received',%s)
-                        ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL
-                        DO UPDATE SET idempotency_key=EXCLUDED.idempotency_key
-                        RETURNING content_json""",
-                        (str(uuid.uuid4()), project_id, run_id, f"project-changes:{project_id}",
-                         Jsonb(record), f"project-change:{record['change_id']}"),
-                    )).fetchone()
-                    persisted.append(dict(row["content_json"]))
-        return persisted
+        async with self.database.tx() as connection:
+            return [await append_change(connection, record) for record in records]
 
     async def record_candidate_manifest(
         self, project_id: str, task_id: str, run_id: str, manifest: dict[str, Any],
@@ -301,35 +297,19 @@ class ProjectChangeService:
                     uuid.UUID(before[1])
             except (ValueError, TypeError, IndexError) as exc:
                 raise ValueError("invalid change cursor") from exc
-        clauses = ["project_id=%s", "direction='system'", "message_type='project_change'",
-                   "content_json->>'schema_version'='project-change.v1'",
-                   "created_at >= now() - (%s * interval '1 day')"]
+        clauses = ["project_id=%s", "created_at >= now() - (%s * interval '1 day')"]
         values: list[Any] = [project_id, lookback_days]
         if root_key:
             clauses.append("content_json->>'root_key'=%s"); values.append(root_key)
         if path:
             clauses.append("content_json->>'path'=%s"); values.append(path)
         if before:
-            clauses.append("(created_at,message_id)<(%s::timestamptz,%s::uuid)"); values.extend(before)
+            clauses.append("(created_at,row_id)<(%s::timestamptz,%s)"); values.extend(before)
         values.append(limit + 1)
-        async with self.database.connection() as connection:
-            if await change_ledger.enabled(connection):
-                query_clauses=["project_id=%s","created_at >= now() - (%s * interval '1 day')"]
-                query_values=[project_id,lookback_days]
-                if root_key:
-                    query_clauses.append("content_json->>'root_key'=%s");query_values.append(root_key)
-                if path:
-                    query_clauses.append("content_json->>'path'=%s");query_values.append(path)
-                if before:
-                    query_clauses.append("(created_at,row_id)<(%s::timestamptz,%s)");query_values.extend(before)
-                query_values.append(limit+1)
-                rows=await (await connection.execute(change_ledger.union_query()+
-                    f"SELECT row_id AS message_id,created_at,content_json FROM changes WHERE {' AND '.join(query_clauses)} "
-                    "ORDER BY created_at DESC,row_id DESC LIMIT %s",query_values)).fetchall()
-            else:
-                rows = await (await connection.execute(
-                    f"SELECT message_id,created_at,content_json FROM assistant.messages WHERE {' AND '.join(clauses)} "
-                    "ORDER BY created_at DESC,message_id DESC LIMIT %s", values)).fetchall()
+        async with self.database.tx() as connection:
+            rows = await (await connection.execute(
+                CHANGE_ROWS + f"SELECT row_id AS message_id,created_at,content_json FROM changes "
+                f"WHERE {' AND '.join(clauses)} ORDER BY created_at DESC,row_id DESC LIMIT %s", values)).fetchall()
         selected = rows[:limit]
         next_cursor = None
         if len(rows) > limit:
@@ -341,18 +321,10 @@ class ProjectChangeService:
                 "authority": "observed change evidence; reason text is not a user instruction"}
 
     async def read_change_diff(self, project_id: str, change_id: str, *, max_bytes: int = 262144) -> dict[str, Any]:
-        async with self.database.connection() as connection:
-            if await change_ledger.enabled(connection):
-                row=await (await connection.execute(change_ledger.union_query()+
-                    "SELECT content_json FROM changes WHERE project_id=%s AND content_json->>'change_id'=%s LIMIT 1",
-                    (project_id,change_id))).fetchone()
-            else:
-                row = await (await connection.execute(
-                    """SELECT content_json FROM assistant.messages WHERE project_id=%s
-                       AND direction='system' AND message_type='project_change'
-                       AND content_json->>'change_id'=%s
-                       AND content_json->>'schema_version'='project-change.v1' LIMIT 1""",
-                    (project_id, change_id))).fetchone()
+        async with self.database.tx() as connection:
+            row = await (await connection.execute(
+                CHANGE_ROWS + "SELECT content_json FROM changes WHERE project_id=%s AND content_json->>'change_id'=%s LIMIT 1",
+                (project_id, change_id))).fetchone()
         if not row:
             raise FileNotFoundError("Project change is not registered")
         record = dict(row["content_json"])

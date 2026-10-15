@@ -11,7 +11,7 @@ from typing import Any
 import yaml
 
 from assistant_kernel.harness.base import AgentTurnRequest, AgentTurnResult
-from assistant_kernel.services.agent_files import AgentFileLoader, FileAgentConfig
+from assistant_kernel.core.agents import AgentConfig, AgentLoader
 from assistant_kernel.services.document_runtime import TaskDocumentService
 from assistant_kernel.storage import ProjectRuntimeManager
 
@@ -36,16 +36,16 @@ def prompt_text(name: str) -> str:
     return (PROMPTS / f"{name}.md").read_text(encoding="utf-8").strip()
 
 
-def load_agent(settings, project_id: str, role: str, stage: str | None = None) -> FileAgentConfig:
+def load_agent(settings, project_id: str, role: str, stage: str | None = None) -> AgentConfig:
     """Load the project's live agent files (plan D2: no pinned package versions)."""
-    loader = AgentFileLoader(settings)
+    loader = AgentLoader(settings)
     agent = "manager" if role == "pm" else "supervisor"
     config = loader.load(project_id, f"project:{project_id}:{agent}")
     profile_name = PROFILE_FOR_STAGE.get(stage or "")
     if role == "pm" and profile_name:
         path = loader.runtime.ensure(project_id).vault_root / "agents" / "pm" / "profiles" / f"{profile_name}.yaml"
         if path.is_file():
-            config = loader.apply_phase_profile(config, yaml.safe_load(path.read_text(encoding="utf-8")) or {})
+            config = loader.apply_phase_profile(project_id, config, yaml.safe_load(path.read_text(encoding="utf-8")) or {})
     return config
 
 
@@ -116,7 +116,7 @@ def workspace_snapshot(settings, project_id: str, task_id: str, variant: str, *,
     return uri, sha
 
 
-async def call_model(ctx, run: dict[str, Any], config: FileAgentConfig, prompt: str, *,
+async def call_model(ctx, run: dict[str, Any], config: AgentConfig, prompt: str, *,
                      task_id: str | None, stage: str | None, session_id: str | None,
                      tools: frozenset[str], sandbox: str, candidates: bool = False) -> AgentTurnResult:
     """One Codex invocation with the project's model settings and the scoped Kernel tools."""

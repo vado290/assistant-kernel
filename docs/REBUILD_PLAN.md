@@ -469,7 +469,7 @@ IngressService.receive(event):
 **遗留问题存档**（按用户 10-15 的要求：无法顺利通过的不硬做，存档后讨论）：
 | # | 问题 | 影响 | 处理 |
 |---|---|---|---|
-| I1 | 旧测试 3 项因 `validation-envs/p4-business-20261011` 目录已不存在而失败（改动前同样失败） | 无，属于旧代码 | 阶段 4 删除旧代码时一并移除 |
+| I1 | 旧测试 3 项因 `validation-envs/p4-business-20261011` 目录已不存在而失败（改动前同样失败） | 无，属于旧代码 | **已关闭（4b）**：`test_v12_mcp.py`、`test_mcp_unification.py` 随旧代码删除 |
 | I2 | 项目自带的角色说明和技能文本仍含旧协议用语（如"提交 Requirements revision"），模型偶尔会照抄 | 小，不影响流程 | 阶段 5 生成项目文件时改用新模板；必要时先手工精简现有项目的 role.md |
 | I3 | 发布后的项目地图和变更账本记录暂未接入 | 地图需要手动刷新 | 阶段 4 补上 |
 | I4 | 自动驾驶脚本会自动批准所有卡片，不能代表真人交互 | 真实交互尚未验证 | 阶段 3 用 Discord 验证 |
@@ -522,11 +522,33 @@ IngressService.receive(event):
   - 切换前已核对：三个项目的 PM（五个阶段）和 Supervisor 配置都能被新核心正常加载。
   - 切换中发现并修复：Docker 对 AI 容器的健康检查访问旧的 `/health/ready`，旧 worker 下线后容器被标记为 unhealthy。现在 `/health/ready` 改为检查新核心（数据库和 core 表可用；运行积压和待发消息只作参考），容器已恢复 healthy。
   - 部署脚本的就绪判断改为：所有 `kernel-*` 程序处于 RUNNING，且版本号一致。
-- **4b 删除旧代码：暂缓（按 MVP 原则）。**
-  - 依赖分析表明，旧代码是"缠在一起"而不是单纯不再使用：`agent_files`、`capability_bundle`、`project_changes` 等被复用的模块在文件开头就引入了旧仓库和旧服务；PM 使用的 `scoped_tools.py` 几乎引入了整个旧系统。新核心的依赖闭包因此仍有约 3.7 万行。
-  - 安全的做法是：先把新核心真正用到的少数函数抽出来，写一个精简的核心版 MCP 工具服务，再整批删除。这属于纯清理性重构，不增加功能，所以单独作为后续清理步骤；在此之前旧代码只是闲置，不会被生产执行。
-  - 旧数据移入 `archive_core5` 一项同样暂缓：被复用的服务仍会读取 `project_grants` 等少数旧表；新核心不读取旧的 runs 和 messages。
-  - `kernel-api`（访问几乎全部是健康检查和少量旧 `/v2` 查询）和 `kernel-mcp`（有外部客户端在用）暂时保持原样。
+- **4b 删除旧代码（2026-10-15/16，分支 `rebuild/core6`，版本 0.33.0）：已完成，已部署生产（10-16 06:43）。**
+  - 起初暂缓的原因：旧代码和复用模块缠在一起。`agent_files`、`capability_bundle`、`project_changes` 等复用模块会引入旧仓库；PM 用的 `scoped_tools.py` 几乎引入整个旧系统。新核心的依赖闭包因此约有 3.7 万行。
+  - **做法**：先把新核心真正用到的部分抽出来，切断复用模块通往旧代码的引用，然后按"从所有生产入口出发、引用不到"为标准整批删除。
+    - `core/agents.py`：精简的 Agent 文件加载器（只支持 layout v2；阶段配置只能收窄工具和技能，不再因多列了工具而报错）。
+    - `core/tools.py`：新的核心版 MCP 工具服务。每次模型调用由 Codex 启动一个，只提供 D3 的 18 个工具；每次工具调用都向 `core.runs` 核对租约，并写调用回执供 harness 核对。原来的 `managed.py` 和 `scoped_tools.py` 已删除，项目自带 MCP 的接入（业务程序用）也随之删除。
+    - `harness/`：直接启动 `core.tools`；进程控制、模型目录、上下文预算、MCP 进程清理移入 `harness/`，`worker/` 整个删除。
+    - 复用模块的旧分支：项目地图写入器里依赖旧表的"已接受文档"分支删除（生产中待处理的此类记录为 0）；变更账本去掉退回 `assistant.messages` 的兼容路径（核对过：旧消息里的变更记录已全部在账本中）；授权服务不再查旧 `runs`。
+    - Discord 令牌读取改为 `core/gateway/config.py` 的 `bot_token()`，来源不变。
+  - **kernel-api 和 kernel-mcp（用户决定，10-15）**：
+    - `kernel-api` 只保留 `/health/live`、`/health/ready`、`/version`。原有的 `/v1`、`/v2` 和飞书回调都属于旧系统，切换后已没有调用方。
+    - `kernel-mcp` 精简后保留：vault 读取、embeddings、rerank、chat、模型列表、服务凭据查询，供用户自己的 MCP 客户端使用（`127.0.0.1:18002`，bearer token）。删除 run、Python 执行和上下文预算工具（对应的旧 worker 已下线）。供应商配置直接读取 `provider-secrets.json`；核对过：旧"系统配置"叠加层在功能上没有差别，只多出价格核验元数据。生产进程仍为 5 个。
+  - **删除量**：`src` 删除 104 个模块（约 3.5 万行），保留 61 个模块（约 1 万行）。旧测试删除 92 个文件，其中包括 I1 的 3 项。`prompts/v12`、`prompts/roles` 删除；`prompts/skills` 保留，因为 Supervisor 的 `assistant-goal-supervisor` 技能和新项目都在用。`scripts/` 只保留 9 个仍在使用的脚本，其余移入 `scripts/archive/`。`pyproject.toml` 去掉 5 个已下线进程的入口。
+  - **数据库（迁移 `0003_archive_legacy.sql`）**：
+    - 仍在使用的 `project_grants`（7 行）和 `project_file_changes`（275 行）移入 `core` schema。
+    - 其余旧表（`runs` 142 行、`messages` 418 行、`sessions`、`model_invocations`、`kernel_meta` 等）和 `run_lane()` 函数整体移入 `archive_core5`，不删除任何数据。跨边界的外键约束去掉，原 id 留在列里。
+    - `assistant.schema_migrations` 留在原处，它是迁移执行器自己的账本。
+    - 全新数据库（测试环境）由同一迁移建出这两张表。
+    - 已在生产库的 `pg_dump` 副本上演练：所有行数一致，没有跨 schema 外键，第二次执行无动作；演练副本已删除。
+  - **验证**：
+    - 工作区代码在 test venv 中跑完全部测试：129 项通过、4 项跳过。新增 `tests/core/test_scoped_tools_core.py`：通过真实的 stdio MCP 验证只暴露所选工具、未初始化前拒绝调用、候选区归任务所有、任务取消后工具立即拒绝、回执正确。
+    - 一次真实 Codex 调用（临时数据库加 `kernel-v12-validation` 的 vault 和登录）：模型经新工具服务调用了 `get_authorized_workspace` 和 `read_authorized_file`，返回正确结果，MCP 进程清理已核实。
+  - **生产部署（10-16，经用户确认）**：
+    - 部署前用 `pg_dump` 备份了 `assistant` 和 `core` 两个 schema：`assistant-data/backups/pre-phase4b-20261016.dump`。
+    - `deploy.ps1` 一次成功：`MIGRATIONS_APPLIED=0003_archive_legacy.sql`，5 个进程全部 RUNNING；`/health/ready` 为 ready，`/version` 为 0.33.0 / core6.0003，容器健康检查为 healthy，网关已重新连上 Discord。kernel-mcp 不带令牌访问返回 401，与预期一致。
+    - 迁移后核对：`core.project_grants` 7 行、`core.project_file_changes` 275 行；`archive_core5` 中 `runs` 142、`messages` 418、`sessions` 61、`model_invocations` 84、`kernel_meta` 40，与迁移前一致。`assistant` 只剩 `schema_migrations`。三个项目的授权目录解析结果不变（kernel: `kernel-source`；trading-risk-bot: `crypto`、`ib`）。
+    - 部署过程中发现并修复：编辑 `run-kernel-service.sh` 时被写成了 CRLF 换行；生产进程直接从挂载目录运行这个脚本，若此时重启会启动失败。已改回 LF，期间没有进程重启。
+    - 遗留（既有问题，未处理）：本工作区实际是 CRLF 换行，与 `.gitattributes` 的 `eol=lf` 不一致。生产记录的迁移哈希是 CRLF 字节的哈希；如果改从全新的 LF 检出构建，`migrate` 会报"已应用的迁移被修改"。
 
 ### 阶段 5：项目创建
 - **内容**：`project-spec.v1`（用途、目录授权、频道、所用角色和技能、业务背景档案、每周进化时间）；kernel 项目的项目创建技能（需求和设计阶段产出这份 spec）；BootstrapExecutor：在 kernel 任务的 build 阶段、设计已批准的前提下，**按固定规则**完成以下动作，可重复执行（幂等）：写 `projects` 表、建立 vault、采用模板 Agent 包、授权目录、创建 PM 和 Supervisor 频道并绑定、登记每周进化；Review 阶段核对每一项是否到位。
@@ -622,6 +644,9 @@ IngressService.receive(event):
 | 10-15 | 任务评估只产出五种决定，不能提出新任务 | 增加 `propose_followups`：Supervisor 可以在结束任务时提议排队后续任务，批准后当前任务结束，因此仍然只有一个卡片条目 | 阶段 6 的复盘需要把建议变成任务；放在"结束"这一步，不破坏"每个任务一个条目" |
 | 10-15 | 复盘任务由 Supervisor 安排第一步 | 复盘任务激活后直接交给 PM 执行，用户只决定结果 | 每周自动运行，不应等用户点击；复盘本身只读、无副作用 |
 | 10-15 | 网关同时接 Discord 和飞书 | 只接 Discord；飞书退出 Kernel 业务逻辑，保留供以后的 webhook、多维表格使用 | 用户决定 |
+| 10-15 | 阶段 4 删除旧模块时保留飞书凭据和底层客户端（`feishu.py` 的非对话部分） | `feishu.py` 整个删除（在 git 历史中可找回），凭据文件不动 | 新核心和保留的服务都不引用它；以后做 webhook 时按需新写 |
+| 10-15 | 旧表 `project_grants`、`project_file_changes` 留在 `assistant` schema，其余移入 `archive_core5` | 这两张表移入 `core` schema；`assistant` 只剩迁移账本 `schema_migrations` | 新核心拥有它仍在使用的全部表；测试库由同一迁移建表 |
+| 10-15 | 阶段 0.2：旧脚本在阶段 4 移入 `scripts/archive` | 照此执行；另外 `prompts/v12`、`prompts/roles` 直接删除（git 历史可找回） | 新核心和新项目模板都不使用它们 |
 
 ## 11. 用户确认记录
 | 日期 | 事项 | 结论 |
@@ -636,6 +661,7 @@ IngressService.receive(event):
 | 10-15 | 阶段 0 细节和线上切换 | 同意并已执行 |
 | 10-15 | 阶段 2 的 D1–D4 | 同意 |
 | 10-15 | 验证无法顺利通过的事项先跳过、存档并汇报，必要时先讨论再处理 | 已记录 |
+| 10-15 | 4b：`kernel-api` 只保留健康检查和版本；`kernel-mcp` 精简为 vault、embeddings、rerank、chat、模型列表、凭据（用户在本会话中直接确认，取代经主会话转达的"整个下线"） | 同意 |
 
 待确认：
 - **阶段 3 的 Discord 测试方式**（问题 I5）：

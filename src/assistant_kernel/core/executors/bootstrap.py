@@ -90,12 +90,9 @@ def add_routing(config_path: Path, project_id: str, channels: dict[str, str]) ->
 
 
 def channel_creator(settings) -> DiscordChannels:
-    from assistant_kernel.core.gateway.config import load_gateway_config
+    from assistant_kernel.core.gateway.config import bot_token, load_gateway_config
     config = load_gateway_config(gateway_config_path(settings))
-    token = os.environ.get(config.bot_token_env)
-    if not token:
-        from assistant_kernel.services.discord import load_discord_config
-        token = load_discord_config(settings).get("bot_token")
+    token = bot_token(settings, config, shared_fallback=True)
     if not token:
         raise RuntimeError("no Discord bot token available for creating channels")
     return DiscordChannels(token, config.guild_id)

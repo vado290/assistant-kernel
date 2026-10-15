@@ -171,7 +171,7 @@ async def test_scoped_mcp_is_injected_without_scope_values_in_command(tmp_path, 
         writable_roots=(external,),
     ))
     command = " ".join(captured["command"])
-    assert "assistant_kernel.mcp_server.managed" in command
+    assert "assistant_kernel.core.tools" in command
     assert "default_tools_approval_mode" in command
     assert "enabled_tools" in command
     assert "features.goals=false" in command
@@ -260,6 +260,6 @@ def isolated_codex_config_query(monkeypatch):
         result=await compile_mcp(request,environment,binary,archive_dir)
         if result[1]:
             payload=json.loads(result[1].read_text())
-            (archive_dir/'mcp-runtime.fixture.json').write_text(json.dumps({'exposed':payload['selected'],'cleanup':'closed','test_fake':True}))
+            (archive_dir/'mcp-runtime.fixture.json').write_text(json.dumps({'exposed':payload['scoped_tools'],'test_fake':True}))
         return result
     monkeypatch.setattr('assistant_kernel.harness.mcp_config.compile_mcp',compile_fixture)

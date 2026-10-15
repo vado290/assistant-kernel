@@ -33,9 +33,14 @@ stages: requirements → design → build → (Kernel validation) → review →
 | `core/cards.py` | the one open card per project |
 | `core/kernel.py` | entry points: messages, card actions, claim/complete/fail runs |
 | `core/dispatch.py` | dispatcher: runs claimed runs concurrently, leases, recovery |
-| `core/executors/` | PM, Supervisor, validation and publish executors |
+| `core/executors/` | PM, Supervisor, validation, publish and project-bootstrap executors |
+| `core/agents.py` | loads a project's live PM / Supervisor agent files (phase profiles only narrow) |
+| `core/tools.py` | Kernel tools for one model call (stdio MCP, lease checked on every call) |
 | `core/gateway/` | Discord gateway (cards, buttons, modals, outbox, reminders) |
-| `prompts/core/` | PM and Supervisor roles and output formats |
+| `harness/` | `codex exec` runner, tool-server launch, process control |
+| `services/` | reused libraries: workspace scope and grants, documents, candidates, validation, publishing, project map and change ledger |
+| `api/`, `mcp_server/` | `kernel-api` (health, version) and `kernel-mcp` (vault, embeddings, rerank, chat, models, credentials) |
+| `prompts/core/`, `prompts/skills/` | PM and Supervisor roles and output formats; shared skills |
 
 Project agent files (roles, skills, models) live in each project's vault: `assistant-data/vaults/<project>/agents/`.
 Channel routing is `assistant-data/config/core-discord.yaml`.
@@ -48,8 +53,13 @@ Channel routing is `assistant-data/config/core-discord.yaml`.
 ```
 
 Production processes (`deploy/supervisord.conf`): `kernel-core-dispatcher`, `kernel-core-gateway`,
-`kernel-api` (`/health/ready`, `/version`), `kernel-mcp`, `docling-serve`. Only two venvs exist:
-`kernel-venvs/test` and `kernel-venvs/prod`.
+`kernel-api` (`/health/live`, `/health/ready`, `/version`), `kernel-mcp` (shared services for your own MCP
+clients on `127.0.0.1:18002`, bearer token: vault reads, embeddings, rerank, chat, model list, service
+credentials), `docling-serve`. Only two venvs exist: `kernel-venvs/test` and `kernel-venvs/prod`.
 
-Tests: `tests/core/` (each test gets a temporary database). `scripts/core_smoke.py` runs one real-model task
-on a temporary database.
+Database: schema `core` (tasks, runs, cards, messages, events, projects, directory grants, file change
+ledger). The retired control core's tables are kept read-only in `archive_core5`; nothing reads them.
+
+Tests: `tests/core/` (each test gets a temporary database) and a few library tests in `tests/`.
+`scripts/core_smoke.py` runs one real-model task on a temporary database. Old one-off scripts are kept in
+`scripts/archive/` for reference; they target the retired code and are not runnable.
