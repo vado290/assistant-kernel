@@ -52,11 +52,14 @@ function Kernel-Programs {
 }
 
 function Wait-Ready($expectedVersion) {
+    # Ready = every kernel-* program RUNNING (supervisord counts that only after startsecs) and the
+    # API reports the deployed version. The legacy /health/ready judged the retired workers, so it is not used.
     for ($i = 0; $i -lt 45; $i++) {
         try {
-            $ready = Invoke-RestMethod -Uri "$HealthUrl/health/ready" -TimeoutSec 5
+            $lines = @(Supervisor status | Where-Object { $_ -like 'kernel-*' })
+            $running = $lines.Count -gt 0 -and -not ($lines | Where-Object { $_ -notmatch '\sRUNNING\s' })
             $version = Invoke-RestMethod -Uri "$HealthUrl/version" -TimeoutSec 5
-            if ($ready.status -eq "ready" -and $version.version -eq $expectedVersion) { return $true }
+            if ($running -and $version.version -eq $expectedVersion) { return $true }
         } catch {}
         Start-Sleep -Seconds 2
     }
