@@ -20,7 +20,8 @@ async def _serve() -> None:
     dispatcher = Dispatcher(Kernel(settings), build_executors(),
                             services={"settings": settings,
                                       "harness": CodexCliHarness(ProjectRuntimeManager(settings.data_root))},
-                            model_cap=int(cap) if cap else None)
+                            model_cap=int(cap) if cap else None,
+                            weekly_evolution=os.environ.get("CORE_WEEKLY_EVOLUTION", "1") != "0")
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):

@@ -5,13 +5,16 @@ import asyncio
 from typing import Any
 
 from assistant_kernel.core.executors.common import (
-    CANDIDATE_TOOLS, MVP_TOOLS, call_for_json, load_agent, prompt_text, render_documents, write_document,
+    CANDIDATE_TOOLS, MVP_TOOLS, business_profile, call_for_json, load_agent, prompt_text, render_documents,
+    write_document,
 )
+from assistant_kernel.core.executors.digest import render_digest
 
 STAGE_PROMPT = {"requirements": "pm-requirements", "design": "pm-design", "build": "pm-build",
                 "review": "pm-review", "operate": "pm-operate"}
 DOCUMENT_STAGE = {"task_contract": "requirements", "solution_design": "design",
-                  "implementation_report": "build", "review_report": "review"}
+                  "implementation_report": "build", "review_report": "review",
+                  "improvement_proposal": "operate"}
 
 
 def render_turn(task: dict[str, Any], run_input: dict[str, Any], inputs: list[dict[str, Any]]) -> str:
@@ -40,10 +43,15 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
     stage = run_input["stage"]
     config = await asyncio.to_thread(load_agent, settings, run["project_id"], "pm", stage)
     inputs = await kernel.turn_inputs(run)
+    profile = await asyncio.to_thread(business_profile, settings, run["project_id"])
+    evolution = task["kind"] == "evolution"
+    digest = render_digest(await kernel.project_digest(run["project_id"])) if evolution else ""
     prompt = "\n\n".join([
         prompt_text("pm-common"),
         "## 项目说明\n\n" + config.role_text,
-        prompt_text(STAGE_PROMPT[stage]),
+        *(["## 业务背景\n\n" + profile] if profile else []),
+        prompt_text("pm-evolution" if evolution else STAGE_PROMPT[stage]),
+        *([digest] if digest else []),
         *(["## 已加载技能\n\n" + "\n\n".join(config.skill_texts)] if config.skill_texts else []),
         "## 已生效文档\n\n" + render_documents(settings, task),
         "## 本轮上下文\n\n" + render_turn(task, run_input, inputs),

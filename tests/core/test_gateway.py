@@ -189,6 +189,14 @@ async def test_text_commands_in_shared_bot_mode(gateway, sim):
     assert gateway.transport.in_channel(PM_CH)[-1]["text"].startswith("已取消任务")
 
 
+async def test_evolve_command_queues_one_review(gateway, sim):
+    assert (await say(gateway, "/evolve", channel=SUP_CH))["command"] == "/evolve"
+    await say(gateway, "/evolve", channel=SUP_CH)                       # same Discord message: no duplicate
+    assert "复盘" in gateway.transport.in_channel(SUP_CH)[-1]["text"]
+    task = await gateway.kernel.active_task("p1")
+    assert task["kind"] == "evolution" and task["state"] == "pm" and task["origin"] == "user"
+
+
 def test_legacy_gateway_skips_core_channels(kernel_settings):
     from assistant_kernel.services.discord import core_channel_ids
     config = kernel_settings.data_root / "config" / "core-discord.yaml"

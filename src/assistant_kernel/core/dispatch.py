@@ -33,7 +33,8 @@ class Dispatcher:
     def __init__(self, kernel: Kernel, executors: dict[str, Executor], *,
                  services: dict[str, Any] | None = None, worker_id: str | None = None,
                  lease_seconds: int = 900, poll_seconds: float = 1.0,
-                 recover_every_seconds: float = 30.0, model_cap: int | None = None):
+                 recover_every_seconds: float = 30.0, model_cap: int | None = None,
+                 weekly_evolution: bool = False):
         self.kernel = kernel
         self.executors = executors
         self.services = services or {}
@@ -42,6 +43,7 @@ class Dispatcher:
         self.poll_seconds = poll_seconds
         self.recover_every_seconds = recover_every_seconds
         self.model_cap = model_cap                  # optional resource valve, off by default
+        self.weekly_evolution = weekly_evolution    # only the production dispatcher schedules reviews
         self.inflight: dict[str, tuple[dict[str, Any], asyncio.Task]] = {}
 
     def _claimable_types(self) -> tuple[str, ...]:
@@ -116,6 +118,8 @@ class Dispatcher:
             try:
                 if loop.time() >= next_recovery:
                     await self.kernel.recover_expired()
+                    if self.weekly_evolution:
+                        await self.kernel.schedule_evolution()
                     next_recovery = loop.time() + self.recover_every_seconds
                 started = await self.claim_and_start()
             except Exception:

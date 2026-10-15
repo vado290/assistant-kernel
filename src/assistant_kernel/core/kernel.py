@@ -2,14 +2,19 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from psycopg.errors import UniqueViolation
 from psycopg.types.json import Jsonb
 
 from assistant_kernel.config import KernelSettings
 from assistant_kernel.core import cards, machine, rules
-from assistant_kernel.core.db import Database, event, lock_project, one
+from assistant_kernel.core.db import Database, all_rows, event, lock_project, one
+
+EVOLUTION_GOAL = "周度复盘：根据最近的运行记录提出改进建议"
+EVOLUTION_TZ = ZoneInfo("Asia/Shanghai")
 
 CONTROL_RUNS = ("pm_turn", "supervisor", "validation", "publish", "bootstrap")
 
@@ -127,6 +132,57 @@ class Kernel:
         async with self.db.tx() as c:
             await c.execute("""UPDATE core.messages SET delivery_status=%s, external_event_id=COALESCE(%s, external_event_id)
                                WHERE message_id=%s""", ("sent" if ok else "failed", external_id, message_id))
+
+    async def start_evolution(self, project_id: str, *, origin: str = "user",
+                              idempotency_key: str | None = None) -> dict[str, Any]:
+        """Queue a self-evolution review: the PM reviews the last week, the user decides on its proposals."""
+        return await self.create_task(project_id, goal=EVOLUTION_GOAL, origin=origin, kind="evolution",
+                                      idempotency_key=idempotency_key)
+
+    async def schedule_evolution(self, now: datetime | None = None) -> list[str]:
+        """Weekly review from Sunday 13:00 Asia/Shanghai: once per project and ISO week, only if the project was used."""
+        local = (now or datetime.now(timezone.utc)).astimezone(EVOLUTION_TZ)
+        if local.isoweekday() != 7 or local.hour < 13:
+            return []
+        year, week, _ = local.isocalendar()
+        week_key = f"{year}-W{week:02d}"
+        async with self.db.tx() as c:
+            due = await all_rows(c, """
+                SELECT p.project_id FROM core.projects p
+                WHERE p.status='active' AND coalesce((p.settings->>'weekly_evolution')::boolean, true)
+                  AND NOT EXISTS (SELECT 1 FROM core.tasks t WHERE t.idempotency_key = 'evolution:' || p.project_id || ':' || %s)
+                  AND (EXISTS (SELECT 1 FROM core.messages m WHERE m.project_id=p.project_id AND m.direction='inbound'
+                                 AND m.created_at > now() - interval '7 days')
+                       OR EXISTS (SELECT 1 FROM core.tasks t WHERE t.project_id=p.project_id AND t.kind <> 'evolution'
+                                    AND t.updated_at > now() - interval '7 days'))""", (week_key,))
+        for row in due:
+            await self.start_evolution(row["project_id"], origin="schedule",
+                                       idempotency_key=f"evolution:{row['project_id']}:{week_key}")
+        return [row["project_id"] for row in due]
+
+    async def project_digest(self, project_id: str, days: int = 7) -> dict[str, Any]:
+        """What happened in a project recently: the evidence a weekly evolution review works from."""
+        since = f"{int(days)} days"
+        async with self.db.tx() as c:
+            tasks = list(await (await c.execute(
+                """SELECT kind, state, stage, turn_count, close_reason, left(goal, 160) AS goal FROM core.tasks
+                   WHERE project_id=%s AND updated_at > now() - %s::interval AND kind <> 'evolution'
+                   ORDER BY created_at""", (project_id, since))).fetchall())
+            actions = list(await (await c.execute(
+                """SELECT payload FROM core.task_events WHERE project_id=%s AND kind='card_action'
+                   AND created_at > now() - %s::interval ORDER BY event_id""", (project_id, since))).fetchall())
+            failures = list(await (await c.execute(
+                """SELECT run_type, purpose, count(*) AS n, left(max(error->>'message'), 200) AS example
+                   FROM core.runs WHERE project_id=%s AND created_at > now() - %s::interval
+                   AND (status='failed' OR attempt > 1) GROUP BY run_type, purpose""", (project_id, since))).fetchall())
+            counts = dict(await (await c.execute(
+                """SELECT kind, count(*) FROM core.task_events WHERE project_id=%s AND created_at > now() - %s::interval
+                   AND kind IN ('card_upgraded','stale_result','supervisor_reevaluate') GROUP BY kind""",
+                (project_id, since))).fetchall())
+            inbound = (await one(c, """SELECT count(*) AS n FROM core.messages WHERE project_id=%s AND direction='inbound'
+                                       AND body ? 'text' AND created_at > now() - %s::interval""", (project_id, since)))["n"]
+        return {"days": days, "tasks": tasks, "card_actions": [a["payload"] for a in actions],
+                "failures": failures, "event_counts": counts, "user_messages": inbound}
 
     async def active_task(self, project_id: str) -> dict[str, Any] | None:
         async with self.db.tx() as c:

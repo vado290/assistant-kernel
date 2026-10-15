@@ -29,7 +29,11 @@ DECISION_ACTIONS = {
     "turn_budget": ("continue", "stop"),
     "reconcile": ("published", "failed"),
     "create_project": ("approve", "reject"),
+    "followups": ("approve", "reject"),
 }
+MAX_FOLLOWUPS = 5
+EVOLUTION_INSTRUCTION = ("做本项目的周度复盘：依据下面 Kernel 提供的运行记录和项目现有文件，找出最值得改进的地方，"
+                         "提交 improvement_proposal 文档。")
 
 
 class InvalidResult(ValueError):
@@ -157,6 +161,8 @@ async def activate_next(c, project_id: str) -> dict[str, Any] | None:
     if task is None:
         return None
     task = await _update(c, task, stage=rules.INITIAL_STAGE[task["kind"]])
+    if task["kind"] == "evolution":   # the weekly review runs unattended; the user decides on its proposals
+        return await to_pm(c, task, {"kind": "instruction", "instruction": EVOLUTION_INSTRUCTION})
     return await to_supervising(c, task, "start")
 
 
@@ -165,8 +171,8 @@ async def create_task(c, project_id: str, *, goal: str, origin: str, kind: str =
                       idempotency_key: str | None = None) -> dict[str, Any]:
     task = await one(
         c, """INSERT INTO core.tasks(project_id, kind, origin, priority, goal, source_message_id,
-                                     parent_task_id, idempotency_key)
-              VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                                     parent_task_id, idempotency_key, created_at)
+              VALUES (%s, %s, %s, %s, %s, %s, %s, %s, clock_timestamp())
               ON CONFLICT (idempotency_key) DO NOTHING RETURNING *""",
         (project_id, kind, origin, priority, goal, source_message_id, parent_task_id, idempotency_key))
     if task is None:
@@ -206,7 +212,8 @@ async def _pm_result(c, task, run, result) -> None:
     docs = dict(task["documents"])
     report = result.get("report")
     if report:
-        if report.get("kind") not in ("task_contract", "solution_design", "implementation_report", "review_report") \
+        if report.get("kind") not in ("task_contract", "solution_design", "implementation_report", "review_report",
+                                      "improvement_proposal") \
                 or not report.get("sha256"):
             raise InvalidResult("report needs a known kind and sha256")
         docs[report["kind"]] = report
@@ -285,6 +292,11 @@ def _supervisor_item(task, run_input: dict[str, Any], result: dict[str, Any]) ->
                                        "target_stage": target, "approve": approve, "doc_shas": shas})
     if decision in ("propose_complete", "propose_cancel"):
         return _decision(task, decision.removeprefix("propose_"), message)
+    if decision == "propose_followups":
+        goals = [str(g).strip() for g in result.get("tasks") or [] if str(g).strip()]
+        if not goals or len(goals) > MAX_FOLLOWUPS:
+            raise InvalidResult(f"propose_followups needs 1–{MAX_FOLLOWUPS} task goals")
+        return _decision(task, "followups", message or "是否把以下改进作为新任务排队？", tasks=goals)
     if decision == "propose_project":
         if task["project_id"] != rules.MANAGEMENT_PROJECT:
             raise InvalidResult("only the management project can create projects")
@@ -427,9 +439,12 @@ async def on_exhausted(c, run: dict[str, Any]) -> None:
 async def on_action(c, project_id: str, item_id: str, action: str, values: dict[str, Any],
                     source_message_id=None) -> dict[str, Any]:
     card, item = await cards.take_item(c, project_id, item_id)
+    # Feedback for weekly evolution: what was shown, what the user did and what they wrote.
     await event(c, project_id, "card_action", interaction_id=card["interaction_id"],
                 task_id=item["target"]["id"] if item["target"]["kind"] == "task" else None,
-                item_id=item_id, action=action)
+                item_id=item_id, action=action, item_kind=item["kind"], origin=item["origin"],
+                message=str(item["content"].get("message", ""))[:300], text=str(values.get("text", ""))[:1000],
+                answers=values.get("answers"))
     if item["target"]["kind"] == "consultation":
         return await _consultation_action(c, project_id, item, action, source_message_id)
     task = await load_task(c, item["target"]["id"])
@@ -512,6 +527,14 @@ async def _decision_action(c, task, item, action, values, source_message_id):
             return await close(c, task, "cancelled", "turn_budget_stopped")
         task = await _update(c, task, max_turns=task["turn_count"] + EXTRA_TURNS)
         return await to_supervising(c, task, "pm_continue", summary=data["pm_result"].get("summary", ""))
+    if decision == "followups":
+        if action == "reject":
+            return await to_supervising(c, task, "followups_rejected", text=note)
+        for number, goal in enumerate(data["tasks"]):
+            await create_task(c, task["project_id"], goal=goal, origin="evolution" if task["kind"] == "evolution"
+                              else "supervisor", parent_task_id=task["task_id"],
+                              idempotency_key=f"followup:{item['item_id']}:{number}")
+        return await close(c, task, "completed", "followups_queued")
     if decision == "create_project":
         if action == "reject":
             return await to_supervising(c, task, "create_project_rejected", text=note)

@@ -7,7 +7,7 @@ from typing import Any
 
 from assistant_kernel.core import rules
 from assistant_kernel.core.executors.common import (
-    READ_ONLY_TOOLS, call_for_json, load_agent, prompt_text, render_documents,
+    READ_ONLY_TOOLS, business_profile, call_for_json, load_agent, prompt_text, render_documents,
 )
 
 STAGE_ORDER = ["requirements", "design", "build", "review", "release", "operate"]
@@ -24,7 +24,9 @@ REASONS = {
     "release_rejected": "用户没有批准发布", "complete_rejected": "用户不同意结束任务",
     "cancel_rejected": "用户不同意取消任务",
     "create_project_rejected": "用户没有批准你提出的项目规格", "bootstrap_failed": "创建项目失败",
+    "followups_rejected": "用户没有批准你提出的后续任务",
 }
+KIND_NAMES = {"delivery": "交付", "operation": "运营", "evolution": "周度复盘（自我进化）", "bootstrap": "创建项目"}
 
 
 def allowed_moves(task: dict[str, Any]) -> str:
@@ -79,10 +81,13 @@ async def execute_supervisor(run: dict[str, Any], ctx) -> dict[str, Any]:
     config = await asyncio.to_thread(load_agent, settings, run["project_id"], "supervisor")
     card = await kernel.card(run["project_id"])
     sections = [prompt_text("supervisor"), "## 项目说明\n\n" + config.role_text]
+    profile = await asyncio.to_thread(business_profile, settings, run["project_id"])
+    if profile:
+        sections.append("## 业务背景\n\n" + profile)
     if config.skill_texts:
         sections.append("## 已加载技能\n\n" + "\n\n".join(config.skill_texts))
     if task:
-        sections.append(f"## 当前任务\n\n- 目标：{task['goal']}\n- 阶段：{task['stage']}\n- 状态：{task['state']}\n"
+        sections.append(f"## 当前任务\n\n- 目标：{task['goal']}\n- 类型：{KIND_NAMES.get(task['kind'], task['kind'])}\n- 阶段：{task['stage']}\n- 状态：{task['state']}\n"
                         f"- 已执行 PM 回合：{task['turn_count']}\n\n### 可去的阶段（Kernel 计算）\n\n{allowed_moves(task)}")
         sections.append("## 已生效文档\n\n" + render_documents(settings, task))
     else:

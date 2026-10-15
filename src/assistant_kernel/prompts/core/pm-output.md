@@ -7,7 +7,7 @@
   "questions": [
     {"id": "q1", "text": "具体问题", "required": true, "options": ["选项A", "选项B"], "recommended": "选项A"}
   ],
-  "document": {"kind": "task_contract | solution_design | implementation_report | review_report", "markdown": "完整文档正文", "verdict": "pass | changes"}
+  "document": {"kind": "task_contract | solution_design | implementation_report | review_report | improvement_proposal", "markdown": "完整文档正文", "verdict": "pass | changes"}
 }
 
 - questions 只在 outcome 为 needs_input 时填写，否则为 []；options 和 recommended 可省略。

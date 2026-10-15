@@ -21,7 +21,7 @@ stages: requirements → design → build → (Kernel validation) → review →
 - Requirements and design approvals are given together with "execute"; every publish needs your approval.
   Approvals stay valid only while the approved documents are unchanged.
 - Messages in `#pm` are added to the current task; messages in `#supervisor` are consultations and never
-  become PM input. Text commands: `/status`, `/pending`, `/cancel 确认`.
+  become PM input. Text commands: `/status`, `/pending`, `/cancel 确认`, `/evolve` (start a self-evolution review now).
 
 ## Code map
 

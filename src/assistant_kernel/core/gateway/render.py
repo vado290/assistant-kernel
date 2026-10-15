@@ -14,7 +14,8 @@ ACTION_STYLES = {"execute": "success", "approve": "success", "retry": "primary",
                  "published": "success", "stop": "danger", "reject": "danger", "failed": "danger"}
 DECISION_TITLES = {"release": "申请发布", "complete": "建议结束任务", "cancel": "建议取消任务",
                    "new_task": "建议新建任务", "run_failed": "执行失败", "turn_budget": "回合数已达上限",
-                   "reconcile": "发布结果需要核对", "create_project": "创建新项目"}
+                   "reconcile": "发布结果需要核对", "create_project": "创建新项目",
+                   "followups": "建议排队的新任务"}
 DONE_REPLIES = {"execute": "已确认，PM 将开始执行。", "approve": "已批准。", "reject": "已记录：不同意。",
                 "stop": "任务已停止。", "retry": "已安排重试。", "continue": "已继续。",
                 "published": "已记录：发布成功。", "failed": "已记录：发布失败。", "submit": "答案已提交。",
@@ -80,6 +81,10 @@ def render_item(item: dict[str, Any]) -> dict[str, Any]:
         title = DECISION_TITLES.get(content["decision"], content["decision"])
         buttons = [button(item_id, a) for a in content.get("actions", [])]
         body = f"**⚑ {title}**\n{message}"
+        followups = (content.get("data") or {}).get("tasks")
+        if followups:
+            body += "\n\n" + "\n".join(f"{n}. {goal}" for n, goal in enumerate(followups, 1))
+            body += "\n\n批准后这些任务依次排队执行，本任务结束。"
         spec = (content.get("data") or {}).get("spec")
         if spec:
             profile = spec["business_profile"]

@@ -80,9 +80,16 @@ def read_document(settings, project_id: str, document: dict[str, Any]) -> str:
     return str(payload.get("markdown") or "")
 
 
+def business_profile(settings, project_id: str) -> str:
+    """The project's business background (written at creation); empty when the project has none."""
+    path = ProjectRuntimeManager(settings.data_root).ensure(project_id).vault_root / "knowledge" / "business-profile.md"
+    return path.read_text("utf-8") if path.is_file() else ""
+
+
 def render_documents(settings, task: dict[str, Any]) -> str:
     titles = {"task_contract": "需求文档", "solution_design": "设计文档",
-              "implementation_report": "实施报告", "review_report": "Review 报告"}
+              "implementation_report": "实施报告", "review_report": "Review 报告",
+              "improvement_proposal": "改进建议"}
     parts = []
     for kind, title in titles.items():
         document = task["documents"].get(kind)

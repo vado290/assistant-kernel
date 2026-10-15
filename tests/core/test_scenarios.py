@@ -4,17 +4,20 @@ Phase 1 drives the state machine with injected run results (tests/core/sim.py).
 Every Sim.step() asserts the three invariants: one active task per project,
 one cursor per active task, one open card per project.
 """
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
 import pytest
 
 from assistant_kernel.core import rules
 from assistant_kernel.core.cards import StaleItem
+from assistant_kernel.core.db import all_rows
 
 from .sim import Fail, next_step, pm, relay, report
 
 deferred = pytest.mark.skip(reason="post-MVP: deferred by the MVP-first rule (see plan section 10)")
 phase2 = pytest.mark.skip(reason="rebuild phase 2: executors + dispatcher")
 phase3 = pytest.mark.skip(reason="rebuild phase 3: ingress + Discord cards")
-phase6 = pytest.mark.skip(reason="rebuild phase 6: weekly evolution")
 
 
 async def start_task(kernel, sim, text="做一个日报工具", project="p1"):
@@ -363,10 +366,20 @@ async def test_s20_credential_never_reaches_model_or_logs():
     logs and messages; PM resumes with 'provided'."""
 
 
-@phase6
-async def test_s21_weekly_evolution_queues_once():
+async def test_s21_weekly_evolution_queues_once(kernel, sim):
     """Weekly evolution tick while the project is busy → evolution task queued; a second tick in the
-    same week creates nothing."""
+    same week creates nothing; idle projects and opted-out projects are skipped."""
+    await start_task(kernel, sim)
+    await start_task(kernel, sim, project="p2")
+    async with kernel.db.tx() as c:
+        await c.execute("""UPDATE core.projects SET settings='{"weekly_evolution": false}' WHERE project_id='p2'""")
+    sunday = datetime(2026, 10, 18, 13, 5, tzinfo=ZoneInfo("Asia/Shanghai"))
+    assert await kernel.schedule_evolution(sunday - timedelta(minutes=10)) == []
+    assert await kernel.schedule_evolution(sunday) == ["p1"]
+    assert await kernel.schedule_evolution(sunday + timedelta(hours=5)) == []
+    async with kernel.db.tx() as c:
+        rows = await all_rows(c, "SELECT state, origin FROM core.tasks WHERE kind='evolution'")
+    assert rows == [{"state": "queued", "origin": "schedule"}]
 
 
 @phase2
