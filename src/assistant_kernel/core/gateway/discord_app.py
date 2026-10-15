@@ -96,11 +96,12 @@ class DiscordTransport:
 
 
 class CoreDiscordClient(discord.Client):
-    def __init__(self, kernel: Kernel, config: GatewayConfig):
+    def __init__(self, kernel: Kernel, config: GatewayConfig, config_path: Path | None = None):
         intents = discord.Intents.none()
         intents.guilds = intents.guild_messages = intents.message_content = True
         super().__init__(intents=intents)
-        self.kernel, self.config = kernel, config
+        self.kernel, self.config, self.config_path = kernel, config, config_path
+        self.config_mtime = config_path.stat().st_mtime if config_path and config_path.is_file() else None
         self.service = GatewayService(kernel, config, DiscordTransport(self, config.guild_id))
         self.tree = app_commands.CommandTree(self)
         self._register_commands()
@@ -142,6 +143,8 @@ class CoreDiscordClient(discord.Client):
         ticks = 0
         while not self.is_closed():
             try:
+                if ticks % 5 == 0:
+                    await self._reload_config()
                 await self.service.deliver_outbox()
                 await self.service.sync_cards()
                 if ticks % 30 == 0:
@@ -150,6 +153,20 @@ class CoreDiscordClient(discord.Client):
                 log.exception("gateway pump error")
             ticks += 1
             await asyncio.sleep(2)
+
+    async def _reload_config(self) -> None:
+        """Pick up channel routing added by project creation (config/core-discord.yaml) without a restart."""
+        if not self.config_path or not self.config_path.is_file():
+            return
+        mtime = self.config_path.stat().st_mtime
+        if mtime == self.config_mtime:
+            return
+        config = load_gateway_config(self.config_path)
+        for project_id in set(config.projects) - set(self.config.projects):
+            await self.kernel.ensure_project(project_id)
+        self.config = self.service.config = config
+        self.config_mtime = mtime
+        log.info("gateway routing reloaded: %s", ", ".join(sorted(config.projects)))
 
     async def on_message(self, message: discord.Message) -> None:
         if message.author.bot or message.guild is None or str(message.guild.id) != self.config.guild_id:
@@ -185,7 +202,7 @@ def run() -> None:
         token = load_discord_config(settings).get("bot_token")   # same source as the legacy gateway
     if not token:
         raise SystemExit(f"no bot token: set {config.bot_token_env} or use shared_bot")
-    CoreDiscordClient(Kernel(settings), config).run(token, log_handler=None)
+    CoreDiscordClient(Kernel(settings), config, path).run(token, log_handler=None)
 
 
 if __name__ == "__main__":

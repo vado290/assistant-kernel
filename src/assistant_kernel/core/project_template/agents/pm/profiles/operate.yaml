@@ -1,0 +1,65 @@
+artifact_schema: operation-report.v1
+disabled_tools:
+- write_candidate_file
+- delete_candidate_file
+display_phase: operation
+mcp_servers: {}
+mode_id: operate
+role_append: '# Active phase · operation
+
+
+  评估已发布运营基线、目标效果和反馈，执行已批准且本阶段允许的运营动作，形成定期报告。普通事件排队，严重事件请求安全边界中断；代码改动转入获批实施范围。'
+schema_version: project-agent-profile.v2
+skills:
+  available:
+  - name: assistant-history-retrieval
+    source: auto
+  - name: assistant-subagent-orchestration
+    source: auto
+  - name: assistant-project-credentials
+    source: auto
+  - name: assistant-agent-design
+    source: auto
+  - name: assistant-mcp-design
+    source: auto
+  - name: assistant-workflow-design
+    source: auto
+  - name: assistant-schedule-design
+    source: auto
+  - name: assistant-capability-maintenance
+    source: auto
+  - name: assistant-volcengine-models
+    source: auto
+  required:
+  - name: assistant-task-continuity
+    source: auto
+  - name: assistant-project-agent
+    source: auto
+  - name: assistant-source-scope
+    source: auto
+  - name: assistant-operation
+    source: auto
+tools:
+- get_authorized_workspace
+- list_authorized_tree
+- read_authorized_file
+- current_conversation_route
+- list_recent_history
+- run_status
+- get_project_map
+- query_project_map
+- read_map_component
+- list_project_changes
+- read_change_diff
+- refresh_project_map
+- get_public_background_fields
+- list_source_discovery_roots
+- inspect_source_path
+- project_task_status
+- queue_project_task
+- request_operation_report
+- list_project_credentials
+- volcengine_model_status
+- volcengine_generate
+- volcengine_ocr
+- run_project_action

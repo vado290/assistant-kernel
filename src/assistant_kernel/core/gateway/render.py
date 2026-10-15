@@ -14,7 +14,7 @@ ACTION_STYLES = {"execute": "success", "approve": "success", "retry": "primary",
                  "published": "success", "stop": "danger", "reject": "danger", "failed": "danger"}
 DECISION_TITLES = {"release": "申请发布", "complete": "建议结束任务", "cancel": "建议取消任务",
                    "new_task": "建议新建任务", "run_failed": "执行失败", "turn_budget": "回合数已达上限",
-                   "reconcile": "发布结果需要核对"}
+                   "reconcile": "发布结果需要核对", "create_project": "创建新项目"}
 DONE_REPLIES = {"execute": "已确认，PM 将开始执行。", "approve": "已批准。", "reject": "已记录：不同意。",
                 "stop": "任务已停止。", "retry": "已安排重试。", "continue": "已继续。",
                 "published": "已记录：发布成功。", "failed": "已记录：发布失败。", "submit": "答案已提交。",
@@ -79,7 +79,14 @@ def render_item(item: dict[str, Any]) -> dict[str, Any]:
     else:
         title = DECISION_TITLES.get(content["decision"], content["decision"])
         buttons = [button(item_id, a) for a in content.get("actions", [])]
-        text, attachment = _fit(f"**⚑ {title}**\n{message}")
+        body = f"**⚑ {title}**\n{message}"
+        spec = (content.get("data") or {}).get("spec")
+        if spec:
+            profile = spec["business_profile"]
+            body += (f"\n\n项目 ID：`{spec['project_id']}`\n名称：{spec['display_name']}\n用途：{spec['purpose']}\n"
+                     f"行业：{profile['industry']}\n组织：{profile['organization']}\n使用者：{profile['users']}\n"
+                     f"说明：{profile['notes']}\n\n批准后将创建项目目录、PM/Supervisor 配置和 Discord 频道。")
+        text, attachment = _fit(body)
     return {"text": text, "buttons": buttons, "attachment": attachment}
 
 

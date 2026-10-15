@@ -13,7 +13,8 @@ from psycopg.types.json import Jsonb
 from assistant_kernel.core import cards, rules
 from assistant_kernel.core.db import all_rows, event, one
 
-MUTEX = {"pm_turn": "pm", "supervisor": "supervisor", "validation": "validation", "publish": "publish"}
+MUTEX = {"pm_turn": "pm", "supervisor": "supervisor", "validation": "validation", "publish": "publish",
+         "bootstrap": "bootstrap"}
 STAGE_NAMES = {"requirements": "需求分析", "design": "方案设计", "build": "实施与自测",
                "review": "独立 Review", "release": "发布", "operate": "运营"}
 JSON_FIELDS = ("documents", "approvals", "pm_session")
@@ -27,6 +28,7 @@ DECISION_ACTIONS = {
     "run_failed": ("retry", "stop"),
     "turn_budget": ("continue", "stop"),
     "reconcile": ("published", "failed"),
+    "create_project": ("approve", "reject"),
 }
 
 
@@ -110,6 +112,12 @@ async def to_publishing(c, task) -> dict[str, Any]:
     return task
 
 
+async def to_bootstrapping(c, task, spec: dict[str, Any]) -> dict[str, Any]:
+    task = await _update(c, task, state="bootstrapping")
+    await enqueue(c, task["project_id"], "bootstrap", "default", {"spec": spec}, task=task)
+    return task
+
+
 async def close(c, task, state: str, reason: str, published_files: list[str] | None = None) -> dict[str, Any]:
     """Finish a task, withdraw its runs and card item, then start the next queued task."""
     task = await _update(c, task, state=state, close_reason=reason, closed_at=_now())
@@ -188,8 +196,8 @@ async def on_result(c, run: dict[str, Any], result: dict[str, Any]) -> None:
     if not is_cursor(task, run):
         await event(c, run["project_id"], "stale_result", task_id=run["task_id"], run_id=run["run_id"])
         return
-    handler = {"pm_turn": _pm_result, "supervisor": _supervisor_result,
-               "validation": _validation_result, "publish": _publish_result}[run["run_type"]]
+    handler = {"pm_turn": _pm_result, "supervisor": _supervisor_result, "validation": _validation_result,
+               "publish": _publish_result, "bootstrap": _bootstrap_result}[run["run_type"]]
     await handler(c, task, run, result)
 
 
@@ -277,6 +285,14 @@ def _supervisor_item(task, run_input: dict[str, Any], result: dict[str, Any]) ->
                                        "target_stage": target, "approve": approve, "doc_shas": shas})
     if decision in ("propose_complete", "propose_cancel"):
         return _decision(task, decision.removeprefix("propose_"), message)
+    if decision == "propose_project":
+        if task["project_id"] != rules.MANAGEMENT_PROJECT:
+            raise InvalidResult("only the management project can create projects")
+        try:
+            spec = rules.project_spec(result.get("spec"))
+        except ValueError as exc:
+            raise InvalidResult(str(exc)) from exc
+        return _decision(task, "create_project", message or f"是否创建项目 {spec['project_id']}？", spec=spec)
     raise InvalidResult(f"unsupported Supervisor decision {decision!r}")
 
 
@@ -322,6 +338,19 @@ async def _publish_result(c, task, run, result) -> None:
         await to_supervising(c, task, "publish_failed", error=result.get("error"))
     else:
         await to_awaiting(c, task, _decision(task, "reconcile", "发布结果不确定，请核对后选择实际结果。"))
+
+
+async def _bootstrap_result(c, task, run, result) -> None:
+    if result.get("outcome") != "created":
+        await to_supervising(c, task, "bootstrap_failed", error=result.get("error"))
+        return
+    channels, guild = result.get("channels") or {}, result.get("guild_id")
+    links = "\n".join(f"- #{role}：https://discord.com/channels/{guild}/{channels[key]}"
+                      for role, key in (("pm", "pm_channel_id"), ("supervisor", "supervisor_channel_id"))
+                      if channels.get(key) and guild)
+    await notify(c, task["project_id"], "pm", f"🆕 项目 {result['project_id']} 已创建。\n{links}".rstrip(),
+                 task_id=task["task_id"])
+    await close(c, task, "completed", "project_created")
 
 
 async def _review_input_result(c, task, run, result) -> None:
@@ -483,6 +512,13 @@ async def _decision_action(c, task, item, action, values, source_message_id):
             return await close(c, task, "cancelled", "turn_budget_stopped")
         task = await _update(c, task, max_turns=task["turn_count"] + EXTRA_TURNS)
         return await to_supervising(c, task, "pm_continue", summary=data["pm_result"].get("summary", ""))
+    if decision == "create_project":
+        if action == "reject":
+            return await to_supervising(c, task, "create_project_rejected", text=note)
+        exists = await one(c, "SELECT 1 FROM core.projects WHERE project_id=%s", (data["spec"]["project_id"],))
+        if exists:
+            raise ValueError(f"project {data['spec']['project_id']} already exists")
+        return await to_bootstrapping(c, task, data["spec"])
     if decision == "reconcile":
         if action == "published":
             return await close(c, task, "completed", "published_after_reconcile")
@@ -495,6 +531,8 @@ async def _decision_action(c, task, item, action, values, source_message_id):
             return await to_pm(c, task, run_input, stage=run_input["stage"])
         if data["run_type"] == "validation":
             return await to_validating(c, task)
+        if data["run_type"] == "bootstrap":
+            return await to_bootstrapping(c, task, run_input["spec"])
         return await to_supervising(c, task, **run_input)
     raise ValueError(f"unknown decision {decision}")
 

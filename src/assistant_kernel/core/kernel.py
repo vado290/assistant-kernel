@@ -11,7 +11,7 @@ from assistant_kernel.config import KernelSettings
 from assistant_kernel.core import cards, machine, rules
 from assistant_kernel.core.db import Database, event, lock_project, one
 
-CONTROL_RUNS = ("pm_turn", "supervisor", "validation", "publish")
+CONTROL_RUNS = ("pm_turn", "supervisor", "validation", "publish", "bootstrap")
 
 
 class LeaseLost(Exception):

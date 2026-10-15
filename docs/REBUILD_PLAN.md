@@ -531,6 +531,14 @@ IngressService.receive(event):
 - **内容**：`project-spec.v1`（用途、目录授权、频道、所用角色和技能、业务背景档案、每周进化时间）；kernel 项目的项目创建技能（需求和设计阶段产出这份 spec）；BootstrapExecutor：在 kernel 任务的 build 阶段、设计已批准的前提下，**按固定规则**完成以下动作，可重复执行（幂等）：写 `projects` 表、建立 vault、采用模板 Agent 包、授权目录、创建 PM 和 Supervisor 频道并绑定、登记每周进化；Review 阶段核对每一项是否到位。
 - **退出标准**：从一句"帮我建一个 X 项目"出发，走完五阶段，生成一个可用的新项目。
 
+- **完成记录（2026-10-15，已部署生产）**：
+  - **流程**：在 kernel 项目的 #pm 说"帮我建一个……项目" → kernel 的 Supervisor 用问题卡片弄清用途、行业、组织、使用者，然后提出项目规格（`propose_project`，只有管理项目 kernel 能用）→ 用户在「创建新项目」卡片上看到完整规格后批准 → 任务进入新状态 `bootstrapping`（迁移 `0002`）→ 固定规则的 BootstrapExecutor（`core/executors/bootstrap.py`）完成创建 → 任务完成，#pm 收到带频道链接的通知。
+  - **创建的内容**：项目 vault、`project.yaml`、业务背景档案 `knowledge/business-profile.md`（PM 和 Supervisor 在需求分析时参考）、新模板生成的 PM/Supervisor 配置（`core/project_template/`，角色文本精简、不含旧协议用语）、Discord 分类 `PROJECT · <id>` 及其下的 #pm 和 #supervisor、`core-discord.yaml` 中的路由（网关每 10 秒检查一次文件变化，自动加载，不必重启），以及 `core.projects` 中的一行。
+  - **安全性**：每一步都可以重复执行，不会出错：文件已存在就跳过，频道靠话题里的标记找回，路由和项目登记都是"有则更新、无则新增"；已存在、但不是本流程创建的 vault 一律拒绝覆盖；先写 `project.yaml` 作为"由本流程创建"的标记，中断后可以安全重试。
+  - **测试**：`tests/core` 共 64 项通过。新建项目的 PM（五个阶段）和 Supervisor 配置都能正常加载。
+  - 尚未由真人验证：在 Discord 中实际创建一个项目。
+  - 简化说明（MVP）：创建项目直接走"规格批准 → 固定规则执行"，不再经过需求/设计/实施/Review 的完整流程，因为没有模型写入任何文件，规格本身就是要批准的对象。每周进化的定时登记留到阶段 6。
+
 ### 阶段 6：自我进化
 - **内容**：
   - 每周日 13:00（Asia/Shanghai，可按项目覆盖）自动创建 `kind=evolution` 的任务，按项目和周去重，项目忙时排队；也可以手动触发（`/evolve` 或对 Supervisor 说）；

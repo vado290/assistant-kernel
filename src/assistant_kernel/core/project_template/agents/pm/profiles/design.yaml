@@ -1,0 +1,64 @@
+artifact_schema: solution-design.v1
+disabled_tools:
+- write_candidate_file
+- delete_candidate_file
+display_phase: design
+mcp_servers: {}
+mode_id: design
+role_append: '# Active phase · design
+
+
+  计划分析真实环境与落地方案；给出最可行方案和实施、测试、运营计划并申请设计批准。需求实质变化先回 requirements，保存已有设计进展。不得实施或激活。'
+schema_version: project-agent-profile.v2
+skills:
+  available:
+  - name: assistant-history-retrieval
+    source: auto
+  - name: assistant-subagent-orchestration
+    source: auto
+  - name: assistant-project-credentials
+    source: auto
+  - name: assistant-agent-design
+    source: auto
+  - name: assistant-mcp-design
+    source: auto
+  - name: assistant-workflow-design
+    source: auto
+  - name: assistant-schedule-design
+    source: auto
+  - name: assistant-capability-maintenance
+    source: auto
+  - name: assistant-volcengine-models
+    source: auto
+  required:
+  - name: assistant-task-continuity
+    source: auto
+  - name: assistant-project-agent
+    source: auto
+  - name: assistant-source-scope
+    source: auto
+  - name: assistant-solution-design
+    source: auto
+tools:
+- get_authorized_workspace
+- list_authorized_tree
+- read_authorized_file
+- current_conversation_route
+- list_recent_history
+- run_status
+- get_project_map
+- query_project_map
+- read_map_component
+- list_project_changes
+- read_change_diff
+- refresh_project_map
+- get_public_background_fields
+- list_source_discovery_roots
+- inspect_source_path
+- project_task_status
+- queue_project_task
+- request_operation_report
+- list_project_credentials
+- volcengine_model_status
+- volcengine_generate
+- volcengine_ocr

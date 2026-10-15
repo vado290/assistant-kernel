@@ -23,6 +23,7 @@ REASONS = {
     "validation_failed": "Kernel 验证未通过", "publish_failed": "发布失败",
     "release_rejected": "用户没有批准发布", "complete_rejected": "用户不同意结束任务",
     "cancel_rejected": "用户不同意取消任务",
+    "create_project_rejected": "用户没有批准你提出的项目规格", "bootstrap_failed": "创建项目失败",
 }
 
 
@@ -97,6 +98,8 @@ async def execute_supervisor(run: dict[str, Any], ctx) -> dict[str, Any]:
         message = await kernel.get_message(run_input["message_id"])
         sections.append(f"## 用户在 Supervisor 频道的发言\n\n{message['body'].get('text', '')}")
     sections.append(prompt_text(PURPOSE_PROMPT[purpose]))
+    if run["project_id"] == rules.MANAGEMENT_PROJECT and purpose == "evaluate":
+        sections.append(prompt_text("supervisor-kernel"))
     parsed, model_result = await call_for_json(
         ctx, run, config, "\n\n".join(sections), task_id=str(task_id) if task_id else None, stage=None,
         session_id=None, tools=READ_ONLY_TOOLS, sandbox="read-only")

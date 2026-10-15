@@ -4,9 +4,10 @@ Nothing here touches the database, so every rule is unit-testable on plain dicts
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
-ACTIVE_STATES = ("pm", "supervising", "awaiting_user", "validating", "publishing")
+ACTIVE_STATES = ("pm", "supervising", "awaiting_user", "validating", "publishing", "bootstrapping")
 TERMINAL_STATES = ("completed", "cancelled", "failed")
 
 # Each active state is waited on by exactly one cursor (plan principle P7).
@@ -15,7 +16,27 @@ CURSOR_RUN = {
     "supervising": ("supervisor", "evaluate"),
     "validating": ("validation", "default"),
     "publishing": ("publish", "default"),
+    "bootstrapping": ("bootstrap", "default"),
 }
+
+MANAGEMENT_PROJECT = "kernel"   # the project whose Supervisor may propose creating new projects
+PROJECT_ID = re.compile(r"[a-z][a-z0-9-]{2,39}")
+
+
+def project_spec(spec: Any) -> dict[str, Any]:
+    """Validate and normalise a new-project spec proposed by the management Supervisor."""
+    if not isinstance(spec, dict):
+        raise ValueError("project spec must be an object")
+    project_id = str(spec.get("project_id") or "").strip()
+    if not PROJECT_ID.fullmatch(project_id):
+        raise ValueError("project_id must be 3–40 lowercase letters, digits or '-', starting with a letter")
+    display_name, purpose = str(spec.get("display_name") or "").strip(), str(spec.get("purpose") or "").strip()
+    if not display_name or not purpose:
+        raise ValueError("project spec needs display_name and purpose")
+    profile = spec.get("business_profile") if isinstance(spec.get("business_profile"), dict) else {}
+    return {"project_id": project_id, "display_name": display_name[:80], "purpose": purpose[:500],
+            "business_profile": {k: str(profile.get(k) or "（未提供）")[:500]
+                                 for k in ("industry", "organization", "users", "notes")}}
 
 INITIAL_STAGE = {"delivery": "requirements", "bootstrap": "requirements",
                  "operation": "operate", "evolution": "operate"}

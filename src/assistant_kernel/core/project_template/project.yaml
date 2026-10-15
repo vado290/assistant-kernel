@@ -1,0 +1,11 @@
+schema_version: project.v2
+project_id: {project_id}
+display_name: {display_name}
+layout_version: 2
+created_by: kernel-core-bootstrap
+created_at: {created_at}
+validation_policy:
+  required_scopes:
+  - structure
+multi_agent:
+  enabled: true
