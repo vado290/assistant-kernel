@@ -89,6 +89,23 @@ async def test_questions_are_answered_in_a_prefilled_modal(gateway, sim, kernel)
     assert run["input"]["answers"] == {"c_q1": "团队和老板"}
 
 
+async def test_questions_can_be_answered_with_other_thoughts(gateway, sim):
+    received = await say(gateway, "写今天测试的三条要点")
+    sim.script("supervisor:evaluate", {"decision": "ask_user", "message": "缺内容",
+                                       "questions": [{"id": "c1", "text": "三条要点是什么？"}]})
+    await sim.drain()
+    await gateway.sync_cards()
+    assert [b["label"] for b in gateway.transport.last_card()["buttons"]] == ["回答", "其他想法…", "停止任务"]
+    modal = (await click(gateway, "其他想法")).modal
+    assert modal["title"] == "其他想法"
+    reply = await gateway.on_modal(channel_id=SUP_CH, user_id=USER, interaction_id="i2", custom_id=modal["custom_id"],
+                                   values={"text": "我也不清楚，你帮我查记录"})
+    assert reply.text.startswith("你的想法已交给 Supervisor")
+    run = await gateway.kernel.claim("w1")
+    assert run["input"]["reason"] == "revise" and run["input"]["unanswered"] == ["三条要点是什么？"]
+    assert (await sim.task(received["task_id"]))["state"] == "supervising"
+
+
 async def test_many_questions_use_pages_and_drafts(gateway, sim, kernel):
     await say(gateway, "大任务")
     questions = [{"id": f"s{i}", "text": f"问题{i}"} for i in range(7)]
@@ -96,7 +113,7 @@ async def test_many_questions_use_pages_and_drafts(gateway, sim, kernel):
     await sim.drain()
     await gateway.sync_cards()
     card = gateway.transport.last_card()
-    assert [b["label"] for b in card["buttons"]] == ["回答 1-5", "回答 6-7"]
+    assert [b["label"] for b in card["buttons"]] == ["回答 1-5", "回答 6-7", "其他想法…", "停止任务"]
     first = (await click(gateway, "回答 1-5")).modal
     reply = await gateway.on_modal(channel_id=SUP_CH, user_id=USER, interaction_id="i2", custom_id=first["custom_id"],
                                    values={f"s{i}": f"答{i}" for i in range(5)})
@@ -126,7 +143,7 @@ async def test_stale_click_and_revise(gateway, sim):
     modal = (await click(gateway, "修改")).modal
     reply = await gateway.on_modal(channel_id=SUP_CH, user_id=USER, interaction_id="i10",
                                    custom_id=modal["custom_id"], values={"text": "只要周五的"})
-    assert reply.text == "修改意见已交给 Supervisor。"
+    assert reply.text.startswith("你的想法已交给 Supervisor")
     assert (await sim.task(received["task_id"]))["state"] == "supervising"
 
 

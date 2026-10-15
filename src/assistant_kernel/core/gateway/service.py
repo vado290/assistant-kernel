@@ -78,9 +78,13 @@ class GatewayService:
                       for q in render.question_pages(item)[page]]
             return Reply(modal={"custom_id": f"coremodal:{item_id}:answer:{page}", "title": "回答问题", "fields": fields})
         if action == "revise":
-            return Reply(modal={"custom_id": f"coremodal:{item_id}:revise", "title": "修改下一步",
-                                "fields": [{"id": "text", "label": "你希望怎么改？", "required": True,
-                                            "default": "", "placeholder": None, "paragraph": True}]})
+            questions = item["kind"] == "questions"
+            return Reply(modal={"custom_id": f"coremodal:{item_id}:revise",
+                                "title": "其他想法" if questions else "修改下一步",
+                                "fields": [{"id": "text", "required": True, "default": "", "paragraph": True,
+                                            "label": "不回答也可以，说说你的想法" if questions else "你希望怎么改？",
+                                            "placeholder": "例如：这些我不清楚，你帮我查；或者：先不做这个，改做…"
+                                            if questions else None}]})
         return await self._act(route[0], item_id, action, {}, user_id, interaction_id)
 
     async def on_modal(self, *, channel_id: str, user_id: str, interaction_id: str, custom_id: str,

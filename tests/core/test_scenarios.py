@@ -84,6 +84,9 @@ async def test_s01_mainline_to_completion(kernel, sim):
     task = await sim.task(task_id)
     assert task["state"] == "completed"
     assert all(rules.approval_valid(task, k) for k in ("requirements", "design", "release"))
+    notices = [m["body"]["text"] for m in await sim.outbound("p1")]
+    assert any(n.startswith("PM（需求分析）：") for n in notices)       # every PM turn reports to the PM channel
+    assert any(n.startswith("✅ 任务完成") for n in notices)
     assert (await sim.task(second["task_id"]))["state"] == "awaiting_user"
     async with kernel.db.tx() as c:
         project = await (await c.execute("SELECT operational_baseline FROM core.projects WHERE project_id='p1'")).fetchone()

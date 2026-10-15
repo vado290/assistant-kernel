@@ -48,6 +48,8 @@ def render_reason(run_input: dict[str, Any]) -> str:
     if run_input.get("pm_questions"):
         lines.append("- PM 的问题：\n" + "\n".join(
             f"  - [{q['id']}]{'（必答）' if q.get('required', True) else ''} {q['text']}" for q in run_input["pm_questions"]))
+    if run_input.get("unanswered"):
+        lines.append("- 用户没有回答这些问题，而是给出了上面的想法：\n" + "\n".join(f"  - {q}" for q in run_input["unanswered"]))
     if run_input.get("answers"):
         asked = {q["id"]: q["text"] for q in run_input.get("questions") or []}
         lines.append("- 用户的回答：\n" + "\n".join(f"  - {asked.get(k, k)}：{v}" for k, v in run_input["answers"].items()))

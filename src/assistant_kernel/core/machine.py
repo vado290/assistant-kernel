@@ -14,6 +14,8 @@ from assistant_kernel.core import cards, rules
 from assistant_kernel.core.db import all_rows, event, one
 
 MUTEX = {"pm_turn": "pm", "supervisor": "supervisor", "validation": "validation", "publish": "publish"}
+STAGE_NAMES = {"requirements": "需求分析", "design": "方案设计", "build": "实施与自测",
+               "review": "独立 Review", "release": "发布", "operate": "运营"}
 JSON_FIELDS = ("documents", "approvals", "pm_session")
 EXTRA_TURNS = 12
 
@@ -108,7 +110,7 @@ async def to_publishing(c, task) -> dict[str, Any]:
     return task
 
 
-async def close(c, task, state: str, reason: str) -> dict[str, Any]:
+async def close(c, task, state: str, reason: str, published_files: list[str] | None = None) -> dict[str, Any]:
     """Finish a task, withdraw its runs and card item, then start the next queued task."""
     task = await _update(c, task, state=state, close_reason=reason, closed_at=_now())
     await c.execute("UPDATE core.runs SET status='cancelled', ended_at=now() WHERE task_id=%s AND status='queued'",
@@ -117,6 +119,10 @@ async def close(c, task, state: str, reason: str) -> dict[str, Any]:
                     (task["task_id"],))
     await cards.remove_items(c, task["project_id"], lambda i: i["target"] != {"kind": "task", "id": str(task["task_id"])})
     await cards.clear_task_extras(c, task["project_id"], task["task_id"])
+    files = ", ".join(f.split("/", 3)[-1] for f in published_files or [])
+    await notify(c, task["project_id"], "pm",
+                 (f"✅ 任务完成：{task['goal'][:100]}" + (f"\n已发布：{files}" if files else ""))
+                 if state == "completed" else f"⏹ 任务已停止：{task['goal'][:100]}", task_id=task["task_id"])
     if state == "completed" and rules.approval_valid(task, "release"):
         docs = task["documents"]
         await c.execute(
@@ -199,6 +205,9 @@ async def _pm_result(c, task, run, result) -> None:
     session = {"stage": run["input"]["stage"], "native_session_id": result.get("session_id")}
     task = await _update(c, task, documents=docs, pm_session=session, turn_count=task["turn_count"] + 1)
     summary = result.get("summary", "")
+    if summary:
+        await notify(c, task["project_id"], "pm", f"PM（{STAGE_NAMES.get(task['stage'], task['stage'])}）：{summary}",
+                     task_id=task["task_id"])
     if task["turn_count"] > task["max_turns"]:
         await to_awaiting(c, task, _decision(task, "turn_budget", f"已执行 {task['turn_count']} 轮，是否继续？",
                                              pm_result=result))
@@ -306,7 +315,7 @@ async def _validation_result(c, task, run, result) -> None:
 async def _publish_result(c, task, run, result) -> None:
     outcome = result.get("outcome")
     if outcome == "published":
-        await close(c, task, "completed", "published")
+        await close(c, task, "completed", "published", published_files=result.get("files"))
     elif outcome == "failed":
         await to_supervising(c, task, "publish_failed", error=result.get("error"))
     else:
@@ -393,8 +402,17 @@ async def on_action(c, project_id: str, item_id: str, action: str, values: dict[
 
 
 async def _questions_action(c, task, item, action, values, source_message_id):
+    if action == "stop":
+        return await close(c, task, "cancelled", "stopped_by_user")
+    if action == "revise":
+        # The user would rather say something else than answer: Supervisor re-plans with it.
+        if not values.get("text"):
+            raise ValueError("please write what you would like instead")
+        return await to_supervising(c, task, "revise", text=values["text"],
+                                    unanswered=[q["text"] for q in item["content"]["questions"]],
+                                    pm_questions_dropped=bool(item["content"].get("pm_questions")))
     if action != "submit":
-        raise ValueError("questions accept only submit")
+        raise ValueError("questions accept submit, revise or stop")
     answers = values.get("answers") or {}
     missing = [q["id"] for q in item["content"]["questions"] if q.get("required", True) and not answers.get(q["id"])]
     if missing:

@@ -18,7 +18,7 @@ DECISION_TITLES = {"release": "申请发布", "complete": "建议结束任务", 
 DONE_REPLIES = {"execute": "已确认，PM 将开始执行。", "approve": "已批准。", "reject": "已记录：不同意。",
                 "stop": "任务已停止。", "retry": "已安排重试。", "continue": "已继续。",
                 "published": "已记录：发布成功。", "failed": "已记录：发布失败。", "submit": "答案已提交。",
-                "revise": "修改意见已交给 Supervisor。"}
+                "revise": "你的想法已交给 Supervisor，它会据此重新安排。"}
 
 
 def button(item_id: str, action: str, label: str | None = None) -> dict[str, str]:
@@ -65,6 +65,7 @@ def render_item(item: dict[str, Any]) -> dict[str, Any]:
         buttons = [button(item_id, f"answer:{i}", "回答" if len(pages) == 1 else
                           f"回答 {i * MODAL_FIELDS + 1}-{i * MODAL_FIELDS + len(page)}")
                    for i, page in enumerate(pages)]
+        buttons += [button(item_id, "revise", "其他想法…"), button(item_id, "stop")]
         text, attachment = _fit("\n".join(lines))
     elif item["kind"] == "next_step":
         stage = STAGE_NAMES.get(content["target_stage"], content["target_stage"])
