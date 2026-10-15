@@ -54,6 +54,23 @@ async def kernel(kernel_settings):
 
 
 @pytest.fixture
+def project_files(kernel_settings):
+    """Minimal live agent files for project p1 (layout v2): a PM and a Supervisor."""
+    vault = kernel_settings.data_root / "vaults" / "p1"
+    (vault / "project.yaml").parent.mkdir(parents=True, exist_ok=True)
+    (vault / "project.yaml").write_text("schema_version: project.v2\nproject_id: p1\nlayout_version: 2\n", "utf-8")
+    for folder, agent, kind, role in (("pm", "manager", "manager", "这是日报项目的 PM。"),
+                                      ("supervisor", "supervisor", "supervisor", "这是日报项目的 Supervisor。")):
+        (vault / "agents" / folder).mkdir(parents=True, exist_ok=True)
+        (vault / "agents" / folder / "config.yaml").write_text(
+            f"schema_version: agent-config.v2\nagent_id: {folder}\nagent_key: project:p1:{agent}\nkind: {kind}\n"
+            "status: active\nrole: role.md\nharness:\n  provider: openai\n  model: test-model\n"
+            "  timeout_seconds: 60\ntools: []\n", "utf-8")
+        (vault / "agents" / folder / "role.md").write_text(role, "utf-8")
+    return vault
+
+
+@pytest.fixture
 def sim(kernel):
     from .sim import Sim
     return Sim(kernel)

@@ -51,11 +51,30 @@ scope_snapshot_uri = os.environ.get("KERNEL_SCOPE_SNAPSHOT_URI", "").strip()
 scope_snapshot_sha256 = os.environ.get("KERNEL_SCOPE_SNAPSHOT_SHA256", "").strip()
 if bool(scope_snapshot_uri) != bool(scope_snapshot_sha256):
     raise ValueError("workspace scope snapshot URI and hash must be provided together")
+# Rebuilt core (KERNEL_SCOPE_CORE=1): leases live in core.runs, and the workspace snapshot and
+# candidate area belong to the task, so candidate files accumulate across build turns.
+core_mode = os.environ.get("KERNEL_SCOPE_CORE") == "1"
+scope_owner = (os.environ.get("KERNEL_SCOPE_TASK_ID") or run_id) if core_mode else run_id
+snapshot_stage = None if core_mode else stage
+
+
+async def check_lease() -> None:
+    if core_mode:
+        from assistant_kernel.core.db import Database, one
+        async with Database(settings).tx() as c:
+            held = await one(c, """SELECT 1 FROM core.runs WHERE run_id=%s AND claim_token=%s
+                                   AND status='running' AND NOT cancel_requested""", (run_id, claim_token))
+        if held is None:
+            raise PermissionError("this invocation's run is no longer active")
+        return
+    await repository.claimed_run_source(run_id=run_id, worker_instance_id=worker_instance_id, claim_token=claim_token)
+
+
 authorized_roots = (
     workspace_scope.load_snapshot(
-        project_id, run_id, stage, scope_snapshot_uri, scope_snapshot_sha256,
+        project_id, scope_owner, snapshot_stage, scope_snapshot_uri, scope_snapshot_sha256,
     )
-    if scope_snapshot_uri else workspace_scope.resolve(project_id, run_id, stage)
+    if scope_snapshot_uri else workspace_scope.resolve(project_id, scope_owner, snapshot_stage)
 )
 effective_permissions = json.loads(
     os.environ.get("KERNEL_SCOPE_EFFECTIVE_PERMISSIONS_JSON", "{}")
@@ -178,7 +197,7 @@ if "read_project_document" in allowed:
     async def read_project_document(ref: dict, max_bytes: int = 262144) -> dict:
         """Read a pinned Project document with identity, byte and contract checks."""
         require_scope_initialized()
-        await repository.claimed_run_source(run_id=run_id,worker_instance_id=worker_instance_id,claim_token=claim_token)
+        await check_lease()
         from assistant_kernel.services.document_runtime import TaskDocumentService, validate_resource_ref
         normalized = validate_resource_ref(ref)
         prefix = f"vault://{project_id}/"
@@ -817,12 +836,14 @@ if "revoke_project_grant" in allowed:
 
 if "write_candidate_file" in allowed:
     @server.tool(annotations=SCOPED_WRITE)
-    def write_candidate_file(
+    async def write_candidate_file(
         target_uri: str, content: str, expected_sha256: str | None = None,
         expected_state: str | None = None,
     ) -> dict:
         """Write a candidate copy for an authorized formal target; never publish it."""
         require_scope_initialized()
+        if core_mode:
+            await check_lease()
         result = workspace_scope.write_candidate(
             authorized_roots, target_uri, content, expected_sha256, expected_state
         )
@@ -830,17 +851,19 @@ if "write_candidate_file" in allowed:
         return {
             **result,
             "candidate_vault_uri": (
-                f"vault://{project_id}/runs/{run_id}/candidate/{candidate_relative}"
+                f"vault://{project_id}/runs/{scope_owner}/candidate/{candidate_relative}"
             ),
-            "manifest_vault_uri": f"vault://{project_id}/runs/{run_id}/candidate/manifest.json",
+            "manifest_vault_uri": f"vault://{project_id}/runs/{scope_owner}/candidate/manifest.json",
         }
 
 
 if "delete_candidate_file" in allowed:
     @server.tool(annotations=SCOPED_WRITE)
-    def delete_candidate_file(target_uri: str, expected_sha256: str) -> dict:
+    async def delete_candidate_file(target_uri: str, expected_sha256: str) -> dict:
         """Stage a hash-guarded deletion in the current Run candidate manifest."""
         require_scope_initialized()
+        if core_mode:
+            await check_lease()
         return workspace_scope.delete_candidate(
             authorized_roots, target_uri, expected_sha256
         )
@@ -958,6 +981,16 @@ if "list_recent_history" in allowed:
     ) -> dict:
         """List recent messages in this fixed Project; no semantic or cross-Project search."""
         require_scope_initialized()
+        if core_mode:
+            from assistant_kernel.core.db import Database
+            async with Database(settings).tx() as c:
+                rows = await (await c.execute(
+                    """SELECT message_id, created_at, direction, role, body->>'text' AS text FROM core.messages
+                       WHERE project_id=%s AND body ? 'text' AND created_at > now() - make_interval(days => %s)
+                       ORDER BY created_at DESC LIMIT %s""",
+                    (project_id, min(max(lookback_days, 1), 365), min(max(limit, 1), 200)))).fetchall()
+            return {"items": [{**r, "message_id": str(r["message_id"]), "created_at": r["created_at"].isoformat()}
+                              for r in reversed(rows)], "next_cursor": None}
         channel = None
         chat_id = None
         if scope == "current_conversation":

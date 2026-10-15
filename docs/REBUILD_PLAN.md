@@ -410,6 +410,78 @@ IngressService.receive(event):
 - **退出标准**：用假模型跑完全部场景；在 test 环境用**真实模型**跑通 S1 主线一次（需求 → 设计 → 实施 → Review → 发布）。
 - **不做**：不接入渠道（用 API 或测试框架驱动）。
 
+#### 阶段 2 细化设计（2026-10-15，待用户确认 D1–D4）
+
+**现状**：今天一个 PM 回合要经过以下环节：
+- 固定版本的 Agent 包和配置快照；
+- 调用配置解析；
+- 执行包确认和能力预检；
+- 输入哈希头；
+- 433 个 schema 定义组成的 `agent-result.v1` 输出合同；
+- 结算到 `pm_turns_v12`。
+
+`run_processor.process` 一个函数约 1800 行，其中 v1.2 路径只用到前约 700 行。
+
+**新设计：一个执行器只做三件事——组装输入、调用模型、把输出翻译成第 1 阶段定义的结果字典。** 状态一律交给状态机，执行器不碰。
+
+| # | 部件 | 做法 | 复用 |
+|---|---|---|---|
+| 2.1 | 执行器接口 | `async execute(run, ctx) -> dict`；基础设施故障直接抛异常，由 Dispatcher 调用 `fail()` 重试；模型输出格式不对则返回原文，由状态机判为 `InvalidResult` 重试 | — |
+| 2.2 | Dispatcher | `assistant-kernel-dispatcher`：循环领取，每个执行起一个并发任务，按租约三分之一的间隔续租；每 30 秒回收一次过期租约；可配置模型并发阀门（默认关闭）；停机时先停止领取、等待手头执行完成。**阶段 4 之前不在生产启动** | — |
+| 2.3 | 配置加载 | 每轮直接读取项目当前的 Agent 文件（`AgentFileLoader.load(project, agent, phase)`），**不再固定 Agent 包版本**；使用的配置 sha 记入 `runs.result` 备查（用户决定 #2，见 D2） | `agent_files` 加载器、`harness.resolve_model_profile` |
+| 2.4 | PM 输入 | 角色说明（公共 + 当前阶段）+ 技能 + Kernel 生成的"本轮上下文"：目标、阶段、已生效文档的**正文**、本轮指令或问答结果、补充消息、上一轮摘要、输出要求 | 文档存储 `document_runtime` |
+| 2.5 | PM 输出 `pm-turn.v2`（见 D1） | `{"outcome", "summary", "questions":[{id,text,required,options}], "document":{"kind","markdown","verdict"}}`。文档由 Kernel 写入 vault 并计算 sha。implementation_report 的 `bundle_sha` **由 Kernel 封存候选文件后填写**，不采信模型自报；Review 的 verdict 绑定到当前已验证的 bundle | `CandidateBundleService.seal(project, task_id)` |
+| 2.6 | PM 会话 | 同一任务、同一阶段内续接 `pm_session.native_session_id`；阶段变化时新开 | harness 现有续接能力 |
+| 2.7 | Supervisor 输入 | 角色和技能 + 上下文：任务（目标、阶段、状态）、文档正文、上一轮 PM 结果、两个频道最近 N 条用户消息、当前卡片、本次评估原因，以及 **Kernel 计算好的"当前可去的阶段和门槛状态"** | — |
+| 2.8 | Supervisor 输出 `supervisor-decision.v2`（见 D1） | evaluate：`{"decision": ask_user/propose_next/relay_pm_questions/propose_complete/propose_cancel, "message", "questions"[...covers], "suggested", "instruction", "target_stage"}`；review_input：`{"decision":"keep"}` 或 `{"decision":"upgrade","item":{同上}}`；consult：`{"reply", "propose_new_task", "upgrade"}`。字段与第 1 阶段状态机现有的读取逻辑一一对应 | — |
+| 2.9 | Supervisor 会话 | 每次新开会话、不续接（保留原 C17 决定）；只给只读工具；允许原生子代理 | `_codex_ephemeral` 中的模型调用部分 |
+| 2.10 | 验证 | 封存候选文件，再用 `ValidationRunner.validate` 做结构检查，并运行项目配置的测试，产出 `{passed, report}`；bundle sha 由 Kernel 计算 | `candidate_bundle`、`validation_runner` |
+| 2.11 | 发布 | `CapabilityBundleService.publish`（文件发布路径），输入是已批准发布的 bundle | `capability_bundle` |
+| 2.12 | MCP 工具（见 D3） | `scoped_tools` 改为向 `core.runs` 核对租约；新增环境变量 `KERNEL_SCOPE_TASK_ID`，候选文件区按任务归属，让多轮实施的候选文件累积在一起 | `scoped_tools`、`workspace_scope` |
+| 2.13 | 角色和技能文本 | 新写一套精简角色说明放在 `prompts/core/`（pm-common、各阶段 pm、supervisor），去掉 v1.2 协议术语，写明新的输出格式；技能沿用 `prompts/v12/skills` 中的需求、设计、实施、Review、Supervisor、Prompt 组装，只改其中涉及旧协议的段落 | `prompts/v12/skills` |
+
+**子步骤**：
+1. 2a：执行器接口、Dispatcher，以及用假模型跑通端到端；
+2. 2b：PM 执行器和 PM 角色说明；
+3. 2c：Supervisor 执行器和 Supervisor 角色说明；
+4. 2d：验证与发布；
+5. 2e：MCP 工具改接新核心；
+6. 2f：用真实模型跑一次冒烟测试。
+
+每一步都以第 9 节的场景用假模型重跑一遍作为退出标准；2f 用真实模型跑通 S1。
+
+**需要用户确认**：
+- **D1 精简输出格式**：新核心不再使用 `agent-result.v1`（433 个 schema 定义），改用上面两个精简格式；文档正文用 Markdown，供用户直接阅读和批准，需求和设计文档的结构要求写在技能里，不做 schema 强制。理由：格式越复杂，模型出错和重试越多。
+- **D2 取消 Agent 包版本固定**：每轮读取项目当前的 Agent 文件。Agent 包的"采用"流程（`published_agents` 的 adoption）在新核心中不再使用；以后的技能和角色改进（阶段 6）直接走"候选 → 验证 → 发布到项目 agents 目录"。
+- **D3 MVP 工具范围**：PM 可用以下工具：工作区授权和读取、候选文件写入/删除、项目地图、项目文档、最近历史、变更记录和差异、vault 读取、公共背景、火山引擎模型（如已配置）。**暂缓**：提交 Python 运行、定时任务、运行单元、运营动作、系统配置、凭据（阶段 3 随凭据卡片加入）、项目创建（阶段 5）、跨项目交接。PM 自测通过沙箱内直接运行命令完成（现状即如此）。
+- **D4 真实模型冒烟测试的环境**：使用现有的 `kernel-v12-validation` 项目（已有 codex 登录和工作区）加一个临时数据库，在 test 环境中运行 Dispatcher；测试目标设为一个很小的需求，例如"生成一份 hello.md 说明文档"；卡片点击由测试脚本自动完成。不影响生产数据库，也不影响其他项目。
+
+**进度记录（2026-10-15，分支 `rebuild/core6`）**：
+- 2a–2e 已完成，`tests/core` 共 44 项通过、5 项跳过。PM、Supervisor、验证、发布四个执行器都已接入；其中一项测试用真实候选文件走完了"封存 → 验证 → 复用现有发布器写入 vault"的全过程。
+- 新增代码：`core/dispatch.py`、`core/executors/`（common、pm、supervisor、delivery），以及 `prompts/core/` 下 11 个精简角色和输出说明。
+- `scoped_tools.py` 增加了核心模式（`KERNEL_SCOPE_CORE=1`）：租约向 `core.runs` 核对，候选文件区归任务所有，`list_recent_history` 改读 `core.messages`；旧模式保持不变。
+- 旧测试中有 3 项（`test_v12_mcp` 1 项、`test_mcp_unification` 2 项）在改动前的代码上同样失败，原因是找不到已不存在的 `validation-envs/p4-business-20261011` 目录，与本次改动无关。
+- 2f 真实模型冒烟（`scripts/core_smoke.py`：临时数据库 + `kernel-v12-validation` 项目，卡片由自动驾驶脚本点击）：
+  - 前两次失败在第一个 PM 回合：Codex 启动 Kernel 工具服务失败。原因有两个：一是 `managed.py` 仍按旧表核对租约，已修复；二是我的测试脚本用了相对路径的 PYTHONPATH，导致工具服务加载了旧的已安装代码，只影响测试脚本，已改为绝对路径。
+  - **冒烟结果（第三次运行，10-15 13:36–13:43，约 7 分钟）：通过。** 依次为：需求 →（批准）设计 →（批准）实施 → Kernel 验证通过 → 独立 Review 结论 pass → 发布批准 → 发布 → 任务完成。共 11 个执行（5 次 Supervisor 评估、4 个 PM 回合、1 次验证、1 次发布），**全部第一次就成功**。`docs/hello.md` 已实际发布到 `kernel-v12-validation` 的 vault 中。临时数据库已删除。
+  - 结论：S1 主线在真实模型下跑通，满足阶段 2 的退出标准。
+
+**遗留问题存档**（按用户 10-15 的要求：无法顺利通过的不硬做，存档后讨论）：
+| # | 问题 | 影响 | 处理 |
+|---|---|---|---|
+| I1 | 旧测试 3 项因 `validation-envs/p4-business-20261011` 目录已不存在而失败（改动前同样失败） | 无，属于旧代码 | 阶段 4 删除旧代码时一并移除 |
+| I2 | 项目自带的角色说明和技能文本仍含旧协议用语（如"提交 Requirements revision"），模型偶尔会照抄 | 小，不影响流程 | 阶段 5 生成项目文件时改用新模板；必要时先手工精简现有项目的 role.md |
+| I3 | 发布后的项目地图和变更账本记录暂未接入 | 地图需要手动刷新 | 阶段 4 补上 |
+| I4 | 自动驾驶脚本会自动批准所有卡片，不能代表真人交互 | 真实交互尚未验证 | 阶段 3 用 Discord 验证 |
+| I5 | **阶段 3 的前置条件**：现在只有一个 Discord 机器人令牌和一个服务器。如果新核心的网关用同一个令牌再连一次 Discord，新旧两套会同时收到每条消息，造成重复处理 | 阻塞阶段 3 的真实 Discord 测试 | 需要用户决定（见 11 节待确认） |
+
+**阶段 2 中的细节决定**（均属小事项，按 MVP 原则自行决定）：
+- 模型输出不是合法 JSON 时，在同一会话里请模型更正一次；仍不合法则按格式错误重试整个回合。
+- 实施回合会记录当时的工作区快照（`runs/<task>/resolved/execution-plan-build.json`），发布器据此核对目标目录的授权在实施之后没有被改动（复用现有安全检查）。
+- 发布执行器出错时一律不自动重试，直接转为"对账"决策卡片。
+- Supervisor 咨询必须给出回复，否则按格式错误重试。
+- 发布后的项目地图和变更账本记录暂不接入（地图仍可手动刷新），阶段 4 切换时补上。
+
 ### 阶段 3：入口与交互卡片
 - **内容**：`IngressService`、`CommandService`；Discord 的卡片渲染器（4 类条目、分页、版本、撤下旧卡；须遵守 Discord 每条消息最多 5 行、25 个组件的限制）；不做飞书渲染器；提醒；PM 频道和 Supervisor 频道的路由规则；开始写入反馈事件（草稿与最终版本的差异、修改或拒绝原因、问题数量、返工记录、各阶段耗时和 token 用量）。
 - **退出标准**：在 test 环境，使用真实 Discord 测试频道和真实模型，跑通 S1、S3、S4、S5、S7、S8。
@@ -505,4 +577,12 @@ IngressService.receive(event):
 | 10-15 | 每次发布都需要批准，暂时取消低风险自动发布 | 同意 |
 | 10-15 | 旧数据移到 `archive_core5` 保留，新核心不读取 | 同意 |
 
-待确认：阶段 0 的细节（8 节阶段 0 表格），特别是 0.5 的线上切换。
+| 10-15 | 阶段 0 细节和线上切换 | 同意并已执行 |
+| 10-15 | 阶段 2 的 D1–D4 | 同意 |
+| 10-15 | 验证无法顺利通过的事项先跳过、存档并汇报，必要时先讨论再处理 | 已记录 |
+
+待确认：
+- **阶段 3 的 Discord 测试方式**（问题 I5）：
+  - A：另建一个测试用的 Discord 机器人，连同一个服务器里的测试频道；新核心只连这个测试机器人，旧系统继续用正式机器人。（推荐：互不干扰，阶段 4 切换时把正式机器人的令牌换给新核心即可。）
+  - B：阶段 3 只用假渠道测试，真实 Discord 留到阶段 4 切换时一次性验证。
+  - C：在旧网关里按频道分流，测试频道的消息转给新核心（改动旧代码，不推荐）。

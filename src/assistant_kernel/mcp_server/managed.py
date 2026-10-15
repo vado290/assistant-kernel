@@ -61,8 +61,7 @@ class ManagedTools:
     async def authorize(self):
         if self.config.get('business_context'):return await self.owner()
         if self.kernel is not None:
-            await self.kernel.repository.claimed_run_source(run_id=self.kernel.run_id,
-                worker_instance_id=self.kernel.worker_instance_id,claim_token=self.kernel.claim_token)
+            await self.kernel.check_lease()  # legacy runs or core.runs, depending on the invocation
         return None
 
     async def open(self):

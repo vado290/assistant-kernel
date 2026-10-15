@@ -65,6 +65,21 @@ class Kernel:
                 return task
             return await machine.close(c, task, "cancelled", "cancelled_by_user")
 
+    async def get_task(self, task_id) -> dict[str, Any] | None:
+        async with self.db.tx() as c:
+            return await one(c, "SELECT * FROM core.tasks WHERE task_id=%s", (task_id,))
+
+    async def get_message(self, message_id) -> dict[str, Any] | None:
+        async with self.db.tx() as c:
+            return await one(c, "SELECT * FROM core.messages WHERE message_id=%s", (message_id,))
+
+    async def recent_messages(self, project_id: str, limit: int = 20) -> list[dict[str, Any]]:
+        async with self.db.tx() as c:
+            rows = await (await c.execute(
+                """SELECT * FROM core.messages WHERE project_id=%s AND body ? 'text'
+                   ORDER BY created_at DESC LIMIT %s""", (project_id, limit))).fetchall()
+            return list(reversed(rows))
+
     # ------------------------------------------------------------ cards
 
     async def card(self, project_id: str) -> dict[str, Any] | None:
@@ -189,7 +204,8 @@ class Kernel:
                                lease_until=NULL, available_at=now() + make_interval(secs => %s) WHERE run_id=%s""",
                             (Jsonb(error), self.retry_backoff_seconds * run["attempt"], run["run_id"]))
             return
-        failed = await one(c, """UPDATE core.runs SET status='failed', error=%s, ended_at=now(), lease_until=NULL
-                                 WHERE run_id=%s RETURNING *""", (Jsonb(error), run["run_id"]))
-        if not run["cancel_requested"]:
+        status = "cancelled" if run["cancel_requested"] else "failed"
+        failed = await one(c, """UPDATE core.runs SET status=%s, error=%s, ended_at=now(), lease_until=NULL
+                                 WHERE run_id=%s RETURNING *""", (status, Jsonb(error), run["run_id"]))
+        if status == "failed":
             await machine.on_exhausted(c, failed)

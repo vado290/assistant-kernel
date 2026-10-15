@@ -334,6 +334,8 @@ async def _upgrade_item(c, task, old_item, proposal: dict[str, Any]) -> None:
 
 
 async def _consult_result(c, run, result) -> None:
+    if not result.get("reply"):
+        raise InvalidResult("a consultation must reply to the user")
     message = await one(c, "SELECT * FROM core.messages WHERE message_id=%s", (run["input"]["message_id"],))
     chat = {"channel": message["channel"], "chat_id": message["chat_id"], "user_id": message["user_id"]}
     if result.get("reply"):

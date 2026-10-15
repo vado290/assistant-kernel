@@ -48,6 +48,7 @@ where = ["src"]
 assistant_kernel = [
   "contracts/*.json",
   "core/sql/*.sql",
+  "prompts/core/*.md",
   "prompts/roles/*.md",
   "prompts/skills/*/SKILL.md",
   "prompts/skills/*/references/*.md",
