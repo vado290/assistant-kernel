@@ -376,6 +376,9 @@ async def on_exhausted(c, run: dict[str, Any]) -> None:
     """A run failed after all retries: give the user a way forward instead of getting stuck."""
     if run["purpose"] in ("review_input", "consult"):
         await event(c, run["project_id"], "side_run_failed", task_id=run["task_id"], run_id=run["run_id"])
+        if run["purpose"] == "consult":   # tell the user instead of failing silently
+            reason = str((run.get("error") or {}).get("message", ""))[:200]
+            await notify(c, run["project_id"], "supervisor", f"⚠ Supervisor 暂时无法回答这条消息，请稍后再问。（{reason}）")
         return
     task = await load_task(c, run["task_id"])
     if not is_cursor(task, run):

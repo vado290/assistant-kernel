@@ -1,6 +1,7 @@
 """Shared executor helpers: agent files, prompt text, documents, JSON output and the model call."""
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import uuid
@@ -139,13 +140,18 @@ async def call_model(ctx, run: dict[str, Any], config: FileAgentConfig, prompt: 
             "KERNEL_SCOPE_SNAPSHOT_URI": scope_uri, "KERNEL_SCOPE_SNAPSHOT_SHA256": scope_sha,
             "KERNEL_SCOPE_EFFECTIVE_PERMISSIONS_JSON": "{}", "KERNEL_SCOPE_CONTEXT_VIEW_JSON": "{}",
         }
-    return await harness.run_turn(AgentTurnRequest(
-        project_id=project_id, prompt=prompt,
-        cwd=ProjectRuntimeManager(settings.data_root).ensure(project_id).vault_root,
-        physical_session_id=session_id, provider=config.provider, model=model, reasoning_effort=effort,
-        context_policy=config.context_policy, model_context_window_tokens=window,
-        model_auto_compact_token_limit=compact, sandbox=sandbox, timeout_seconds=config.timeout_seconds,
-        invocation_id=invocation_id, cancel_event=ctx.cancel, scoped_tools=allowed, scope_context=scope_context))
+    from assistant_kernel.core.executors.auth_sync import sync
+    await asyncio.to_thread(sync, settings, project_id, direction="in")
+    try:
+        return await harness.run_turn(AgentTurnRequest(
+            project_id=project_id, prompt=prompt,
+            cwd=ProjectRuntimeManager(settings.data_root).ensure(project_id).vault_root,
+            physical_session_id=session_id, provider=config.provider, model=model, reasoning_effort=effort,
+            context_policy=config.context_policy, model_context_window_tokens=window,
+            model_auto_compact_token_limit=compact, sandbox=sandbox, timeout_seconds=config.timeout_seconds,
+            invocation_id=invocation_id, cancel_event=ctx.cancel, scoped_tools=allowed, scope_context=scope_context))
+    finally:
+        await asyncio.to_thread(sync, settings, project_id, direction="out")
 
 
 async def call_for_json(ctx, run, config, prompt, **kwargs) -> tuple[dict[str, Any] | None, AgentTurnResult]:
