@@ -15,6 +15,7 @@ import httpx
 import yaml
 
 from assistant_kernel.core import skills
+from assistant_kernel.core.gitdelivery import init_repository
 from assistant_kernel.storage import ProjectRuntimeManager
 
 TEMPLATE = Path(__file__).parents[1] / "project_template"
@@ -82,6 +83,12 @@ def write_project_files(settings, spec: dict[str, Any]) -> list[str]:
         written.append(target.relative_to(vault).as_posix())
     config = yaml.safe_load(existing.read_text("utf-8")) or {}
     config.update({key: spec[key] for key in ("capabilities", "delivery", "share_with_kernel") if key in spec})
+    if spec.get("delivery") == "git-repo":   # code delivery: the project's own repository inside its vault
+        config.setdefault("repository", "repo")
+        config.setdefault("main_branch", "main")
+        if init_repository(vault / config["repository"], config["main_branch"],
+                           f"# {spec['display_name']}\n\n{spec['purpose']}\n"):
+            written.append(f"{config['repository']}/")
     existing.write_text(yaml.safe_dump(config, allow_unicode=True, sort_keys=False), "utf-8", newline="\n")
     source = spec.get("source_project") or "kernel"   # the creation task's documents live in the creating project
     charter_doc = spec.get("charter")

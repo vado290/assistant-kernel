@@ -25,7 +25,7 @@ project_id: sales-report        # 3–40 个小写字母、数字或连字符，
 display_name: 销售日报
 purpose: 一句话说明项目用途
 capabilities: []                # 可选：routing、project_management、shared_context；一般项目留空
-delivery: vault-files           # 目前只支持 vault-files（代码交付 git-repo 尚未上线；写代码的项目也先用 vault-files）
+delivery: vault-files           # 写代码的项目用 git-repo（Kernel 在项目目录下建好 git 仓库，实施在独立分支、批准后快进合并）
 share_with_kernel: improvements # metrics / improvements / full：允许 kernel 汇总本项目哪些运营信息
 pm_role: |
   本项目对 PM 的特别要求（几行即可，可留空）

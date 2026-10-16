@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from assistant_kernel.core import drafts, rules
+from assistant_kernel.core import drafts, gitdelivery, rules
 from assistant_kernel.core.drafts import DOCUMENT_STAGE, STAGE_DOCUMENT
 from assistant_kernel.core.executors.common import (
     BRIEF_HEADING, CANDIDATE_TOOLS, DOMAIN_BRIEF, MVP_TOOLS, PROFILE_HEADING, USER_PROFILE, call_for_json, charter,
@@ -82,6 +82,14 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
     # The ledger is the handoff: a new session gets it in full, a resumed one already lived through it.
     state_text = render_state(task, await kernel.task_ledger(task["task_id"]), STAGE_NAMES)
     state_file = await asyncio.to_thread(write_state, settings, run["project_id"], task_id, state_text)
+    build = stage == "build"
+    code = await asyncio.to_thread(gitdelivery.config, settings, run["project_id"])   # None: file delivery
+    workspace = None
+    if code and stage in ("build", "review"):   # the task's own worktree, cut from main
+        workspace = await asyncio.to_thread(gitdelivery.ensure_worktree, code, task_id)
+    workspace_text = (f"{prompt_text('git-delivery')}\n\n- 本任务的工作区：`{workspace}`（分支 `{gitdelivery.branch(task_id)}`，"
+                      f"从 `{code['main']}` 拉出；你的当前目录就是它）\n- 测试命令：`{code['test_command'] or '未配置'}`"
+                      if workspace else "")
     context = [
         *([("charter", drafts.text_sha(project_charter), "## 项目章程\n\n" + project_charter)] if project_charter else []),
         *([("profile", drafts.text_sha(profile), PROFILE_HEADING + profile)] if profile else []),
@@ -93,6 +101,7 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
           if task["kind"] == "bootstrap" else []),
         *([("runtime", drafts.text_sha(manifest := prompt_text("runtime-manifest")), manifest)]
           if matched in RUNTIME_STAGES else []),
+        *([("workspace", drafts.text_sha(workspace_text), workspace_text)] if workspace_text else []),
     ]
     documents = await asyncio.to_thread(document_sections, settings, task)
     output = prompt_text("pm-output")
@@ -101,19 +110,23 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
     prompt = render_prompt(f"# 项目 {run['project_id']} · PM 回合（{STAGE_NAMES.get(matched, matched)}）",
                            context, documents, render_turn(task, run_input, inputs), output, seen, previous,
                            state=state_text, state_file=state_file)
-    build = stage == "build"
     # Outside build the PM only reads: project files change solely through candidates → validate → publish.
-    tools = MVP_TOOLS if build else MVP_TOOLS - CANDIDATE_TOOLS
+    # Code delivery: the PM edits its own worktree instead of writing candidates; Kernel commits at turn end.
+    candidates = build and not code
+    tools = MVP_TOOLS if candidates else MVP_TOOLS - CANDIDATE_TOOLS
     parsed, model_result = await call_for_json(
         ctx, run, config, prompt, task_id=task_id, stage=stage, session_id=session_id,
-        tools=tools, sandbox="danger-full-access" if build else "read-only", candidates=build,
-        subagents=MAX_SUBAGENTS if matched in SUBAGENT_STAGES else 0)
+        tools=tools, sandbox="danger-full-access" if build else "read-only", candidates=candidates,
+        subagents=MAX_SUBAGENTS if matched in SUBAGENT_STAGES else 0, cwd=workspace)
     misfit = outcome_misfit(parsed, stage)
     if misfit and model_result.physical_session_id:   # tell the PM once, in the same session, instead of failing blind
         parsed, model_result = await call_for_json(
             ctx, run, config, misfit + OUTPUT_REMINDER, task_id=task_id, stage=stage,
             session_id=model_result.physical_session_id, tools=tools,
-            sandbox="danger-full-access" if build else "read-only", candidates=build)
+            sandbox="danger-full-access" if build else "read-only", candidates=candidates, cwd=workspace)
+    if code and build and parsed is not None:   # keep every turn's work as a commit on the task branch
+        await asyncio.to_thread(gitdelivery.commit_all, workspace,
+                                f"{task['goal'][:72]}\n\n{str(parsed.get('summary') or '')[:1500]}\n\n任务 {task_id}")
     if parsed is None:
         return {"outcome": "invalid_output", "raw": model_result.final_text[:2000]}
     result = {"outcome": parsed.get("outcome"), "summary": str(parsed.get("summary") or ""),
@@ -159,7 +172,10 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
                 report["spec"] = rules.charter_spec(markdown)
             except ValueError as exc:
                 report["spec_error"] = str(exc)
-        if kind == "implementation_report":
+        if kind == "implementation_report" and code:   # bound to the commit; no changes → the no-files marker
+            commit = await asyncio.to_thread(gitdelivery.seal, code, task_id, f"{task['goal'][:72]}\n\n任务 {task_id}")
+            report["bundle_sha"] = commit or f"no-files:{report['sha256']}"
+        elif kind == "implementation_report":
             report["bundle_sha"] = await asyncio.to_thread(seal_candidates, settings, run["project_id"],
                                                            str(task["task_id"]), report["sha256"])
         if kind == "review_report":

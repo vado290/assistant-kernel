@@ -262,8 +262,9 @@ class CodexCliHarness:
             if mcp_private is not None:mcp_private.unlink(missing_ok=True)
         (archive_dir / "stdout.jsonl").write_bytes(stdout)
         (archive_dir / "stderr.log").write_bytes(stderr)
-        if code != 0:
-            raise RuntimeError(f"Codex exited with code {code}: {stderr.decode('utf-8', 'replace')[-2000:]}")
+        if code != 0:   # Codex reports most failures as JSON events on stdout, not on stderr
+            raise RuntimeError(f"Codex exited with code {code}: "
+                               f"{_last_error(stdout) or stderr.decode('utf-8', 'replace')[-2000:]}")
         mcp_receipts = []
         if request.scoped_tools:
             permitted = set(request.scoped_tools)
@@ -396,3 +397,17 @@ class CodexCliHarness:
     @staticmethod
     def rotation_decision(result: CodexTurnResult, context_window_tokens: int) -> ContextBudgetDecision:
         return ContextBudgetManager().evaluate(result.usage, context_window_tokens)
+
+
+def _last_error(stdout: bytes) -> str:
+    """The last error Codex reported in its JSON event stream (e.g. "Selected model is at capacity")."""
+    for line in reversed(stdout.decode("utf-8", "replace").splitlines()):
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        message = (event.get("error") or {}).get("message") if event.get("type") == "turn.failed" else \
+            event.get("message") if event.get("type") == "error" else None
+        if message:
+            return str(message)[:1000]
+    return ""

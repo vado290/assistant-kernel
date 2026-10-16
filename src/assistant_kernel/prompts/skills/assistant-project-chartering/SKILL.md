@@ -2,9 +2,10 @@
 name: assistant-project-chartering
 description: 新建项目时，与用户商量并写出项目章程（用途、目标、背景、范围、路由信息）和创建参数（ID、名称、能力、交付方式、角色要点），用户批准后由 Kernel 创建项目。
 metadata:
-  version: "1.0.1"
+  version: "1.1.0"
   load: {roles: [pm, supervisor], task_kinds: [bootstrap], capabilities: [project_management]}
   changelog:
+    - "1.1.0 2026-10-16 代码交付（R4a）上线：写代码的项目用 git-repo"
     - "1.0.1 2026-10-16 代码交付（R4a）上线前只支持 vault-files"
     - "1.0.0 2026-10-16 启用（R3）：创建项目改为任务方式；章程即本任务的需求文档，格式由合同 pm-bootstrap 规定"
     - "0.1.0 2026-10-16 草稿：随 R3（以任务方式创建项目）启用"
@@ -25,8 +26,8 @@ metadata:
 4. **路由信息**：别名、典型请求（3–5 条，写用户实际会怎么说）、不负责的请求。它决定了以后哪些消息会被送到这个项目，
    要与已有项目的路由信息区分开。
 5. **角色要点**：PM 和 Supervisor 在本项目中需要特别注意的事（几行即可，例如"涉及资金的操作必须二次确认"）；没有就留空。
-6. **创建参数**：建议项目 ID（简短好记）、名称、能力（一般项目不开启任何能力）、交付方式（目前只支持 vault-files；
-   代码交付上线后，写代码的项目再改为 git-repo）、共享级别（默认 improvements），请用户在卡片上确认 ID 和名称。
+6. **创建参数**：建议项目 ID（简短好记）、名称、能力（一般项目不开启任何能力）、交付方式（写代码的项目用 git-repo，
+   其他用 vault-files）、共享级别（默认 improvements），请用户在卡片上确认 ID 和名称。
 7. 提交章程，并检查文档末尾的"Kernel 检查"结果：显示有误就按提示修正后再提交。
 
 ## Supervisor 在本任务中

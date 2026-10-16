@@ -334,6 +334,36 @@ task 本身（批准绑定文档、单一主线、PM 会话连续、可追溯）
 5. kernel 项目发布后通知"0.x.y 可部署，请执行 `deploy.ps1`"。任务结束时删除 worktree。
 6. 启用技能 assistant-git-delivery。
 
+**R4a 完成记录（2026-10-16，已部署 0.40.0）**：
+- 前置：AI 容器原本没有 git。经用户同意，在运行中的容器里安装了 git 2.34.1，并把 `git` 加入 `H:\AI\Dockerfile.AI` 的 apt 安装列表，
+  重建镜像后依然存在。容器内 git 看到的 Windows 工作副本有 CRLF 差异，但 Kernel 只在自己的 worktree 里工作，
+  主分支按引用移动，不碰用户的工作副本。
+- `core/gitdelivery.py`：
+  - project.yaml 中 `delivery: git-repo`、`repository`（默认 vault 内的 `repo`）、`main_branch`、`validation.command`；
+  - 每个任务一个 worktree（`assistant-data/workspaces/<项目>/<任务>`，分支 `task/<任务前 8 位>`），实施和 Review 回合的工作目录就是它。
+- 与计划的差异（都是小决定）：
+  - **PM 不运行 git**：PM 只改文件，**Kernel 在每个实施回合结束时提交**，实施报告绑定最新提交（`git:<sha>`）。这样 PM 不需要 git 身份，
+    每轮都留下提交历史。
+  - **验证在绑定的提交上运行项目自己的测试命令**（通用；kernel 专用的 `kernel-venvs/task` 构建测试留到 R4b）。
+    提交后工作区被改动过则不通过；没有配置测试命令时只确认提交，并提醒 Review 人工核对。
+  - **发布**：先检查是快进，再用 compare-and-swap 的 `update-ref` 移动主分支。主分支在主工作区被检出时，只在工作区干净时 `merge --ff-only`；
+    不能快进则发布失败、交回 Supervisor。
+  - 任务结束后维护节拍删除 worktree，已合并的分支也删除。
+  - 新项目选 `git-repo` 时，创建项目会在 vault 内建好 `repo`（main 分支 + 初始提交），并自动开启 `git_delivery` 能力（加载本技能）。
+- 合同 `git-delivery.md`（实施和 Review 回合与工作区路径一起注入）；技能 assistant-git-delivery 1.0.0 启用；创建项目的合同和技能恢复 git-repo 选项。
+- 测试：全部 183 项通过（新增 `tests/core/test_git_delivery.py`：真实 git 仓库上的完整流程、提交后被改动、测试失败、主分支已前进、新项目建仓库）。
+- 真实模型冒烟（kernel-v12-validation 临时改为代码交付，仓库在 vault 内）：
+  - 主线走通：轻量流程需求 → 实施（PM 在 worktree 中写了 greeting.py 和测试，没有运行 git）→ Kernel 提交 `b1f1cc9` →
+    验证（unittest 通过）→ 发布批准 → main 快进 → 完成。
+  - 冒烟结束后测试项目配置已恢复，仓库归档到 vault 的 `archive/r4a-smoke/`。
+- 冒烟中发现的两个主干问题，已修复（0.40.1、0.40.2）：
+  - 第一次冒烟时 OpenAI 服务不可用（503、"model at capacity"），Kernel 报错只显示"Codex exited with code 1:"、没有原因。
+    原因是 Codex 把错误写在 stdout 的事件流里；现在报错取事件流中的最后一条错误。
+  - **PM 一读到改动过的文件，工具服务就卡住**：`read_authorized_file` 发现文件与项目地图不一致时会当场刷新整张地图。
+    在 vault 挂载上刷新需要 30–50 秒，工具服务被占住，之后的每次调用都在 60 秒超时（冒烟中需求回合因此耗时 11 分钟）。
+    今天的技能更新改动了很多文件，所有项目都会碰到。修复：读取时只标记地图过期；`get_project_map` 也不再当场刷新，
+    需要时由 `refresh_project_map` 显式刷新。地图刷新慢本身不在主干上，暂不处理。
+
 ### R4b kernel 自我维护与模板打磨
 1. kernel 代码仓库加入 `AGENTS.md`（Codex 在 worktree 中自动读取）和 `docs/ARCHITECTURE.md`。
 2. kernel 项目开启 `kernel_maintenance` 能力和 `git-repo` 交付。

@@ -24,7 +24,7 @@ PROJECT_ID = re.compile(r"[a-z][a-z0-9-]{2,39}")
 
 CREATION_SECTION = "创建参数"      # contract (prompts/core/pm-bootstrap.md): the YAML block Kernel creates a project from
 PROJECT_CAPABILITIES = ("routing", "project_management", "shared_context")   # kernel_maintenance: kernel only
-DELIVERIES = ("vault-files",)   # git_delivery / git-repo come with R4a (code delivery); until then they would not work
+DELIVERIES = ("vault-files", "git-repo")   # git-repo: code delivery (R4a); it turns on the git_delivery capability
 SHARE_LEVELS = ("metrics", "improvements", "full")
 
 
@@ -46,6 +46,8 @@ def project_spec(spec: Any) -> dict[str, Any]:
     share = str(spec.get("share_with_kernel") or "improvements")
     if delivery not in DELIVERIES or share not in SHARE_LEVELS:
         raise ValueError(f"delivery 只能是 {DELIVERIES}，share_with_kernel 只能是 {SHARE_LEVELS}")
+    if delivery == "git-repo":   # loads the code-delivery skill
+        capabilities.append("git_delivery")
     return {"project_id": project_id, "display_name": display_name[:80], "purpose": purpose[:500],
             "capabilities": sorted(set(capabilities)), "delivery": delivery, "share_with_kernel": share,
             "pm_role": str(spec.get("pm_role") or "").strip()[:2000],

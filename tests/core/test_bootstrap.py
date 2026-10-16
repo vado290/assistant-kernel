@@ -192,7 +192,6 @@ def test_charter_parameters():
     assert "注明数据来源" in spec["pm_role"]
     for bad in (CHARTER.replace("project_id: sales-report", "project_id: x"),
                 CHARTER.replace("capabilities: []", "capabilities: [kernel_maintenance]"),
-                CHARTER.replace("delivery: vault-files", "delivery: git-repo"),   # until R4a
                 CHARTER.split("## 创建参数")[0]):
         with pytest.raises(ValueError):
             rules.charter_spec(bad)

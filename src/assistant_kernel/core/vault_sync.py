@@ -42,7 +42,8 @@ def _today() -> str:
 
 async def sync_vaults(kernel, settings) -> dict[str, int]:
     done = {}
-    for name, step in (("archived", _archive_backgrounds), ("logged", _log_iterations), ("shared", _apply_shared)):
+    for name, step in (("archived", _archive_backgrounds), ("logged", _log_iterations), ("shared", _apply_shared),
+                       ("worktrees", _remove_worktrees)):
         try:
             done[name] = await step(kernel, settings)
         except Exception:   # one broken file must not stop the dispatcher
@@ -199,3 +200,22 @@ async def _apply_shared(kernel, settings) -> int:
             await notify(c, row["project_id"], "supervisor",
                          f"✅ 公共背景已更新：{update['file']} · {update['section']}（各项目从下一轮起使用新内容）")
     return len(rows)
+
+
+# ------------------------------------------------------------------ code delivery: closed tasks give their worktree back
+
+async def _remove_worktrees(kernel, settings) -> int:
+    from assistant_kernel.core import gitdelivery
+    async with kernel.db.tx() as c:
+        rows = await all_rows(c, """
+            SELECT task_id, project_id FROM core.tasks t WHERE closed_at IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM core.task_events e WHERE e.task_id = t.task_id
+                              AND e.kind = 'worktree_released')""")
+    removed = 0
+    for row in rows:
+        code = await asyncio.to_thread(gitdelivery.config, settings, row["project_id"])
+        gone = bool(code) and await asyncio.to_thread(gitdelivery.remove_worktree, code, str(row["task_id"]))
+        async with kernel.db.tx() as c:
+            await event(c, row["project_id"], "worktree_released", task_id=row["task_id"], removed=gone)
+        removed += gone
+    return removed

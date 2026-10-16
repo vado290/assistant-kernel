@@ -171,7 +171,7 @@ def workspace_snapshot(settings, project_id: str, task_id: str, variant: str, *,
 async def call_model(ctx, run: dict[str, Any], config: AgentConfig, prompt: str, *,
                      task_id: str | None, stage: str | None, session_id: str | None,
                      tools: frozenset[str], sandbox: str, candidates: bool = False,
-                     subagents: int = 0) -> AgentTurnResult:
+                     subagents: int = 0, cwd: Path | None = None) -> AgentTurnResult:
     """One Codex invocation with the project's model settings and the scoped Kernel tools."""
     settings, harness = ctx.services["settings"], ctx.services["harness"]
     project_id = run["project_id"]
@@ -205,7 +205,7 @@ async def call_model(ctx, run: dict[str, Any], config: AgentConfig, prompt: str,
     try:
         return await harness.run_turn(AgentTurnRequest(
             project_id=project_id, prompt=prompt,
-            cwd=ProjectRuntimeManager(settings.data_root).ensure(project_id).vault_root,
+            cwd=cwd or ProjectRuntimeManager(settings.data_root).ensure(project_id).vault_root,
             physical_session_id=session_id, provider=config.provider, model=model, reasoning_effort=effort,
             context_policy=config.context_policy, model_context_window_tokens=window,
             model_auto_compact_token_limit=compact, sandbox=sandbox, timeout_seconds=config.timeout_seconds,

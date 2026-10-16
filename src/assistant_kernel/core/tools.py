@@ -189,11 +189,9 @@ def build_server(scope: Scope) -> MCPServer:
         if not maps._skip_file(relative, project_vault=read_root.key == "project"):
             registered = next((item for item in maps.load(project_id).get("files") or [] if item.get("uri") == uri), None)
             if registered is None or registered.get("sha256") != digest:
+                # Only mark the map stale: refreshing it here blocked the tool server for minutes and every later
+                # call timed out. refresh_project_map does the refresh when the map is actually needed.
                 maps.mark_stale(project_id, reason="source file changed on read")
-                try:
-                    await changes.refresh_map(project_id, roots=roots, run_id=scope.run_id, source_uris=[uri])
-                except Exception:  # noqa: BLE001 - the verified read stays usable; the map stays marked stale
-                    pass
         return {"uri": uri, "text": data.decode("utf-8"), "sha256": digest, "size": len(data)}
 
     @tool(SCOPED_WRITE)
@@ -212,13 +210,10 @@ def build_server(scope: Scope) -> MCPServer:
 
     @tool(READ_ONLY)
     async def get_project_map(file_limit: int = 100) -> dict:
-        """Return the Project Semantic Map header and compact component catalog."""
+        """Return the Project Semantic Map header and compact component catalog (as last refreshed; it may be stale —
+        call refresh_project_map only when an up-to-date map matters, it takes about a minute)."""
+        # No inline refresh: a full refresh takes ~30–50 s on the vault mount and the tool call times out at 60 s.
         refresh_error = None
-        try:
-            await changes.refresh_map(project_id, roots=roots, run_id=scope.run_id)
-        except Exception as exc:  # noqa: BLE001 - reported to the model; the map is marked stale
-            maps.mark_stale(project_id, reason=f"source reconciliation failed: {type(exc).__name__}")
-            refresh_error = {"type": type(exc).__name__, "message": str(exc)[:300]}
         payload = maps.load(project_id)
         files = payload.get("files") or []
         limit = min(max(file_limit, 1), 1000)

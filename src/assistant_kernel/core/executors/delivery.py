@@ -6,6 +6,7 @@ from typing import Any
 
 import yaml
 
+from assistant_kernel.core import gitdelivery
 from assistant_kernel.services.candidate_bundle import CandidateBundleService
 from assistant_kernel.storage import ProjectRuntimeManager
 
@@ -34,6 +35,11 @@ async def execute_validation(run: dict[str, Any], ctx) -> dict[str, Any]:
     project_id, task_id, bundle_sha = run["project_id"], str(run["task_id"]), run["input"]["bundle_sha"]
     if bundle_sha.startswith(NO_FILES):
         return {"passed": True, "report": "本次交付没有候选文件（仅文档交付），无需文件验证。"}
+    if bundle_sha.startswith(gitdelivery.PREFIX):   # code delivery: the project's tests on exactly that commit
+        code = gitdelivery.config(settings, project_id)
+        passed, report = await asyncio.to_thread(gitdelivery.validate, code, task_id,
+                                                 bundle_sha[len(gitdelivery.PREFIX):])
+        return {"passed": passed, "report": report}
     bundle, problem = await asyncio.to_thread(_reseal, settings, project_id, task_id, bundle_sha)
     if problem:
         return {"passed": False, "report": problem}
@@ -81,6 +87,13 @@ async def execute_publish(run: dict[str, Any], ctx) -> dict[str, Any]:
     project_id, task_id, bundle_sha = run["project_id"], str(run["task_id"]), run["input"]["bundle_sha"]
     if bundle_sha.startswith(NO_FILES):
         return {"outcome": "published", "files": []}
+    if bundle_sha.startswith(gitdelivery.PREFIX):   # code delivery: main fast-forwards to the approved commit
+        code = gitdelivery.config(settings, project_id)
+        try:
+            files = await asyncio.to_thread(gitdelivery.fast_forward, code, bundle_sha[len(gitdelivery.PREFIX):])
+        except gitdelivery.GitError as exc:
+            return {"outcome": "failed", "error": str(exc)}
+        return {"outcome": "published", "files": [f"git://{code['main']}/{f}" for f in files]}
     bundle, problem = await asyncio.to_thread(_reseal, settings, project_id, task_id, bundle_sha)
     if problem:
         return {"outcome": "failed", "error": problem}
