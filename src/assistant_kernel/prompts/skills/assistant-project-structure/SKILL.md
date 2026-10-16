@@ -3,6 +3,9 @@ name: assistant-project-structure
 description: 在创建或迁移Project级Agent、Schema、Skill、脚本、MCP、Workflow或Service时，按当前layout放置资源并补齐必要配套文件；普通内容编辑不使用。
 metadata:
   version: "1.1.0"
+  load: {roles: [pm], stages: [design, build], on_demand: true}
+  changelog:
+    - "2026-10-16 改为按需读取（只在提示中列出名称和用途）；内容尚未按核心 v6 重写，其中的旧流程用语和输出字段一律以 assistant-project-agent 和输出要求为准"
 ---
 
 # Project资源结构

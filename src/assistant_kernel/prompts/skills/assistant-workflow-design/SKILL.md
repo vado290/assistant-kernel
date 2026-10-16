@@ -3,6 +3,9 @@ name: assistant-workflow-design
 description: 设计或审查由Agent、MCP、Python、Service和人工门禁组成的Project Workflow；仅在任务涉及多节点编排或常驻服务时使用。
 metadata:
   version: "1.2.0"
+  load: {roles: [pm], stages: [design, build], on_demand: true}
+  changelog:
+    - "2026-10-16 改为按需读取（只在提示中列出名称和用途）；内容尚未按核心 v6 重写，其中的旧流程用语和输出字段一律以 assistant-project-agent 和输出要求为准"
 ---
 
 # Workflow与Service设计

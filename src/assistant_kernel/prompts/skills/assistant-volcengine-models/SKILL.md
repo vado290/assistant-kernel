@@ -3,6 +3,9 @@ name: assistant-volcengine-models
 description: 使用Kernel统一提供的火山方舟文本生成、图片OCR、Embedding与视频能力；模型凭据由共享Worker配置持有，不进入提示词。
 metadata:
   version: "1.1.0"
+  load: {roles: [pm], stages: [requirements, design, build, review, operate], on_demand: true}
+  changelog:
+    - "2026-10-16 改为按需读取（只在提示中列出名称和用途）；内容尚未按核心 v6 重写，其中的旧流程用语和输出字段一律以 assistant-project-agent 和输出要求为准"
 ---
 
 # 火山模型公共能力

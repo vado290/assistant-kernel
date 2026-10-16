@@ -1,35 +1,52 @@
 ---
 name: assistant-subagent-orchestration
-description: 在同一Project Task内把独立、上下文密集的工作委派给最多三个子Agent，并用Delegation Result向PM返回紧凑证据。
+description: 把独立、阅读量大或可并行的临时工作派给子 agent：何时派、怎样写子 agent 的任务说明、怎样处理子 agent 提出的问题、怎样核对和汇总结果。
 metadata:
-  version: "1.1.0"
+  version: "2.0.0"
+  load: {roles: [pm], stages: [requirements, design, build, review, evolution]}
+  changelog:
+    - "2.0.0 2026-10-16 按核心 v6 就地重写（旧版使用已废弃的协议用语和输出字段）：子 agent 不能与用户交互，任务说明和问题回流必须由主 agent 负责"
 ---
 
-# Subagent Orchestration
+# 委派给子 agent
+
+## 子 agent 的特点（决定了你该怎么用它）
+- 它是本轮内的临时帮手，本轮结束就消失，**下一轮不存在**。
+- 它**不能与用户交互**：看不到卡片，收不到用户的回答。它提出的问题只会回到你这里。
+- 它只知道你在任务说明里写给它的内容，看不到你的对话和工件，除非你写明文件路径让它去读。
+- 最多同时 3 个，子 agent 不能再派子 agent。
 
 ## 何时委派
+适合：彼此独立、可以并行的调查（行业资料、竞品、现有系统盘点）；阅读量大、会挤占你上下文的代码或文档阅读；
+独立的检查（反例审查、测试分析）；实施阶段中写集互不重叠的多个文件。
+不适合：需要用户决定的事；几步就能做完的小事；前后依赖、必须串行的步骤；目标还说不清的事。
 
-- 两个以上模块、资料来源或故障假设可独立分析；
-- 阅读量会明显污染PM主上下文；
-- 需要独立Review、风险检查或测试分析。
+## 任务说明的写法（每个子 agent 一份，按此结构）
+```
+目标：一句话说明要得到什么结论或产物
+背景：完成任务必需的事实（不要整段转贴你的上下文）
+输入：要读的文件路径、资料来源、相关编号（R/D/A）
+边界：只读 / 只能写以下文件：……（写集不能与其他子 agent 重叠）；不得做的事
+产出格式：
+  1. 结论（直接回答目标）
+  2. 证据（文件路径和行号、链接、命令输出）
+  3. 不确定之处
+  4. 需要用户决定的问题（只列出，不要自行假设答案）
+完成标准：什么情况下算完成；超出范围的发现只记录、不展开
+```
 
-短任务、严格串行步骤、目标不明确或无法独立验收时由PM直接完成。
+## 子 agent 提出的问题怎么处理
+1. 先判断能否由你自己查清或用已有资料回答，能则直接补充。
+2. 确实需要用户决定的，并入你本轮的 needs_input 问题（按 assistant-user-questions 改写），本轮结束。
+3. 用户回答后，在下一轮重新派一个新的子 agent，把用户的回答写进它的"背景"。**不要承诺把答案"交还"给原来的子 agent**，它已经不存在了。
 
-## 委派合同
+## 核对与汇总
+- 子 agent 的结论在你核对之前都只是线索：抽查关键证据，互相矛盾的结论由你判断或再查。
+- 把核对后的结论写进你的工件（标 `[调查:来源]`），不要整段粘贴子 agent 的原始输出。
+- 实施阶段：逐个检查子 agent 写的候选文件差异，确认没有超出写集；在实施报告第 6 节汇总子任务结果。
+- 输出格式不变：子任务结果写进 summary 和工件，不要在输出 JSON 中添加新字段。
 
-每个子Agent只有一个目标，明确输入引用、验收标准和声明写集。最多三个并行，第一版不再创建孙Agent。写集重叠时串行执行；Turn结束由PM核对candidate diff。完整权限继承自PM，外部效果必须进入回执，无法精确归属时诚实标记为父PM Run或unattributed native child。
-
-子Agent仅为当前阶段的临时任务，不直接与用户交互、发卡、选择阶段或维护长期业务身份。
-需用户决定的问题随 Result 返回给父 Agent，由 PM/Supervisor 按 Kernel 合同提出。必需
-结果未结算前不得切换阶段；阶段内独立生成物仍可并行，不能借此建立并行 PM 主线。
-
-## 返回
-
-每个原生子Agent完成后，PM必须在本Turn最终JSON的`delegation_results`中返回稳定
-`delegation_id`、status、summary、findings、changed_files、test_results、external_effect_refs、
-evidence_refs、artifacts、uncertainties、residual_risks和recommended_next_action。原始输出留在
-Trace，不复制进PM正文。
-
-required Delegation缺少Result时不得宣称Turn完成；Kernel会拒绝提交。Kernel按Result写不可变
-`delegation-result.v1`，从`active_delegations`移除Request并加入`child_results`。optional
-Delegation可留待后续Turn，但必须在checkpoint中说明。
+## 常见错误
+- 任务说明只写一句"帮我调查一下 X"：子 agent 不知道背景和边界，结果不可用。
+- 两个子 agent 写同一个文件。
+- 把子 agent 的问题原样丢给用户，或干脆替用户假设答案。
