@@ -4,11 +4,11 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from assistant_kernel.core import drafts, gitdelivery, rules
+from assistant_kernel.core import drafts, gitdelivery, grants, iterlog, rules
 from assistant_kernel.core.drafts import DOCUMENT_STAGE, STAGE_DOCUMENT
 from assistant_kernel.core.executors.common import (
     BRIEF_HEADING, CANDIDATE_TOOLS, DOMAIN_BRIEF, MVP_TOOLS, PROFILE_HEADING, USER_PROFILE, call_for_json, charter,
-    document_sections, knowledge_text, load_agent, prompt_text, write_document,
+    document_sections, knowledge_text, load_agent, project_map, prompt_text, write_document,
 )
 from assistant_kernel.core.executors.digest import evolution_material
 from assistant_kernel.core.executors.state import render_state, write_state
@@ -25,6 +25,7 @@ MAX_SUBAGENTS = 3
 MAX_DELEGATIONS = 10
 BRIEF_STAGES = {"requirements", "design", "evolution"}   # where the archived industry brief is worth its tokens
 RUNTIME_STAGES = {"design", "build", "review"}            # where the runtime manifest contract is needed
+MAP_STAGES = {"design", "build", "review", "evolution"}   # where the project map is worth its tokens
 RESUMED_NOTE = ("（同一会话的续轮：章程、角色要求、技能和文档中与上一轮相同的部分不再重复发送，下面只有变化的部分；"
                 "需要文档原文时调用 read_task_document，需要完整的任务记录时读 {state}。）")
 OUTPUT_REMINDER = "输出要求与上一轮相同：最后一条消息只输出那一个 JSON 对象。"
@@ -87,6 +88,11 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
     workspace = None
     if code and stage in ("build", "review"):   # the task's own worktree, cut from main
         workspace = await asyncio.to_thread(gitdelivery.ensure_worktree, code, task_id)
+    map_text = ""
+    if matched in MAP_STAGES:   # the project map: where things are (ROUND4 R4.2)
+        where, text = await asyncio.to_thread(project_map, settings, run["project_id"])
+        map_text = (f"## 项目地图（{where}；结构或组件有改动时在实施阶段同步更新）\n\n"
+                    + (text or "本项目还没有地图：第一次实施时按 assistant-task-continuity 的\"项目地图\"格式建立。"))
     workspace_text = (f"{prompt_text('git-delivery')}\n\n- 本任务的工作区：`{workspace}`（分支 `{gitdelivery.branch(task_id)}`，"
                       f"从 `{code['main']}` 拉出；你的当前目录就是它）\n- 测试命令：`{code['test_command'] or '未配置'}`"
                       if workspace else "")
@@ -101,6 +107,7 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
           if task["kind"] == "bootstrap" else []),
         *([("runtime", drafts.text_sha(manifest := prompt_text("runtime-manifest")), manifest)]
           if matched in RUNTIME_STAGES else []),
+        *([("map", drafts.text_sha(map_text), map_text)] if map_text else []),
         *([("workspace", drafts.text_sha(workspace_text), workspace_text)] if workspace_text else []),
     ]
     documents = await asyncio.to_thread(document_sections, settings, task)
@@ -167,9 +174,19 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
                                          str(run["run_id"]), kind, payload, "pm")
         await asyncio.to_thread(drafts.save, settings, run["project_id"], task_id, kind, markdown, report["sha256"])
         seen[kind] = report["sha256"]   # the PM wrote it, so the next resumed turn need not resend it
+        if kind == "implementation_report":   # the PM's iteration record, approved with the release (ROUND4 R4.1)
+            try:
+                report["iteration"] = iterlog.parse_record(markdown)
+            except ValueError as exc:
+                report["iteration_error"] = str(exc)
+        if kind == "improvement_proposal":
+            report["effect_reviews"] = iterlog.parse_effect_reviews(markdown)
         if kind == "task_contract" and task["kind"] == "bootstrap":   # the charter: Kernel creates the project from it
             try:
-                report["spec"] = rules.charter_spec(markdown)
+                spec = rules.charter_spec(markdown)
+                spec["directories"] = [grants.check_directory(d, spec["project_id"], settings.data_root)
+                                       for d in spec["directories"]]   # existence and visibility, on this host
+                report["spec"] = spec
             except ValueError as exc:
                 report["spec_error"] = str(exc)
         if kind == "implementation_report" and code:   # bound to the commit; no changes → the no-files marker

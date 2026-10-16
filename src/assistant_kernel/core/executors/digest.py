@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import Any
 
+RECENT_LIMIT, MAJOR_LIMIT = 30, 20   # hard caps on the change stream in a review (ROUND4)
+STAGE_LABELS = {"requirements": "需求", "design": "设计", "build": "实施", "review": "Review", "operate": "运营"}
 UNSURE = ("不清楚", "不知道", "不确定", "随便", "都行")
 
 
@@ -13,7 +15,21 @@ async def evolution_material(kernel, settings, project_id: str) -> str:
     from assistant_kernel.storage import ProjectRuntimeManager
     runtime = ProjectRuntimeManager(settings.data_root)
     vault = runtime.ensure(project_id).vault_root
+    from assistant_kernel.core import iterlog
     parts = [render_digest(await kernel.project_digest(project_id))]
+    recent = await kernel.iterations(project_id, days=28, limit=RECENT_LIMIT)
+    parts.append("### 近 4 周的变更流水（含预期效果和衡量方法；用来复核上期改进的效果，记录编号用于'上期效果复核'）\n"
+                 + iterlog.render(recent))
+    shown = {r["iteration_id"] for r in recent}
+    majors = [r for r in await kernel.iterations(project_id, days=180, major_only=True, limit=MAJOR_LIMIT + len(shown))
+              if r["iteration_id"] not in shown][:MAJOR_LIMIT]
+    if majors:
+        parts.append("### 6 个月内更早的重大改动（每条一行；需要细节时用 list_iterations 查）\n"
+                     + iterlog.render(majors, brief=True))
+    gaps = skills.collaboration_gaps(vault)
+    if gaps:
+        parts.append("### 技能协作断链（按各技能的 io 元数据检查；断链处往往是交接出问题的地方）\n"
+                     + "\n".join(f"- {g}" for g in gaps))
     updates = skills.template_updates(vault)
     if updates:
         parts.append("### 公共模板有更新（本项目的副本没有跟进；是否采用、采用哪些部分由你在建议中提出）\n" + "\n".join(
@@ -73,6 +89,12 @@ def render_digest(digest: dict[str, Any]) -> str:
     counts = digest["event_counts"]
     lines.append(f"- 卡片因新输入被改写 {counts.get('card_upgraded', 0)} 次；Supervisor 因新消息重新评估 "
                  f"{counts.get('supervisor_reevaluate', 0)} 次；作废的过期结果 {counts.get('stale_result', 0)} 次")
+    per_task: dict[str, list[str]] = {}
+    for row in digest.get("stage_turns") or []:
+        per_task.setdefault(row["goal"], []).append(f"{STAGE_LABELS.get(row['stage'], row['stage'])} {row['n']}")
+    if per_task:
+        lines.append("- 各任务按阶段的 PM 回合数：")
+        lines += [f"  - {goal}：{'、'.join(parts)}" for goal, parts in per_task.items()]
     for job in digest.get("jobs") or []:
         lines.append(f"- 定时作业 {job['job_id']}：成功 {job['ok']} 次，失败 {job['failed']} 次"
                      + (f"（例：{str(job['example'])[:150]}）" if job["failed"] and job["example"] else ""))

@@ -2,9 +2,13 @@
 name: assistant-goal-supervisor
 description: Supervisor 的核心方法：揣摩用户的真实意图，判断下一步，并把下一轮工作组装成 PM 可以直接执行的指令。
 metadata:
-  version: "6.1.0"
+  version: "6.1.1"
   load: {roles: [supervisor]}
+  io:
+    reads: [task_contract, solution_design, implementation_report, review_report, improvement_proposal, working_notes, state_ledger, charter, user_profile]
+    writes: []
   changelog:
+    - "6.1.1 2026-10-17 增加 io 元数据（读写哪些工件），用于检查技能协作断链（ROUND4）"
     - "6.1.0 2026-10-16 增加任务开始时判断轻量或完整流程（R2.3）"
     - "6.0.0 2026-10-16 按核心 v6 就地重写（旧版使用已废弃的协议用语和输出字段）：合并 supervisor.md 与 assistant-goal-supervisor，增加 PM 指令模板"
 ---

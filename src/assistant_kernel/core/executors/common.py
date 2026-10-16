@@ -22,17 +22,17 @@ PROMPTS = Path(__file__).parents[2] / "prompts" / "core"
 MVP_TOOLS = frozenset({
     "get_authorized_workspace", "list_authorized_tree", "read_authorized_file",
     "write_candidate_file", "delete_candidate_file",
-    "get_project_map", "query_project_map", "read_map_component", "refresh_project_map",
-    "read_project_document", "list_recent_history", "list_project_changes", "read_change_diff",
+    "read_project_document", "list_recent_history",
     "vault_list", "vault_read_text",
     "volcengine_model_status", "volcengine_generate", "volcengine_ocr",
-    "read_task_document", "edit_task_document",
+    "read_task_document", "edit_task_document", "list_iterations",
 })
 CANDIDATE_TOOLS = frozenset({"write_candidate_file", "delete_candidate_file"})
 # Kernel's own document protocol for PM turns: granted whenever offered, a project's tool list does not narrow it.
 DOCUMENT_TOOLS = frozenset({"read_task_document", "edit_task_document"})
-READ_ONLY_TOOLS = MVP_TOOLS - CANDIDATE_TOOLS - DOCUMENT_TOOLS - {"refresh_project_map", "volcengine_generate",
-                                                                  "volcengine_ocr"}
+# Platform tools every model turn gets whatever the project's own tool list says (ROUND4: the change stream).
+PLATFORM_TOOLS = DOCUMENT_TOOLS | {"list_iterations"}
+READ_ONLY_TOOLS = MVP_TOOLS - CANDIDATE_TOOLS - DOCUMENT_TOOLS - {"volcengine_generate", "volcengine_ocr"}
 
 
 def prompt_text(name: str) -> str:
@@ -98,6 +98,22 @@ def knowledge_text(settings, project_id: str, name: str) -> str:
     return path.read_text("utf-8").strip() if path.is_file() else ""
 
 
+def project_map(settings, project_id: str) -> tuple[str, str]:
+    """(where the project map lives, its text): knowledge/map.md for file delivery, the repository's map file
+    (project.yaml map_path, default docs/MAP.md) for code delivery. Text is '' when there is no map yet."""
+    from assistant_kernel.core import gitdelivery
+    code = gitdelivery.config(settings, project_id)
+    if code:
+        path, shown = code["repo"] / code["map_path"], f"代码仓库中的 `{code['map_path']}`"
+    else:
+        path = ProjectRuntimeManager(settings.data_root).ensure(project_id).vault_root / "knowledge" / "map.md"
+        shown = "`knowledge/map.md`（通过候选文件修改）"
+    return shown, (path.read_text("utf-8").strip()[:MAP_LIMIT] if path.is_file() else "")
+
+
+MAP_LIMIT = 8000   # the map is an index; past this the PM reads the file itself
+
+
 def charter(settings, project_id: str) -> str:
     """The project charter (knowledge/charter.md); empty when the project has none."""
     return knowledge_text(settings, project_id, "charter.md")
@@ -141,6 +157,10 @@ def document_sections(settings, task: dict[str, Any]) -> list[tuple[str, str, st
                 body += f"\n\n> Kernel 检查：创建参数有误，无法创建项目：{document['spec_error']}"
             elif document.get("spec"):
                 body += "\n\n> Kernel 检查：创建参数有效，可以提议创建项目。"
+            if document.get("iteration_error"):
+                body += f"\n\n> Kernel 检查：迭代记录有误（发布不受影响，但记录会不完整），请修正：{document['iteration_error']}"
+            elif document.get("iteration"):
+                body += "\n\n> Kernel 检查：迭代记录有效，将随发布批准一起入库。"
             sections.append((kind, document["sha256"], f"### {title}（sha {document['sha256'][:12]}）\n\n{body}"))
     validation = task["documents"].get("validation")
     if validation:   # written by Kernel, it has no revision sha of its own
@@ -176,7 +196,7 @@ async def call_model(ctx, run: dict[str, Any], config: AgentConfig, prompt: str,
     settings, harness = ctx.services["settings"], ctx.services["harness"]
     project_id = run["project_id"]
     invocation_id = f"{run['run_id']}-a{run['attempt']}-{uuid.uuid4().hex[:8]}"
-    allowed = tuple(sorted(tools & (set(config.allowed_tools) | DOCUMENT_TOOLS)))
+    allowed = tuple(sorted(tools & (set(config.allowed_tools) | PLATFORM_TOOLS)))
     model, effort, window, compact = config.model, config.reasoning_effort, None, None
     if hasattr(harness, "resolve_model_profile"):
         profile = await harness.resolve_model_profile(

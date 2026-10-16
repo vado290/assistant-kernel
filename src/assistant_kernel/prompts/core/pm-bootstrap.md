@@ -11,8 +11,7 @@ PM/Supervisor 配置、技能、Discord 频道），不经过设计和实施。�
 ## 5 范围            （负责 / 不负责）
 ## 6 约束
 ## 7 路由信息        （别名；典型请求 3–5 条，写用户会怎么说；不负责的请求）
-## 8 变更记录        （可留空，Kernel 会写入"创建项目"）
-## 9 背景信息存档    （本次收集到、以后可复用的组织与行业事实，每条带来源和日期；没有写"无"）
+## 8 背景信息存档    （本次收集到、以后可复用的组织与行业事实，每条带来源和日期；没有写"无"）
 ## 创建参数
 ## 用户画像观察
 ## 修订记录
@@ -27,6 +26,8 @@ purpose: 一句话说明项目用途
 capabilities: []                # 可选：routing、project_management、shared_context；一般项目留空
 delivery: vault-files           # 写代码的项目用 git-repo（Kernel 在项目目录下建好 git 仓库，实施在独立分支、批准后快进合并）
 share_with_kernel: improvements # metrics / improvements / full：允许 kernel 汇总本项目哪些运营信息
+directories:                    # 可选：项目需要访问的外部目录（只能在 H:\AI 下；批准章程即授权）
+  - {path: /home/v/AI/crypto, access: read, purpose: 读取策略代码}   # 容器路径（H:\AI 对应 /home/v/AI）；access: read / write
 pm_role: |
   本项目对 PM 的特别要求（几行即可，可留空）
 supervisor_role: |

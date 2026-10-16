@@ -41,8 +41,12 @@ class GatewayService:
             return None
         project_id, role = route
         command = text.strip().split()
-        if command[0] in ("/status", "/pending", "/cancel", "/evolve", "/jobs"):     # text commands (shared-bot mode)
-            if command[0] == "/jobs":
+        if command[0] in ("/status", "/pending", "/cancel", "/evolve", "/jobs", "/iterations", "/grants"):   # commands
+            if command[0] == "/grants":
+                reply = await self.grants_command(project_id, command[1:])
+            elif command[0] == "/iterations":
+                reply = await self.iterations_text(project_id, command[1:])
+            elif command[0] == "/jobs":
                 reply = await self.jobs_command(project_id, command[1:])
             elif command[0] == "/evolve":
                 await self.kernel.start_evolution(project_id, idempotency_key=f"evolution:{project_id}:msg:{message_id}")
@@ -218,6 +222,27 @@ class GatewayService:
                 await self.kernel.set_card_display(card["interaction_id"], display)
 
     # ------------------------------------------------------------ slash commands
+
+    async def grants_command(self, project_id: str, args: list[str]) -> str:
+        """/grants · /grants revoke <key> [确认] (ROUND4 R4.4)."""
+        from assistant_kernel.core import grants
+        if not args:
+            return grants.render(await self.kernel.grants(project_id))
+        if args[0] != "revoke" or len(args) not in (2, 3):
+            return "用法：/grants · /grants revoke <key>"
+        key = args[1]
+        if args[2:] != ["确认"]:
+            return f"确定要撤销目录授权 {key} 吗？撤销后本项目从下一轮起不能再访问它。请发送：/grants revoke {key} 确认"
+        if await self.kernel.revoke_grant(project_id, key):
+            return f"已撤销目录授权 {key}（从下一轮起生效）。"
+        return f"没有找到有效的目录授权 {key}。发送 /grants 查看。"
+
+    async def iterations_text(self, project_id: str, args: list[str]) -> str:
+        """/iterations [days]: the project's recent changes and why (ROUND4 R4.1), one line each."""
+        from assistant_kernel.core import iterlog
+        days = int(args[0]) if args and args[0].isdigit() else 14
+        rows = await self.kernel.iterations(project_id, days=days, limit=20)
+        return f"最近 {days} 天的变更记录（最多 20 条）：\n" + iterlog.render(rows, brief=True)
 
     async def jobs_command(self, project_id: str, args: list[str]) -> str:
         """/jobs · /jobs pause <id> · /jobs resume <id> · /jobs run <id> (ROUND3 S3)."""

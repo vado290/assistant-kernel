@@ -10,7 +10,7 @@ from typing import Any
 
 from psycopg.types.json import Jsonb
 
-from assistant_kernel.core import cards, drafts, rules
+from assistant_kernel.core import cards, drafts, iterlog, rules
 from assistant_kernel.core.db import all_rows, event, one
 from assistant_kernel.core.skills import SHARED_FILES
 
@@ -29,6 +29,7 @@ DECISION_ACTIONS = {
     "reconcile": ("published", "failed"),
     "create_project": ("approve", "reject"),
     "project_task": ("approve", "reject"),
+    "grant": ("approve", "reject"),
     "followups": ("approve", "reject"),
     "shared_update": ("approve", "reject"),
 }
@@ -159,8 +160,117 @@ async def close(c, task, state: str, reason: str, published_files: list[str] | N
             (Jsonb({"task_id": str(task["task_id"]), "task_contract": docs.get("task_contract"),
                     "solution_design": docs.get("solution_design"),
                     "bundle_sha": task["approvals"]["release"]["bundle_sha"]}), task["project_id"]))
+    await record_task(c, task, state, reason, published_files)
     await activate_next(c, task["project_id"])
     return task
+
+
+# ---------------------------------------------------------------- the change stream (ROUND4_PLAN section 2)
+
+async def insert_iteration(c, project_id: str, task_id, *, kind: str, title: str, reason: str, source: str = "user",
+                           source_ref: str | None = None, changes: list | None = None, significance: str = "minor",
+                           facts: dict | None = None, outcome: str = "", complete: bool = True,
+                           **texts: str) -> dict[str, Any] | None:
+    """One row of the project's change stream; a task gets at most one row of each kind."""
+    changes = changes or []
+    files = list((facts or {}).get("files") or [])
+    row = {"title": title[:200], "reason": reason, "changes": changes,
+           "artifacts": iterlog.artifacts(changes, files),
+           "significance": "major" if significance == "major" or iterlog.auto_major(files) else "minor"}
+    return await one(
+        c, """INSERT INTO core.iterations(project_id, task_id, kind, title, source, source_ref, reason, changes,
+                                          artifacts, significance, verification, expected_effect, measure, followups,
+                                          outcome, facts, complete, search_text)
+              VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+              ON CONFLICT (task_id, kind) WHERE task_id IS NOT NULL DO NOTHING RETURNING *""",
+        (project_id, task_id, kind, row["title"], source, source_ref, reason, Jsonb(changes), row["artifacts"],
+         row["significance"], *(texts.get(k, "") for k in ("verification", "expected_effect", "measure", "followups")),
+         outcome, Jsonb(facts or {}), complete, iterlog.search_text(row)))
+
+
+async def grant_directory(c, project_id: str, directory: dict[str, str], *, reason: str, source: str = "user",
+                          approval_message_id=None) -> None:
+    """Give a project a checked directory (grants.check_directory) from its next run on; replaces a grant of the same
+    key, keeping the old row (revoked) as history. Recorded in the change stream."""
+    import uuid
+    from assistant_kernel.core import grants
+    body, sha = grants.policy(directory)
+    await c.execute("""UPDATE core.project_grants SET status='revoked', revoked_at=now()
+                       WHERE project_id=%s AND resource_key=%s AND grant_kind='file' AND status='active'""",
+                    (project_id, directory["key"]))
+    await c.execute("""INSERT INTO core.project_grants(grant_id, project_id, grant_kind, resource_key, subject_kind,
+                                                       policy_json, policy_sha256, approval_message_id)
+                       VALUES (%s, %s, 'file', %s, 'project', %s, %s, %s)""",
+                    (uuid.uuid4(), project_id, directory["key"], Jsonb(body), sha, approval_message_id))
+    await insert_iteration(c, project_id, None, kind="grant", source=source, significance="major",
+                           title=f"授权目录 {directory['key']}（{'可写' if directory['access'] == 'write' else '只读'}）",
+                           reason=reason or directory["purpose"],
+                           changes=[{"type": "grant", "target": directory["path"], "action": "add",
+                                     "note": f"{directory['access']}：{directory['purpose']}"}],
+                           facts={"approval_message_id": _str(approval_message_id)})
+
+
+async def revoke_grant(c, project_id: str, key: str, *, reason: str) -> bool:
+    row = await one(c, """UPDATE core.project_grants SET status='revoked', revoked_at=now()
+                          WHERE project_id=%s AND resource_key=%s AND grant_kind='file' AND status='active'
+                          RETURNING policy_json""", (project_id, key))
+    if row:
+        await insert_iteration(c, project_id, None, kind="grant", source="user", significance="major",
+                               title=f"撤销目录授权 {key}", reason=reason,
+                               changes=[{"type": "grant", "target": str(row["policy_json"].get("path")),
+                                         "action": "remove", "note": "用户撤销"}])
+    return row is not None
+
+
+async def record_task(c, task, state: str, reason: str, published_files: list[str] | None) -> None:
+    """Every finished task leaves exactly one record: the PM's (approved with the release) when there is one,
+    otherwise one built from the task itself — never blocking the close."""
+    docs, files = task["documents"], list(published_files or [])
+    bundle = (docs.get("implementation_report") or {}).get("bundle_sha") or ""
+    facts = {"files": files, "close_reason": reason, "turns": task["turn_count"],
+             **({"commit": bundle[4:]} if bundle.startswith("git:") else {}),
+             **({"release_approval_message": task["approvals"]["release"].get("message_id")}
+                if task["approvals"].get("release") else {})}
+    kind = {"evolution": "review", "bootstrap": "bootstrap"}.get(task["kind"], "task")
+    outcome = f"{'完成' if state == 'completed' else '停止'}（{reason}）"
+    common = {"source": task["origin"], "source_ref": task.get("source_ref"), "facts": facts, "outcome": outcome}
+    if kind == "review":
+        await _record_review(c, task, common)
+        return
+    record = (docs.get("implementation_report") or {}).get("iteration") if reason == "published" else None
+    if record:
+        await insert_iteration(c, task["project_id"], task["task_id"], kind=kind, **common,
+                               **{k: record[k] for k in ("title", "reason", "changes", "significance", "verification",
+                                                         "expected_effect", "measure", "followups")})
+        return
+    await insert_iteration(c, task["project_id"], task["task_id"], kind=kind, **common, title=task["goal"][:200],
+                           reason=task.get("reason") or task["goal"], complete=reason != "published",
+                           changes=[{"type": "file", "target": f.split("://", 1)[-1], "action": "modify", "note": ""}
+                                    for f in files[:30]])
+
+
+async def _record_review(c, task, common: dict[str, Any]) -> None:
+    """A weekly review: what it found (its summary), which proposals became tasks, and its verdicts on earlier
+    iterations, written back onto those rows."""
+    summary = await one(c, """SELECT result->>'summary' AS summary FROM core.runs WHERE task_id=%s
+                              AND run_type='pm_turn' AND status='succeeded' ORDER BY created_at DESC LIMIT 1""",
+                        (task["task_id"],))
+    queued = await all_rows(c, "SELECT goal, source_ref FROM core.tasks WHERE parent_task_id=%s ORDER BY created_at",
+                            (task["task_id"],))
+    proposal = task["documents"].get("improvement_proposal") or {}
+    row = await insert_iteration(
+        c, task["project_id"], task["task_id"], kind="review", **common,
+        title=f"周度复盘 {_now():%Y-%m-%d}", reason=(summary or {}).get("summary") or task["goal"],
+        followups="；".join(f"{q['source_ref'] or ''} {q['goal']}".strip() for q in queued) or "无后续任务",
+        changes=[{"type": "doc", "target": "improvement_proposal", "action": "add",
+                  "note": f"采纳 {len(queued)} 条建议"}] if proposal else [])
+    for review in proposal.get("effect_reviews") or []:
+        if len(review["iteration"]) < 8:   # a short prefix could match several rows
+            continue
+        await c.execute("""UPDATE core.iterations SET effect_status=%s, effect_note=%s, effect_reviewed_in=%s
+                           WHERE project_id=%s AND iteration_id::text LIKE %s""",
+                        (review["status"], review["note"], row["iteration_id"] if row else None, task["project_id"],
+                         review["iteration"].lower() + "%"))
 
 
 def _now():
@@ -185,13 +295,14 @@ async def activate_next(c, project_id: str) -> dict[str, Any] | None:
 
 async def create_task(c, project_id: str, *, goal: str, origin: str, kind: str = "delivery",
                       source_message_id=None, parent_task_id=None,
-                      idempotency_key: str | None = None, reason: str | None = None) -> dict[str, Any]:
+                      idempotency_key: str | None = None, reason: str | None = None,
+                      source_ref: str | None = None) -> dict[str, Any]:
     task = await one(
         c, """INSERT INTO core.tasks(project_id, kind, origin, goal, source_message_id,
-                                     parent_task_id, idempotency_key, reason, created_at)
-              VALUES (%s, %s, %s, %s, %s, %s, %s, %s, clock_timestamp())
+                                     parent_task_id, idempotency_key, reason, source_ref, created_at)
+              VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, clock_timestamp())
               ON CONFLICT (idempotency_key) DO NOTHING RETURNING *""",
-        (project_id, kind, origin, goal, source_message_id, parent_task_id, idempotency_key, reason))
+        (project_id, kind, origin, goal, source_message_id, parent_task_id, idempotency_key, reason, source_ref))
     if task is None:
         return await one(c, "SELECT * FROM core.tasks WHERE idempotency_key=%s", (idempotency_key,))
     await event(c, project_id, "task_created", task_id=task["task_id"], origin=origin, kind=kind)
@@ -305,8 +416,10 @@ def _supervisor_item(task, run_input: dict[str, Any], result: dict[str, Any]) ->
             if error:
                 raise InvalidResult(error)
             bundle = rules.validated_bundle(task)
+            record = (task["documents"].get("implementation_report") or {}).get("iteration") or {}
             return _decision(task, "release", message or "是否批准发布？",
-                             bundle_sha=bundle, review_sha=rules.doc_sha(task, "review_report"))
+                             bundle_sha=bundle, review_sha=rules.doc_sha(task, "review_report"),
+                             record=record.get("title"), major=record.get("significance") == "major")
         if not result.get("instruction"):
             raise InvalidResult("propose_next needs an instruction")
         # The Supervisor may propose a track; executing the card confirms it (R2.3).
@@ -329,6 +442,10 @@ def _supervisor_item(task, run_input: dict[str, Any], result: dict[str, Any]) ->
         if not followups or len(followups) > MAX_FOLLOWUPS:
             raise InvalidResult(f"propose_followups needs 1–{MAX_FOLLOWUPS} task goals")
         return _decision(task, "followups", message or "是否把以下改进作为新任务排队？", tasks=followups)
+    if decision == "propose_grant":   # the Supervisor executor checked the directory first
+        if not result.get("_grant"):
+            raise InvalidResult(f"propose_grant needs a valid directory: {result.get('_grant_error') or 'missing'}")
+        return _decision(task, "grant", message or "是否授权这个目录？", directory=result["_grant"])
     if decision == "propose_project":
         if "project_management" not in (result.get("_capabilities") or ()):
             raise InvalidResult("only a project with the project_management capability can create projects")
@@ -353,8 +470,9 @@ def _followups(items) -> list[dict[str, str]]:
     followups = []
     for item in items or []:
         goal, reason = (item.get("goal"), item.get("reason")) if isinstance(item, dict) else (item, "")
+        ref = str(item.get("ref") or "").strip()[:20] if isinstance(item, dict) else ""
         if str(goal or "").strip():
-            followups.append({"goal": str(goal).strip(), "reason": str(reason or "").strip()})
+            followups.append({"goal": str(goal).strip(), "reason": str(reason or "").strip(), "ref": ref})
     return followups
 
 
@@ -414,6 +532,16 @@ async def _bootstrap_result(c, task, run, result) -> None:
                       if channels.get(key) and guild)
     await notify(c, task["project_id"], "pm", f"🆕 项目 {result['project_id']} 已创建。\n{links}".rstrip(),
                  task_id=task["task_id"])
+    spec = run["input"]["spec"]   # the new project's stream starts with its own creation
+    for directory in spec.get("directories") or []:   # checked when the charter was saved, approved with it
+        await grant_directory(c, result["project_id"], directory, reason=f"创建项目时批准：{directory['purpose']}")
+    await insert_iteration(c, result["project_id"], None, kind="bootstrap", source="user",
+                           source_ref=f"bootstrap:{task['project_id']}:{str(task['task_id'])[:8]}",
+                           title=f"项目创建：{spec.get('display_name') or result['project_id']}",
+                           reason=task.get("reason") or task["goal"], significance="major",
+                           changes=[{"type": "charter", "target": "knowledge/charter.md", "action": "add",
+                                     "note": str(spec.get("purpose") or "")[:300]}],
+                           facts={"files": list(result.get("files") or []), "created_by_task": str(task["task_id"])})
     await close(c, task, "completed", "project_created")
 
 
@@ -464,6 +592,13 @@ async def _consult_result(c, run, result) -> None:
             target_kind="consultation", target_id=str(run["run_id"]), kind="decision", origin="supervisor",
             content={"decision": "shared_update", "message": "是否这样修改公共背景？",
                      "actions": list(DECISION_ACTIONS["shared_update"]), "data": _shared_update(shared)}))
+    if result.get("_grant_error"):
+        await notify(c, run["project_id"], "supervisor", f"⚠ 这个目录不能授权：{result['_grant_error']}", chat=chat)
+    if result.get("_grant"):   # a directory the user asked for in the Supervisor channel, checked by the executor
+        await cards.add_item(c, run["project_id"], cards.new_item(
+            target_kind="consultation", target_id=str(run["run_id"]), kind="decision", origin="supervisor",
+            content={"decision": "grant", "message": "是否授权这个目录？", "actions": list(DECISION_ACTIONS["grant"]),
+                     "data": {"directory": result["_grant"]}}))
     upgrade = result.get("upgrade")
     context_task = run["input"].get("context_task_id")
     if upgrade and context_task:
@@ -680,10 +815,17 @@ async def _decision_action(c, task, item, action, values, source_message_id):
         if action == "reject":
             return await to_supervising(c, task, "followups_rejected", text=note)
         for number, followup in enumerate(_followups(data["tasks"])):
+            ref = f"review:{str(task['task_id'])[:8]}:{followup['ref']}" if followup.get("ref") else None
             await create_task(c, task["project_id"], goal=followup["goal"], reason=followup["reason"] or None,
-                              origin="evolution" if task["kind"] == "evolution" else "supervisor",
+                              origin="evolution" if task["kind"] == "evolution" else "supervisor", source_ref=ref,
                               parent_task_id=task["task_id"], idempotency_key=f"followup:{item['item_id']}:{number}")
         return await close(c, task, "completed", "followups_queued")
+    if decision == "grant":
+        if action == "reject":
+            return await to_supervising(c, task, "grant_rejected", text=note)
+        await grant_directory(c, task["project_id"], data["directory"], reason=note or data["directory"]["purpose"],
+                              source="supervisor", approval_message_id=_str(source_message_id))
+        return await to_supervising(c, task, "grant_approved", text=note)
     if decision == "project_task":
         if action == "reject":
             return await to_supervising(c, task, "project_task_rejected", text=note)
@@ -735,11 +877,22 @@ def _shared_update(proposal: dict[str, Any]) -> dict[str, str]:
 
 async def _consultation_action(c, project_id, item, action, source_message_id):
     data = item["content"]["data"]
-    if item["content"]["decision"] not in ("new_task", "shared_update") or action not in ("approve", "reject"):
+    if item["content"]["decision"] not in ("new_task", "shared_update", "grant") or action not in ("approve", "reject"):
         raise ValueError("consultation items accept approve or reject")
+    if item["content"]["decision"] == "grant":
+        if action == "approve":
+            await grant_directory(c, project_id, data["directory"], reason=data["directory"]["purpose"],
+                                  approval_message_id=_str(source_message_id))
+        return {}
     if item["content"]["decision"] == "shared_update":
         if action == "approve":   # written to the file by vault_sync, outside this transaction
             await event(c, project_id, "shared_update_approved", item_id=item["item_id"], **data)
+            await insert_iteration(c, project_id, None, kind="shared_context", source="supervisor",
+                                   title=f"公共背景：{data['file']} · {data['section']}",
+                                   reason=data["reason"] or "（未说明原因）", significance="major",
+                                   changes=[{"type": "shared", "target": f"{data['file']}#{data['section']}",
+                                             "action": "modify", "note": data["content"][:400]}],
+                                   facts={"approval_message_id": _str(source_message_id)})
         return {}
     if action == "approve":
         return await create_task(c, project_id, goal=data["goal"], origin="supervisor",

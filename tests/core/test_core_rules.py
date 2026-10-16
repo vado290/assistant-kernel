@@ -13,6 +13,8 @@ OWNERS = {
     "core.interactions": {"core/cards.py"},
     "core.runs": {"core/kernel.py", "core/machine.py"},
     "core.jobs": {"core/jobs.py", "core/machine.py"},   # ROUND3 S3: manifest sync and job results
+    "core.iterations": {"core/machine.py"},             # ROUND4: the change stream
+    "core.project_grants": {"core/machine.py"},         # ROUND4: directory grants
 }
 
 

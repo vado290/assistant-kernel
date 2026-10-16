@@ -116,7 +116,9 @@ async def test_project_is_created_from_the_approved_charter(kernel, sim, dispatc
     charter = (vault / "knowledge" / "charter.md").read_text("utf-8")
     assert charter.startswith("# 销售日报 · 项目章程") and "每天汇总门店销售数据" in charter
     assert "创建参数" not in charter and "用户画像观察" not in charter and "修订记录" not in charter
-    assert "创建项目（章程经用户批准）" in skills.section_text(charter, "变更记录")
+    assert "变更记录" not in charter                                           # reasons live in the stream
+    first = (await kernel.iterations("sales-report"))[0]
+    assert first["kind"] == "bootstrap" and first["significance"] == "major" and "销售日报" in first["title"]
     assert "20 家门店" in skills.section_text(charter, "背景信息存档")
     config = yaml.safe_load((vault / "project.yaml").read_text("utf-8"))
     assert config["delivery"] == "vault-files" and config["capabilities"] == [] and config["created_by"] == "kernel-core-bootstrap"

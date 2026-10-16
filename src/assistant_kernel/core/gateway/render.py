@@ -15,7 +15,7 @@ ACTION_STYLES = {"execute": "success", "approve": "success", "retry": "primary",
 DECISION_TITLES = {"release": "申请发布", "complete": "建议结束任务", "cancel": "建议取消任务",
                    "new_task": "建议新建任务", "run_failed": "执行失败",
                    "reconcile": "发布结果需要核对", "create_project": "按章程创建新项目",
-                   "project_task": "开始创建项目",
+                   "project_task": "开始创建项目", "grant": "授权目录",
                    "followups": "建议排队的新任务", "shared_update": "修改公共背景"}
 DONE_REPLIES = {"execute": "已确认，PM 将开始执行。", "approve": "已批准。", "reject": "已记录：不同意。",
                 "stop": "任务已停止。", "retry": "已安排重试。", "continue": "已继续。",
@@ -103,7 +103,17 @@ def render_item(item: dict[str, Any]) -> dict[str, Any]:
                      f"能力：{'、'.join(spec.get('capabilities') or []) or '无'} · 交付方式：{spec.get('delivery')} · "
                      f"共享级别：{spec.get('share_with_kernel')}\n章程全文见本任务的需求文档。\n\n"
                      "批准即批准这份章程：Kernel 将按它创建项目目录、章程、PM/Supervisor 配置、技能和 Discord 频道。")
-        goal = (content.get("data") or {}).get("goal")
+            for d in spec.get("directories") or []:
+                body += f"\n授权目录：{d['path']}（{'可写' if d['access'] == 'write' else '只读'}）— {d['purpose']}"
+        data = content.get("data") or {}
+        if content["decision"] == "release":   # approving the release also approves its iteration record
+            body += (f"\n\n迭代记录：{data['record']}" + ("【重大改动】" if data.get("major") else "")
+                     if data.get("record") else "\n\n（PM 没有写迭代记录，发布后由平台按任务信息补一条）")
+        directory = data.get("directory")
+        if content["decision"] == "grant" and directory:
+            body += (f"\n\n目录：{directory['path']}\n权限：{'可写' if directory['access'] == 'write' else '只读'}\n"
+                     f"用途：{directory['purpose']}\n批准后从下一轮起生效，可以用 /grants revoke {directory['key']} 撤销。")
+        goal = data.get("goal")
         if content["decision"] == "project_task" and goal:
             body += f"\n\n新任务：{goal}\n批准后先与你商定项目章程，章程批准后才会创建项目；当前任务随之结束。"
         text, attachment = _fit(body)

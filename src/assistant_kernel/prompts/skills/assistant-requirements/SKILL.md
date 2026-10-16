@@ -2,9 +2,13 @@
 name: assistant-requirements
 description: 需求阶段的工作方法：先摸清用户所在组织、行业和项目现状，再分轮用多问题卡片收集和澄清需求、化解矛盾、补充用户没想到的需求，最后提交需求文档并存档背景信息。
 metadata:
-  version: "3.2.0"
+  version: "3.2.1"
   load: {roles: [pm], stages: [requirements]}
+  io:
+    reads: [charter, user_profile, domain_brief, shared_context, state_ledger, user_answers]
+    writes: [task_contract, working_notes]
   changelog:
+    - "3.2.1 2026-10-17 增加 io 元数据（读写哪些工件），用于检查技能协作断链（ROUND4）"
     - "3.2.0 2026-10-16 细化轮增加'运行要求'（ROUND3 S3）"
     - "3.1.0 2026-10-16 先判断是否需要行业调研并派调研子 agent，第 1 轮问题取自候选问题库；按用户画像调整提问；需求文档增加'用户画像观察'（ROUND3 S2）"
     - "3.0.0 2026-10-16 按核心 v6 就地重写（旧版使用已废弃的协议用语和输出字段）：用户常说不清需求、前后矛盾，需要先定位背景、分轮集中提问，并把背景信息存档复用"

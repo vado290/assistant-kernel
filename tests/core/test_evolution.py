@@ -63,11 +63,12 @@ async def test_evolution_review_to_followups(kernel, sim, dispatcher, fake_harne
     assert [r["state"] for r in rows] == ["supervising", "queued"]
     assert [r["reason"] for r in rows] == ["P1 用户把日报改成了周报", None]
 
-    # every finished task gets one line in the iteration log, once
-    assert (await sync_vaults(kernel, kernel_settings))["logged"] == 2      # the cancelled task and the review
-    assert (await sync_vaults(kernel, kernel_settings))["logged"] == 0
-    log = (project_files_root(kernel_settings) / "changes" / "iterations.md").read_text("utf-8")
-    assert "取消（cancelled_by_user）" in log and "完成（followups_queued）" in log and log.count("task:") == 2
+    # every finished task leaves exactly one record in the change stream (ROUND4)
+    records = await kernel.iterations("p1")
+    assert sorted(r["kind"] for r in records) == ["review", "task"]          # the cancelled task and the review
+    review = next(r for r in records if r["kind"] == "review")
+    assert "日报工具默认生成周报" in review["followups"] and review["source"] == "user"
+    assert next(r for r in records if r["kind"] == "task")["outcome"] == "停止（cancelled_by_user）"
 
 
 def project_files_root(settings):

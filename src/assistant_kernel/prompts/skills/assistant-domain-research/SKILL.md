@@ -2,9 +2,13 @@
 name: assistant-domain-research
 description: 行业调研（通常由"行业调研"子 agent 执行）：按固定维度联网收集用户所在行业、地区和企业规模的关键情况，写成行业速写、候选问题库和候选需求清单，作为需求提问的基础。
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
   load: {roles: [pm], stages: [requirements, design], on_demand: true}
+  io:
+    reads: [charter, user_profile, domain_brief]
+    writes: [domain_brief]
   changelog:
+    - "1.0.1 2026-10-17 增加 io 元数据（读写哪些工件），用于检查技能协作断链（ROUND4）"
     - "1.0.0 2026-10-16 首版（ROUND3 S2）：先调研再提问，用固定维度快速定位、缩小需求范围；结果随需求批准存档复用"
 ---
 

@@ -569,13 +569,10 @@ class WorkspaceScopeService:
                     "required": ["config.yaml", "role.md", "MAP.md"],
                 },
                 {
-                    "path": "knowledge/map/",
-                    "purpose": "Living Semantic Map and bounded LLM navigation",
-                    "required": ["index.yaml", "overview.md"],
-                },
-                {
-                    "path": "changes/ledger.jsonl",
-                    "purpose": "Append-only semantic and implementation change ledger",
+                    "path": "knowledge/map.md",
+                    "purpose": "Project map: structure, components, data locations, where to start (code-delivery "
+                               "projects keep it in their repository, default docs/MAP.md); change reasons are in "
+                               "the change stream (list_iterations), not in the file",
                 },
                 {
                     "path": ".agents/skills/<skill>/",

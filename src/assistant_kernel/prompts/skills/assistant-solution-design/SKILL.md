@@ -2,9 +2,14 @@
 name: assistant-solution-design
 description: 设计阶段：依据已批准的需求文档，比较可行方案，写出能直接指导实施和测试的设计文档。
 metadata:
-  version: "2.1.1"
+  version: "2.2.1"
   load: {roles: [pm], stages: [design]}
+  io:
+    reads: [task_contract, charter, map, change_stream]
+    writes: [solution_design]
   changelog:
+    - "2.2.1 2026-10-17 增加 io 元数据（读写哪些工件），用于检查技能协作断链（ROUND4）"
+    - "2.2.0 2026-10-17 设计前读地图，按需查变更原因（ROUND4）"
     - "2.1.1 2026-10-16 运行声明文件改为项目根目录的 jobs.yaml（vault 的 runtime/ 目录存放 Kernel 内部数据）"
     - "2.1.0 2026-10-16 设计文档增加'运行方式'，与通用运行时的 manifest 对应（ROUND3 S3）"
     - "2.0.0 2026-10-16 按核心 v6 就地重写（旧版使用已废弃的协议用语和输出字段）：由 pm-design.md 改写，增加需求覆盖和可并行子任务"
@@ -14,7 +19,8 @@ metadata:
 
 ## 做法
 1. 逐条读需求文档的 R 和 A；需求本身有问题（缺失、矛盾、不可实现）时用 return_to_requirements 说明，不要在设计里悄悄改需求。
-2. 先读现有实现和项目文件，在现有基础上设计，不要从零重写。
+2. 先读项目地图定位相关组件，再读现有实现和项目文件，在现有基础上设计，不要从零重写；需要了解某处为什么这样，
+   用 `list_iterations(artifact=...)` 查它的变更原因。设计会改变结构或组件时，在第 4 节文件清单里包含地图。
 3. 有两个以上可行方案时，用一张小表比较（成本、风险、可维护性），给出推荐；需要用户取舍时用 needs_input。
 4. 选择最简单的可行做法：确定性的计算和转换用脚本，长期运行的监听用服务，只有需要判断和理解的部分才交给 agent。
 5. 按 assistant-task-continuity 写设计文档，特别注意：

@@ -103,6 +103,12 @@ async def main(goal: str, minutes: float) -> None:
             for row in await (await c.execute(
                     "SELECT direction, role, body->>'text' AS text FROM core.messages ORDER BY created_at")).fetchall():
                 say(f"  msg {row['direction']}/{row['role']}: {(row['text'] or '')[:300]}")
+            for row in await (await c.execute(
+                    """SELECT kind, title, complete, significance, artifacts, reason, changes, measure, facts
+                       FROM core.iterations ORDER BY created_at""")).fetchall():
+                say(f"  iteration {row['kind']} complete={row['complete']} {row['significance']} {row['title']}"
+                    f"\n    artifacts={row['artifacts']}\n    reason={row['reason'][:200]}\n    measure={row['measure'][:200]}"
+                    f"\n    changes={json.dumps(row['changes'], ensure_ascii=False)[:500]}\n    facts={json.dumps(row['facts'], ensure_ascii=False)[:300]}")
     finally:
         with psycopg.connect(**admin, autocommit=True) as c:
             c.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(name)))

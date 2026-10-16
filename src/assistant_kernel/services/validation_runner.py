@@ -15,7 +15,6 @@ import yaml
 from assistant_kernel.config import KernelSettings
 from assistant_kernel.storage import ProjectRuntimeManager
 from assistant_kernel.services.workspace_scope import WorkspaceScopeService
-from assistant_kernel.services.semantic_map import SemanticMapService
 
 
 SKILL_FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
@@ -420,48 +419,6 @@ class ValidationRunner:
         except (ValueError,KeyError,TypeError) as exc:
             self._issue(issues,'schedule_invalid',relative,str(exc))
 
-    def _validate_semantic_map(
-        self, path: Path, relative: str, issues: list[dict[str, str]],
-    ) -> None:
-        try:
-            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        except yaml.YAMLError as exc:
-            self._issue(issues, "semantic_map_yaml", relative, str(exc))
-            return
-        if not isinstance(data, dict) or data.get("schema_version") != "semantic-map.v1":
-            self._issue(
-                issues, "semantic_map_schema", relative,
-                "semantic map must use semantic-map.v1",
-            )
-            return
-        components = data.get("components") or []
-        if not isinstance(components, list):
-            self._issue(
-                issues, "semantic_map_components", relative,
-                "semantic map components must be a list",
-            )
-            return
-        seen: set[str] = set()
-        for component in components:
-            if not isinstance(component, dict):
-                self._issue(
-                    issues, "semantic_map_component", relative,
-                    "semantic component must be an object",
-                )
-                continue
-            component_id = str(component.get("component_id") or "")
-            if not component_id or component_id in seen:
-                self._issue(
-                    issues, "semantic_map_component_id", relative,
-                    "semantic component IDs must be present and unique",
-                )
-            seen.add(component_id)
-            if not str(component.get("purpose") or "").strip():
-                self._issue(
-                    issues, "semantic_map_purpose", relative,
-                    f"semantic component has no purpose: {component_id}",
-                )
-
     def _validate_file(
         self, path: Path, relative: str, issues: list[dict[str, str]]
     ) -> None:
@@ -484,8 +441,6 @@ class ValidationRunner:
             self._validate_project(path, relative, issues)
         if path.name == "source-map.yaml":
             self._validate_source_map(path, relative, issues)
-        if lowered.endswith("knowledge/map/index.yaml"):
-            self._validate_semantic_map(path, relative, issues)
         if path.suffix.lower() in {".yaml", ".yml", ".json"} and (
             lowered.startswith("schedules/") or "/schedules/" in f"/{lowered}"
         ):
@@ -638,64 +593,6 @@ class ValidationRunner:
                     "path": relative, "sha256": actual_hash, "size": len(payload),
                 })
                 self._validate_file(candidate, relative, issues)
-            semantic_map = SemanticMapService(self.settings).load(project_id)
-            registered = {
-                str(ref): component
-                for component in semantic_map.get("components") or []
-                for ref in component.get("source_refs") or []
-                if str(ref).startswith("workspace://")
-            }
-            affected = {
-                str(component.get("component_id")): component
-                for target in seen_targets
-                for ref, component in registered.items()
-                if target == ref or target.startswith(ref.rstrip("/") + "/")
-            }
-            map_impact = manifest.get("map_impact")
-            if map_impact is not None and not isinstance(map_impact, dict):
-                self._issue(
-                    issues, "map_impact_type", "manifest.json",
-                    "map_impact must be an object",
-                )
-                map_impact = {}
-            declared_ids = {
-                str(item) for item in (map_impact or {}).get("affected_component_ids") or []
-            }
-            changed_map_files = {
-                str(item) for item in (map_impact or {}).get("changed_map_files") or []
-            }
-            critical_affected = {
-                component_id: component for component_id, component in affected.items()
-                if SemanticMapService.is_critical(component)
-            }
-            if critical_affected:
-                if not map_impact:
-                    self._issue(
-                        issues, "map_impact_missing", "manifest.json",
-                        "critical semantic components require map_impact",
-                    )
-                missing_ids = sorted(set(critical_affected) - declared_ids)
-                if missing_ids:
-                    self._issue(
-                        issues, "map_impact_components", "manifest.json",
-                        "critical affected components were not declared: "
-                        + ", ".join(missing_ids),
-                    )
-                if not bool((map_impact or {}).get("documentation_required")):
-                    self._issue(
-                        issues, "map_documentation_required", "manifest.json",
-                        "critical component changes require documentation_required=true",
-                    )
-                if not changed_map_files or not (changed_map_files & seen_targets):
-                    self._issue(
-                        issues, "map_documentation_change", "manifest.json",
-                        "critical component changes must include a declared Map file in the candidate",
-                    )
-            elif affected and not map_impact:
-                warnings.append({
-                    "code": "map_impact_recommended", "path": "manifest.json",
-                    "message": "registered non-critical components changed without map_impact",
-                })
             status = "failed" if issues else "passed"
             summary = (
                 f"Validated {len(checked_files)} candidate files; "
@@ -735,7 +632,6 @@ class ValidationRunner:
         if contract_paths:
             contract_issue_prefixes = (
                 "skill_", "agent_", "mcp_", "project_", "schedule_", "source_map_",
-                "semantic_map_",
             )
             targets.append({
                 "target_id": "kernel:resource-contracts",

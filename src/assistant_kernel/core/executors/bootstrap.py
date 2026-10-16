@@ -28,7 +28,8 @@ def fill(text: str, values: dict[str, str]) -> str:
     return text
 
 
-CHARTER_ONLY_IN_TASK = ("创建参数", "用户画像观察", "修订记录")   # sections of the draft that do not belong in the charter
+# Sections of the draft that do not belong in the charter (change reasons live in core.iterations, ROUND4).
+CHARTER_ONLY_IN_TASK = ("创建参数", "用户画像观察", "修订记录", "变更记录")
 ROLE_SECTIONS = {"pm": "本项目对 PM 的特别要求", "supervisor": "本项目对 Supervisor 的特别要求"}
 
 
@@ -46,12 +47,10 @@ def render_charter(spec: dict[str, Any], draft: str, created: str, task_id: str)
     body = "\n".join(line for line in body.splitlines() if not line.startswith("# ")).strip()   # its own title goes
     header = (f"# {spec['display_name']} · 项目章程\n\n> 项目 ID：`{spec['project_id']}` · 创建于 {created}（任务 {task_id[:8]}）。"
               "PM 和 Supervisor 每一轮都会读本章程；第 1、5、7 节同时用于 kernel 的项目路由。\n"
-              "> 第 1–7 节通过任务修改；第 9 节由 Kernel 在需求文档获批时自动追加。\n\n")
+              "> 第 1–7 节通过任务修改（修改原因记在项目的变更流水里）；第 8 节由 Kernel 在需求文档获批时自动追加。\n\n")
     text = header + body + "\n"
-    changes = skills.section_text(text, "变更记录")
-    text = skills.replace_section(text, "8 变更记录", (changes + f"\n- {created} 创建项目（章程经用户批准）").strip())
     if not skills.section_bounds(text.splitlines(), "背景信息存档"):
-        text = skills.replace_section(text, "9 背景信息存档", "（需求文档获批时由 Kernel 追加）")
+        text = skills.replace_section(text, "8 背景信息存档", "（需求文档获批时由 Kernel 追加）")
     return text
 
 

@@ -39,7 +39,7 @@ stages: requirements → design → build → (Kernel validation) → review →
 | `core/gateway/` | Discord gateway (cards, buttons, modals, outbox, reminders) |
 | `harness/` | `codex exec` runner, tool-server launch, process control |
 | `services/` | reused libraries: workspace scope and grants, documents, candidates, validation, publishing, project map and change ledger |
-| `api/`, `mcp_server/` | `kernel-api` (health, version) and `kernel-mcp` (vault, embeddings, rerank, chat, models, credentials) |
+| `api/` | `kernel-api` (health, version) |
 | `prompts/core/`, `prompts/skills/` | PM and Supervisor roles and output formats; shared skills |
 
 Project agent files (roles, skills, models) live in each project's vault: `assistant-data/vaults/<project>/agents/`.
@@ -53,9 +53,9 @@ Channel routing is `assistant-data/config/core-discord.yaml`.
 ```
 
 Production processes (`deploy/supervisord.conf`): `kernel-core-dispatcher`, `kernel-core-gateway`,
-`kernel-api` (`/health/live`, `/health/ready`, `/version`), `kernel-mcp` (shared services for your own MCP
-clients on `127.0.0.1:18002`, bearer token: vault reads, embeddings, rerank, chat, model list, service
-credentials), `docling-serve`. Only two venvs exist: `kernel-venvs/test` and `kernel-venvs/prod`.
+`kernel-api` (`/health/live`, `/health/ready`, `/version`), `docling-serve`, and project services
+`proj-<project>-<service>` registered from each project's `jobs.yaml`. Only two venvs exist:
+`kernel-venvs/test` and `kernel-venvs/prod`.
 
 Database: schema `core` (tasks, runs, cards, messages, events, projects, directory grants, file change
 ledger). The retired control core's tables are kept read-only in `archive_core5`; nothing reads them.

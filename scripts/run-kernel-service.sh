@@ -3,7 +3,7 @@ set -euo pipefail
 
 service_name="${1:-}"
 case "${service_name}" in
-  assistant-kernel-api|assistant-kernel-mcp|assistant-kernel-core-dispatcher|assistant-kernel-core-gateway) ;;
+  assistant-kernel-api|assistant-kernel-core-dispatcher|assistant-kernel-core-gateway) ;;
   *) echo "unsupported Kernel service: ${service_name}" >&2; exit 64 ;;
 esac
 

@@ -162,6 +162,35 @@ class Kernel:
                                        idempotency_key=f"evolution:{row['project_id']}:{week_key}")
         return [row["project_id"] for row in due]
 
+    async def grants(self, project_id: str) -> list[dict[str, Any]]:
+        async with self.db.tx() as c:
+            return await all_rows(c, """SELECT resource_key, policy_json FROM core.project_grants WHERE project_id=%s
+                                        AND grant_kind='file' AND status='active' ORDER BY resource_key""", (project_id,))
+
+    async def revoke_grant(self, project_id: str, key: str) -> bool:
+        async with self.db.tx() as c:
+            await lock_project(c, project_id)
+            return await machine.revoke_grant(c, project_id, key, reason="用户用 /grants revoke 撤销")
+
+    async def iterations(self, project_id: str, *, days: int = 28, artifact: str | None = None,
+                         major_only: bool = False, query: str | None = None, limit: int = 30) -> list[dict[str, Any]]:
+        """The project's change stream, newest first (ROUND4 R4.1). `query` matches words for now; the same parameter
+        can later be served by vector search over search_text without changing callers."""
+        sql = ["SELECT * FROM core.iterations WHERE project_id=%s AND created_at > now() - %s::interval"]
+        params: list[Any] = [project_id, f"{max(1, int(days))} days"]
+        if artifact:
+            sql.append("AND (%s = ANY(artifacts) OR EXISTS (SELECT 1 FROM unnest(artifacts) a WHERE a LIKE %s))")
+            params += [artifact, artifact.rstrip("*") + "%"]
+        if major_only:
+            sql.append("AND significance='major'")
+        for word in (query or "").split()[:5]:
+            sql.append("AND search_text ILIKE %s")
+            params.append(f"%{word}%")
+        sql.append("ORDER BY created_at DESC LIMIT %s")
+        params.append(min(max(int(limit), 1), 100))
+        async with self.db.tx() as c:
+            return await all_rows(c, " ".join(sql), tuple(params))
+
     async def task_ledger(self, task_id) -> dict[str, Any]:
         """The recorded facts of one task: its finished PM turns (input and output), the user messages each turn
         consumed, and the card actions. Read-only; rendered by executors/state.py."""
@@ -213,7 +242,13 @@ class Kernel:
                        count(*) FILTER (WHERE status='failed') AS failed, max(error->>'message') AS example
                 FROM core.runs WHERE project_id=%s AND run_type='job' AND created_at > now() - %s::interval
                 GROUP BY 1 ORDER BY 1""", (project_id, since))
-        return {"days": days, "tasks": tasks, "card_actions": [a["payload"] for a in actions],
+            stage_turns = await all_rows(c, """
+                SELECT left(t.goal, 60) AS goal, r.input->>'stage' AS stage, count(*) AS n
+                FROM core.runs r JOIN core.tasks t ON t.task_id = r.task_id
+                WHERE r.project_id=%s AND r.run_type='pm_turn' AND r.status='succeeded'
+                  AND r.created_at > now() - %s::interval
+                GROUP BY t.task_id, t.goal, r.input->>'stage' ORDER BY min(r.created_at)""", (project_id, since))
+        return {"days": days, "tasks": tasks, "card_actions": [a["payload"] for a in actions], "stage_turns": stage_turns,
                 "failures": failures, "event_counts": counts, "user_messages": inbound,
                 "delegations": [(d["name"] or "（未命名）", d["n"]) for d in delegated], "jobs": job_runs}
 

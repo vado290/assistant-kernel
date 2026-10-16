@@ -50,6 +50,7 @@ def project_spec(spec: Any) -> dict[str, Any]:
         capabilities.append("git_delivery")
     return {"project_id": project_id, "display_name": display_name[:80], "purpose": purpose[:500],
             "capabilities": sorted(set(capabilities)), "delivery": delivery, "share_with_kernel": share,
+            "directories": [d for d in spec.get("directories") or [] if isinstance(d, dict)][:10],
             "pm_role": str(spec.get("pm_role") or "").strip()[:2000],
             "supervisor_role": str(spec.get("supervisor_role") or "").strip()[:2000]}
 

@@ -2,9 +2,13 @@
 name: assistant-workflow-design
 description: 设计会自动运行的产物：定时脚本、产物内的 agent、常驻服务怎样拆分、怎样声明到 jobs.yaml、怎样保证可重复运行和故障恢复；产物需要定时或长期运行时使用。
 metadata:
-  version: "2.0.1"
+  version: "2.0.2"
   load: {roles: [pm], stages: [design, build], on_demand: true}
+  io:
+    reads: [task_contract, map]
+    writes: [solution_design, jobs]
   changelog:
+    - "2.0.2 2026-10-17 增加 io 元数据（读写哪些工件），用于检查技能协作断链（ROUND4）"
     - "2.0.1 2026-10-16 运行声明文件改为项目根目录的 jobs.yaml（vault 的 runtime/ 目录存放 Kernel 内部数据）"
     - "2.0.0 2026-10-16 按核心 v6 和通用运行时（ROUND3 S3）重写：运行方式一律声明在 jobs.yaml，发布即登记"
 ---

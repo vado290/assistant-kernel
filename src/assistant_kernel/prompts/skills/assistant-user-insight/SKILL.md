@@ -2,9 +2,13 @@
 name: assistant-user-insight
 description: 揣摩用户：从用户的话和卡片操作中理解真实意图和协作习惯，据此调整提问和方案，尽量减轻用户的负担；把有依据的观察写进需求文档的"用户画像观察"，按项目存档。
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
   load: {roles: [pm, supervisor]}
+  io:
+    reads: [user_profile, state_ledger, user_answers]
+    writes: [task_contract]
   changelog:
+    - "1.0.1 2026-10-17 增加 io 元数据（读写哪些工件），用于检查技能协作断链（ROUND4）"
     - "1.0.0 2026-10-16 首版（ROUND3 S2）：超级助理的目的是减轻人在项目开发中的负担；画像每个项目各存一份，按用户分节"
 ---
 

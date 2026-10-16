@@ -6,7 +6,7 @@ before writing, and a task event records that the step is done.
 
 - background archive: an approved requirements document's "背景信息存档" goes into the charter, its
   "用户画像观察" into knowledge/user-profile.md, and the task's domain brief into knowledge/domain-brief.md;
-- iteration log: every finished task gets one line in the project's changes/iterations.md;
+- (the iteration log moved to the core.iterations table in ROUND4; changes/iterations.md is no longer written)
 - shared context: an approved update is written into the kernel's knowledge/shared file.
 """
 from __future__ import annotations
@@ -42,8 +42,7 @@ def _today() -> str:
 
 async def sync_vaults(kernel, settings) -> dict[str, int]:
     done = {}
-    for name, step in (("archived", _archive_backgrounds), ("logged", _log_iterations), ("shared", _apply_shared),
-                       ("worktrees", _remove_worktrees)):
+    for name, step in (("archived", _archive_backgrounds), ("shared", _apply_shared), ("worktrees", _remove_worktrees)):
         try:
             done[name] = await step(kernel, settings)
         except Exception:   # one broken file must not stop the dispatcher
@@ -62,7 +61,7 @@ def append_archive(charter: Path, marker: str, heading: str, body: str) -> bool:
     current = skills.section_text(text, ARCHIVE)
     kept = "\n".join(line for line in current.splitlines() if not line.startswith("（需求文档获批时"))
     entry = f"### {heading} <!-- {marker} -->\n\n{body.strip()}"
-    charter.write_text(skills.replace_section(text, "9 " + ARCHIVE, (kept + "\n\n" + entry).strip()), "utf-8",
+    charter.write_text(skills.replace_section(text, ARCHIVE, (kept + "\n\n" + entry).strip()), "utf-8",
                        newline="\n")
     return True
 
@@ -138,48 +137,14 @@ async def _archive_backgrounds(kernel, settings) -> int:
     return count
 
 
-# ------------------------------------------------------------------ iteration log
-
-def append_iteration(path: Path, marker: str, line: str) -> bool:
-    if path.is_file() and marker in path.read_text("utf-8"):
-        return False
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if not path.is_file():
-        path.write_text("# 迭代记录\n\n每个结束的任务一行（Kernel 自动写入）：日期 · 结果 · 来源 · 目标 · 原因。\n\n", "utf-8",
-                        newline="\n")
-    with path.open("a", encoding="utf-8", newline="\n") as handle:
-        handle.write(f"{line} <!-- {marker} -->\n")
-    return True
-
-
-async def _log_iterations(kernel, settings) -> int:
-    async with kernel.db.tx() as c:
-        rows = await all_rows(c, """
-            SELECT task_id, project_id, kind, origin, state, close_reason, goal, reason, closed_at
-            FROM core.tasks t WHERE closed_at IS NOT NULL
-              AND NOT EXISTS (SELECT 1 FROM core.task_events e WHERE e.task_id = t.task_id
-                              AND e.kind = 'iteration_logged')
-            ORDER BY closed_at""")
-    for row in rows:
-        line = (f"- {row['closed_at']:%Y-%m-%d} · {STATE_NAMES.get(row['state'], row['state'])}（{row['close_reason']}）"
-                f" · {row['origin']}/{row['kind']} · {row['goal'][:100]} · 原因：{row['reason'] or '—'}")
-        path = _vault(settings, row["project_id"]) / "changes" / "iterations.md"
-        await asyncio.to_thread(append_iteration, path, f"task:{row['task_id']}", line)
-        async with kernel.db.tx() as c:
-            await event(c, row["project_id"], "iteration_logged", task_id=row["task_id"])
-    return len(rows)
-
-
 # ------------------------------------------------------------------ shared context
 
 def write_shared(data_root: Path, update: dict[str, Any]) -> None:
     path = skills.shared_path(data_root, update["file"])
     text = path.read_text("utf-8") if path.is_file() else f"# {update['file']}\n"
     if skills.section_text(text, update["section"]) != update["content"].strip():
+        # the reason is recorded in the kernel project's change stream at approval (ROUND4), not in the file
         text = skills.replace_section(text, update["section"], update["content"])
-        changes = skills.section_text(text, "变更记录")
-        record = f"- {_today()} {update['section']}：{update['reason'] or '（未说明原因）'}（用户批准）"
-        text = skills.replace_section(text, "变更记录", (changes + "\n" + record).strip())
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, "utf-8", newline="\n")
 

@@ -247,8 +247,7 @@ def test_resource_guide_explains_v2_resource_placement(tmp_path: Path) -> None:
     assert resources["agents/<agent-id>/"]["required"] == [
         "config.yaml", "role.md", "MAP.md",
     ]
-    assert resources["knowledge/map/"]["required"] == [
-        "index.yaml", "overview.md",
-    ]
+    assert "list_iterations" in resources["knowledge/map.md"]["purpose"]   # ROUND4: Markdown map, reasons in the stream
+    assert "knowledge/map/" not in resources
     assert "source-map.yaml" in resources
     assert "runs/ and runtime/" in resources

@@ -2,9 +2,13 @@
 name: assistant-release-audit
 description: Review 阶段：以全新、只读的身份，逐条对照需求和设计核对实施结果，给出能否发布的结论。
 metadata:
-  version: "2.0.0"
+  version: "2.0.1"
   load: {roles: [pm], stages: [review]}
+  io:
+    reads: [task_contract, solution_design, implementation_report]
+    writes: [review_report]
   changelog:
+    - "2.0.1 2026-10-17 增加 io 元数据（读写哪些工件），用于检查技能协作断链（ROUND4）"
     - "2.0.0 2026-10-16 按核心 v6 就地重写（旧版使用已废弃的协议用语和输出字段）：由 pm-review.md 改写，改为逐条核对验收标准"
 ---
 

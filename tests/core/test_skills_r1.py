@@ -106,7 +106,8 @@ async def test_shared_update_card_then_write(kernel, sim, kernel_settings, share
     assert (await sync_vaults(kernel, kernel_settings))["shared"] == 0
     text = (shared / "environment.md").read_text("utf-8")
     assert "部署到远程主机 prod-1" in skills.section_text(text, "部署去向")
-    assert "部署去向：用户在 Supervisor 频道说明（用户批准）" in skills.section_text(text, "变更记录")
+    record = (await kernel.iterations("p1"))[0]                             # the reason is in the stream
+    assert record["kind"] == "shared_context" and record["reason"] == "用户在 Supervisor 频道说明"
     notices = [m["body"]["text"] for m in await sim.outbound("p1")]
     assert any("公共背景已更新" in n for n in notices)
 

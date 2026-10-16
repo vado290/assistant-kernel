@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "assistant-kernel"
-version = "0.41.0"
+version = "0.42.0"
 description = "Control core (tasks, runs, cards), Discord gateway and Kernel tools for the personal super assistant"
 requires-python = ">=3.10,<3.11"
 dependencies = [
@@ -30,7 +30,6 @@ test = [
 
 [project.scripts]
 assistant-kernel-api = "assistant_kernel.api.main:run"
-assistant-kernel-mcp = "assistant_kernel.mcp_server.server:run"
 assistant-kernel-migrate = "assistant_kernel.core.migrate:run"
 assistant-kernel-core-dispatcher = "assistant_kernel.core.dispatch_main:run"
 assistant-kernel-core-gateway = "assistant_kernel.core.gateway.discord_app:run"

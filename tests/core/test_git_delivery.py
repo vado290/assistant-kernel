@@ -14,6 +14,19 @@ from assistant_kernel.core.vault_sync import sync_vaults
 
 from .test_dispatch import Scripts, settle
 
+RECORD = """## 迭代记录
+```yaml
+title: 新增 hello 脚本
+reason: 用户要一个打印 hello 的脚本
+significance: minor
+changes:
+  - {type: code, target: hello.py, action: add, note: 打印 hello}
+verification: check_hello.py 通过
+expected_effect: 用户可以运行 hello.py
+measure: 无
+followups: 无
+```
+"""
 TEST = "python3 check_hello.py"
 CHECK = "import sys, pathlib\nsys.exit(0 if pathlib.Path('hello.py').read_text().startswith('print') else 1)\n"
 
@@ -77,7 +90,7 @@ async def test_code_delivery_end_to_end(kernel, sim, dispatcher, fake_harness, k
     await kernel.act("p1", (await sim.item("p1", task_id))["item_id"], "execute")
 
     report = {"outcome": "ready_for_validation", "summary": "已实施", "questions": [],
-              "document": {"kind": "implementation_report", "markdown": "# 实施报告\n新增 hello.py"}}
+              "document": {"kind": "implementation_report", "markdown": "# 实施报告\n新增 hello.py\n\n" + RECORD}}
     fake_harness.script("pm", writing({"hello.py": "print('hello')\n"}, report))
     dispatcher.scripts.add("supervisor:evaluate", {"decision": "propose_next", "target_stage": "release",
                                                     "instruction": "申请发布"})
@@ -94,10 +107,14 @@ async def test_code_delivery_end_to_end(kernel, sim, dispatcher, fake_harness, k
 
     item = await sim.item("p1", task_id)
     assert item["content"]["decision"] == "release"
+    assert item["content"]["data"]["record"] == "新增 hello 脚本"
     await kernel.act("p1", item["item_id"], "approve")
     await settle(dispatcher)
     assert (await sim.task(task_id))["state"] == "completed"
     assert git(repo, "rev-parse", "main") == commit[4:]                       # main fast-forwarded
+    record = (await kernel.iterations("p1"))[0]                             # the PM's record, approved with it
+    assert record["title"] == "新增 hello 脚本" and record["complete"] and record["facts"]["commit"] == commit[4:]
+    assert "file:hello.py" in record["artifacts"] and "code:hello.py" in record["artifacts"]
     assert any("hello.py" in m["body"]["text"] for m in await sim.outbound("p1"))
     await sync_vaults(kernel, kernel_settings)
     assert not worktree.exists() and not git(repo, "branch", "--list", gitdelivery.branch(str(task_id)))

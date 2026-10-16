@@ -34,6 +34,7 @@ class Skill:
     body: str
     path: Path
     template: dict[str, Any] = field(default_factory=dict)
+    io: dict[str, list[str]] = field(default_factory=dict)   # ROUND4: {reads: [...], writes: [...]} artifact names
 
     @property
     def on_demand(self) -> bool:
@@ -51,7 +52,9 @@ def parse(path: Path) -> Skill:
     meta = front.get("metadata") or {}
     return Skill(name=str(front.get("name") or path.parent.name), version=str(meta.get("version") or "0"),
                  description=str(front.get("description") or ""), load=dict(meta.get("load") or {}),
-                 body=(match.group(2) if match else text).strip(), path=path, template=dict(meta.get("template") or {}))
+                 body=(match.group(2) if match else text).strip(), path=path, template=dict(meta.get("template") or {}),
+                 io={key: [str(x) for x in (meta.get("io") or {}).get(key) or []] for key in ("reads", "writes")}
+                 if isinstance(meta.get("io"), dict) else {})
 
 
 def matches(load: dict[str, Any], *, role: str, stage: str | None = None, purpose: str | None = None,
@@ -165,6 +168,23 @@ def install_templates(vault: Path, capabilities: frozenset[str]) -> list[str]:
         _install(skill, target)
         installed.append(skill.name)
     return installed
+
+
+# Artifacts the platform produces or the user provides: reading them needs no writing skill.
+PLATFORM_ARTIFACTS = {"digest", "change_stream", "state_ledger", "template_updates", "user_answers", "shared_context",
+                      "user_profile"}   # user_profile: Kernel files it from the requirements document
+
+
+def collaboration_gaps(vault: Path) -> list[str]:
+    """Broken links between the project's skills by their `io` metadata: an artifact some skill writes but none
+    reads, or one some skill reads but none writes (ROUND4 R4.5). Skills without `io` are not judged."""
+    active = [s for s in project_skills(vault) if s.io and not s.load.get("disabled")]
+    reads = {a: [s.name for s in active if a in s.io.get("reads", [])] for s in active for a in s.io.get("reads", [])}
+    writes = {a: [s.name for s in active if a in s.io.get("writes", [])] for s in active for a in s.io.get("writes", [])}
+    gaps = [f"{a}：由 {'、'.join(w)} 写出，但没有技能读取" for a, w in writes.items() if a not in reads]
+    gaps += [f"{a}：{'、'.join(r)} 要读取，但没有技能写出" for a, r in reads.items()
+             if a not in writes and a not in PLATFORM_ARTIFACTS]
+    return sorted(gaps)
 
 
 def template_updates(vault: Path) -> list[dict[str, str]]:

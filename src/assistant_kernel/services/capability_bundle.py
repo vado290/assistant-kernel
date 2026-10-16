@@ -11,7 +11,6 @@ from typing import Any
 
 from assistant_kernel.config import KernelSettings
 from assistant_kernel.storage import ProjectRuntimeManager
-from assistant_kernel.services.semantic_map import SemanticMapService
 from assistant_kernel.services.workspace_scope import WorkspaceScopeService
 
 
@@ -609,14 +608,7 @@ class CapabilityBundleService:
         map_state = "not_applicable"
         map_generation = None
         map_error = None
-        map_index = vault / "knowledge" / "map" / "index.yaml"
-        if map_index.is_file():
-            try:
-                map_generation = SemanticMapService(self.settings).publish_current(project_id)
-                map_state = "published_complete"
-            except Exception as exc:
-                map_state = "published_map_pending"
-                map_error = {"type": type(exc).__name__, "message": str(exc)[:500]}
+        # The old semantic map is retired (ROUND4): projects keep a Markdown map; no generation per publish.
         receipt = {
             "schema_version": "file-publication.v1",
             "outcome": (

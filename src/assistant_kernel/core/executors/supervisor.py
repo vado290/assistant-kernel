@@ -5,7 +5,7 @@ import asyncio
 import json
 from typing import Any
 
-from assistant_kernel.core import rules
+from assistant_kernel.core import grants, rules
 from assistant_kernel.core import skills as skill_rules
 from assistant_kernel.core.executors.common import (
     PROFILE_HEADING, READ_ONLY_TOOLS, USER_PROFILE, call_for_json, capabilities, charter, knowledge_text, load_agent,
@@ -29,6 +29,7 @@ REASONS = {
     "create_project_rejected": "用户没有批准按当前章程创建项目", "bootstrap_failed": "创建项目失败",
     "followups_rejected": "用户没有批准你提出的后续任务",
     "project_task_rejected": "用户不同意开始创建项目的任务",
+    "grant_approved": "用户批准了你提议的目录授权（下一轮起生效）", "grant_rejected": "用户没有批准你提议的目录授权",
 }
 KIND_NAMES = {"delivery": "交付", "evolution": "周度复盘（自我进化）", "bootstrap": "创建项目"}
 TRACK_NAMES = {"full": "完整流程（需求→设计→实施→Review→发布）", "quick": "轻量流程（需求含简要方案→实施→发布）"}
@@ -143,6 +144,13 @@ async def execute_supervisor(run: dict[str, Any], ctx) -> dict[str, Any]:
         # Show the user what the section says now next to the proposal.
         update["before"] = await asyncio.to_thread(skill_rules.shared_section, settings.data_root,
                                                    str(update.get("file", "")), str(update.get("section", "")))
+    requested = parsed.get("directory") if parsed.get("decision") == "propose_grant" else parsed.get("propose_grant")
+    checked: dict[str, Any] = {"_grant": None, "_grant_error": None}
+    if isinstance(requested, dict):   # a directory grant: checked here (filesystem), written by the state machine
+        try:
+            checked["_grant"] = await asyncio.to_thread(grants.check_directory, requested, project_id, settings.data_root)
+        except ValueError as exc:
+            checked["_grant_error"] = str(exc)
     # Kernel facts go last so a model reply can never set them.
     return {**parsed, "config_sha256": config.config_sha256, "skills": list(config.skill_labels),
-            "usage": model_result.usage.model_dump(), "_capabilities": sorted(caps)}
+            "usage": model_result.usage.model_dump(), "_capabilities": sorted(caps), **checked}

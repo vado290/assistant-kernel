@@ -91,15 +91,11 @@ def error_payload(exc: BaseException, tool: str) -> str:
 
 def build_server(scope: Scope) -> MCPServer:
     """Register only the tools this invocation was given; each call checks the lease first."""
-    from assistant_kernel.services.project_changes import ProjectChangeService
-    from assistant_kernel.services.semantic_map import SemanticMapService
     from assistant_kernel.services.workspace_scope import WorkspaceScopeService
 
     settings, project_id, roots = scope.settings, scope.project_id, scope.roots
     runtime = ProjectRuntimeManager(settings.data_root)
     workspace = WorkspaceScopeService(settings)
-    maps = SemanticMapService(settings)
-    changes = ProjectChangeService(settings)
     server = MCPServer(name="kernel-core-tools", instructions=(
         "These tools are fixed to the current Project and leased run. Targets outside that scope are "
         "rejected. Call get_authorized_workspace first. A successful tool result is not human approval."))
@@ -179,19 +175,13 @@ def build_server(scope: Scope) -> MCPServer:
     @tool(READ_ONLY)
     async def read_authorized_file(uri: str, max_bytes: int = 262144) -> dict:
         """Read one UTF-8 file addressed by an authorized workspace URI."""
-        read_root, target, relative = workspace.resolve_uri(roots, uri)
+        _, target, _ = workspace.resolve_uri(roots, uri)
         if not target.is_file():
             raise FileNotFoundError(uri)
         data = target.read_bytes()
         if len(data) > min(max(max_bytes, 1), 2 * 1024 * 1024):
             raise ValueError(f"file exceeds max_bytes={max_bytes}")
         digest = hashlib.sha256(data).hexdigest()
-        if not maps._skip_file(relative, project_vault=read_root.key == "project"):
-            registered = next((item for item in maps.load(project_id).get("files") or [] if item.get("uri") == uri), None)
-            if registered is None or registered.get("sha256") != digest:
-                # Only mark the map stale: refreshing it here blocked the tool server for minutes and every later
-                # call timed out. refresh_project_map does the refresh when the map is actually needed.
-                maps.mark_stale(project_id, reason="source file changed on read")
         return {"uri": uri, "text": data.decode("utf-8"), "sha256": digest, "size": len(data)}
 
     @tool(SCOPED_WRITE)
@@ -207,63 +197,6 @@ def build_server(scope: Scope) -> MCPServer:
     def delete_candidate_file(target_uri: str, expected_sha256: str) -> dict:
         """Stage a hash-guarded deletion in this task's candidate manifest."""
         return workspace.delete_candidate(roots, target_uri, expected_sha256)
-
-    @tool(READ_ONLY)
-    async def get_project_map(file_limit: int = 100) -> dict:
-        """Return the Project Semantic Map header and compact component catalog (as last refreshed; it may be stale —
-        call refresh_project_map only when an up-to-date map matters, it takes about a minute)."""
-        # No inline refresh: a full refresh takes ~30–50 s on the vault mount and the tool call times out at 60 s.
-        refresh_error = None
-        payload = maps.load(project_id)
-        files = payload.get("files") or []
-        limit = min(max(file_limit, 1), 1000)
-        return {
-            "schema_version": payload.get("schema_version"), "project_id": project_id,
-            "map_schema_version": payload.get("map_schema_version"), "authority": payload.get("authority") or {},
-            "components": [{k: item.get(k) for k in ("component_id", "type", "kind", "purpose", "criticality")}
-                           for item in payload.get("components") or []],
-            "unclassified_sources": payload.get("unclassified_sources") or [],
-            "source_diagnostics": maps.validate_sources(project_id, roots=roots),
-            "files": files[:limit], "file_count": len(files), "files_truncated": len(files) > limit,
-            "map_ref": maps.current_ref(project_id), "refresh_error": refresh_error,
-        }
-
-    @tool(READ_ONLY)
-    def query_project_map(task_kind: str, query: str = "", component_ids: list[str] | None = None,
-                          limit: int = 20) -> dict:
-        """Select relevant components by task profile, terms and explicit IDs."""
-        return maps.query(project_id, task_kind=str(task_kind or "chat"), query_terms=[str(query or "")],
-                          component_ids=component_ids or [], limit=limit, roots=roots)
-
-    @tool(READ_ONLY)
-    def read_map_component(component_id: str) -> dict:
-        """Read one registered component without scanning the source tree."""
-        for item in maps.load(project_id).get("components") or []:
-            if str(item.get("component_id")) == str(component_id):
-                return {**dict(item), "source_diagnostics": maps.validate_sources(
-                    project_id, roots=roots, component_ids=[str(component_id)])}
-        raise FileNotFoundError(f"semantic component is not registered: {component_id}")
-
-    @tool(SCOPED_WRITE)
-    async def refresh_project_map(source_uris: list[str] | None = None) -> dict:
-        """Reconcile this Project's derived Map with the current authorized sources."""
-        for uri in source_uris or []:
-            workspace.resolve_uri(roots, uri)
-        return await changes.refresh_map(project_id, roots=roots, run_id=scope.run_id, source_uris=source_uris)
-
-    @tool(READ_ONLY)
-    async def list_project_changes(lookback_days: int = 30, limit: int = 50, cursor: str | None = None,
-                                   root_key: str | None = None, path: str | None = None) -> dict:
-        """Read recent change evidence in this Project; reasons do not grant authorization."""
-        if root_key and root_key not in root_keys():
-            raise PermissionError("workspace root is outside the authorized scope")
-        return await changes.list_project_changes(project_id, lookback_days=lookback_days, limit=limit,
-                                                  cursor=cursor, root_key=root_key, path=path)
-
-    @tool(READ_ONLY)
-    async def read_change_diff(change_id: str, max_bytes: int = 262144) -> dict:
-        """Read a stored SHA-checked diff for a change registered in this Project."""
-        return await changes.read_change_diff(project_id, change_id, max_bytes=max_bytes)
 
     @tool(READ_ONLY)
     def read_project_document(ref: dict, max_bytes: int = 262144) -> dict:
@@ -323,6 +256,18 @@ def build_server(scope: Scope) -> MCPServer:
         drafts.save(settings, project_id, scope.task_id, kind, markdown, draft["base_sha256"])
         return {"kind": kind, "sha256": drafts.text_sha(markdown), "size": len(markdown),
                 "changed": markdown != draft["markdown"], "edits_applied": len(edits or [])}
+
+    @tool(READ_ONLY)
+    async def list_iterations(days: int = 28, artifact: str | None = None, major_only: bool = False,
+                              query: str | None = None, limit: int = 20) -> dict:
+        """This project's change stream (what changed, why, expected effect, effect review), newest first.
+        artifact filters by e.g. "skill:assistant-requirements", "map", "charter", "jobs", "file:<path>" (a trailing *
+        matches a prefix); query matches words in titles, reasons and change notes. Read only what the question needs."""
+        from assistant_kernel.core import iterlog
+        from assistant_kernel.core.kernel import Kernel
+        rows = await Kernel(settings).iterations(project_id, days=days, artifact=artifact, major_only=major_only,
+                                                 query=query, limit=min(max(limit, 1), 50))
+        return {"count": len(rows), "text": iterlog.render(rows)}
 
     @tool(READ_ONLY)
     async def list_recent_history(lookback_days: int = 365, limit: int = 50, cursor: str | None = None,
