@@ -71,6 +71,16 @@ async def enqueue(c, project_id: str, run_type: str, purpose: str = "default", r
          Jsonb(base), f"{MUTEX[run_type]}:{project_id}" if run_type in MUTEX else None))
 
 
+async def enqueue_job(c, job: dict[str, Any], planned, *, manual: bool, mutex_key: str) -> dict[str, Any]:
+    """A run of a scheduled job (ROUND3 S3): no task; one at a time per job; retried `retries` times."""
+    return await one(
+        c, """INSERT INTO core.runs(project_id, run_type, purpose, input, mutex_key, max_attempts)
+              VALUES (%s, 'job', 'default', %s, %s, %s) RETURNING *""",
+        (job["project_id"], Jsonb({"job_id": job["job_id"], "kind": job["kind"], "spec": job["spec"],
+                                   "planned_at": planned.isoformat(), "manual": manual}),
+         mutex_key, int(job["spec"].get("retries", 1)) + 1))
+
+
 async def notify(c, project_id: str, role: str, text: str, *, task_id=None, chat: dict | None = None,
                  **body: Any):
     """Queue an outbound message for the gateway; extra body fields (e.g. link_message) travel with it."""
@@ -205,6 +215,8 @@ async def on_result(c, run: dict[str, Any], result: dict[str, Any]) -> None:
         return await _consult_result(c, run, result)
     if run["run_type"] == "triage":
         return await _triage_result(c, run, result)
+    if run["run_type"] == "job":
+        return await _job_result(c, run, result)
     task = await load_task(c, run["task_id"])
     if run["purpose"] == "review_input":
         return await _review_input_result(c, task, run, result)
@@ -522,8 +534,36 @@ async def _route(c, source: str, message: dict[str, Any], route: dict[str, Any])
     return note
 
 
+async def _job_result(c, run, result) -> None:
+    """A scheduled job finished (ROUND3 S3): record it; post an agent job's result; say so when it recovered."""
+    job_id, spec = run["input"]["job_id"], run["input"]["spec"]
+    job = await one(c, "SELECT failures FROM core.jobs WHERE project_id=%s AND job_id=%s", (run["project_id"], job_id))
+    await c.execute("""UPDATE core.jobs SET last_at=now(), last_status='succeeded', last_message=%s, failures=0
+                       WHERE project_id=%s AND job_id=%s""",
+                    (str(result.get("summary") or "")[:500], run["project_id"], job_id))
+    if job and job["failures"] and spec.get("notify", "supervisor") != "none":
+        await notify(c, run["project_id"], spec.get("notify", "supervisor"), f"✅ 作业 {job_id} 已恢复正常。")
+    post = spec.get("post_result")
+    if spec.get("type") == "agent" and post in ("pm", "supervisor") and result.get("summary"):
+        await notify(c, run["project_id"], post, f"📋 {job_id}：{str(result['summary'])[:1800]}")
+
+
+async def _job_exhausted(c, run) -> None:
+    job_id, spec = run["input"]["job_id"], run["input"]["spec"]
+    reason = str((run.get("error") or {}).get("message", ""))[:300]
+    await c.execute("""UPDATE core.jobs SET last_at=now(), last_status='failed', last_message=%s, failures=failures+1
+                       WHERE project_id=%s AND job_id=%s""", (reason, run["project_id"], job_id))
+    await event(c, run["project_id"], "job_failed", run_id=run["run_id"], job_id=job_id, error=reason)
+    if spec.get("notify", "supervisor") != "none":
+        await notify(c, run["project_id"], spec.get("notify", "supervisor"),
+                     f"⚠ 作业 {job_id} 运行失败（已尝试 {run['attempt']} 次）：{reason}\n"
+                     f"日志在 runs/jobs/{job_id}/；可发送 /jobs run {job_id} 重试，或 /jobs pause {job_id} 暂停。")
+
+
 async def on_exhausted(c, run: dict[str, Any]) -> None:
     """A run failed after all retries: give the user a way forward instead of getting stuck."""
+    if run["run_type"] == "job":
+        return await _job_exhausted(c, run)
     if run["purpose"] in ("review_input", "consult") or run["run_type"] == "triage":
         await event(c, run["project_id"], "side_run_failed", task_id=run["task_id"], run_id=run["run_id"])
         reason = str((run.get("error") or {}).get("message", ""))[:200]

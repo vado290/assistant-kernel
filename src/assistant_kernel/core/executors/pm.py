@@ -24,6 +24,7 @@ QUICK_NOTES = {   # process facts for the quick track (R2.3); Kernel states them
 MAX_SUBAGENTS = 3
 MAX_DELEGATIONS = 10
 BRIEF_STAGES = {"requirements", "design", "evolution"}   # where the archived industry brief is worth its tokens
+RUNTIME_STAGES = {"design", "build", "review"}            # where the runtime manifest contract is needed
 RESUMED_NOTE = ("（同一会话的续轮：章程、角色要求、技能和文档中与上一轮相同的部分不再重复发送，下面只有变化的部分；"
                 "需要文档原文时调用 read_task_document，需要完整的任务记录时读 {state}。）")
 OUTPUT_REMINDER = "输出要求与上一轮相同：最后一条消息只输出那一个 JSON 对象。"
@@ -90,6 +91,8 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
         *([("digest", drafts.text_sha(digest), digest)] if digest else []),
         *([("bootstrap", drafts.text_sha(creation := prompt_text("pm-bootstrap")), creation)]
           if task["kind"] == "bootstrap" else []),
+        *([("runtime", drafts.text_sha(manifest := prompt_text("runtime-manifest")), manifest)]
+          if matched in RUNTIME_STAGES else []),
     ]
     documents = await asyncio.to_thread(document_sections, settings, task)
     output = prompt_text("pm-output")

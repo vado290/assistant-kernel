@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
 from assistant_kernel.core.kernel import CONTROL_RUNS, Kernel, LeaseLost
+from assistant_kernel.core import jobs
 from assistant_kernel.core.vault_sync import sync_vaults
 
 log = logging.getLogger(__name__)
@@ -35,7 +36,7 @@ class Dispatcher:
                  services: dict[str, Any] | None = None, worker_id: str | None = None,
                  lease_seconds: int = 900, poll_seconds: float = 1.0,
                  recover_every_seconds: float = 30.0, model_cap: int | None = None,
-                 weekly_evolution: bool = False):
+                 weekly_evolution: bool = False, run_jobs: bool = False):
         self.kernel = kernel
         self.executors = executors
         self.services = services or {}
@@ -45,6 +46,7 @@ class Dispatcher:
         self.recover_every_seconds = recover_every_seconds
         self.model_cap = model_cap                  # optional resource valve, off by default
         self.weekly_evolution = weekly_evolution    # only the production dispatcher schedules reviews
+        self.run_jobs = run_jobs                    # ... and owns the project runtime (jobs, supervisord services)
         self.inflight: dict[str, tuple[dict[str, Any], asyncio.Task]] = {}
 
     def _claimable_types(self) -> tuple[str, ...]:
@@ -123,6 +125,10 @@ class Dispatcher:
                         await self.kernel.schedule_evolution()
                     if "settings" in self.services:
                         await sync_vaults(self.kernel, self.services["settings"])
+                    if self.run_jobs:
+                        await jobs.sync_runtime(self.kernel, self.services["settings"])
+                        await jobs.schedule_jobs(self.kernel)
+                        await jobs.check_services(self.kernel)
                     next_recovery = loop.time() + self.recover_every_seconds
                 started = await self.claim_and_start()
             except Exception:

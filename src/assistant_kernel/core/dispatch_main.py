@@ -21,7 +21,8 @@ async def _serve() -> None:
                             services={"settings": settings,
                                       "harness": CodexCliHarness(ProjectRuntimeManager(settings.data_root))},
                             model_cap=int(cap) if cap else None,
-                            weekly_evolution=os.environ.get("CORE_WEEKLY_EVOLUTION", "1") != "0")
+                            weekly_evolution=os.environ.get("CORE_WEEKLY_EVOLUTION", "1") != "0",
+                            run_jobs=os.environ.get("CORE_RUN_JOBS", "1") != "0")
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):

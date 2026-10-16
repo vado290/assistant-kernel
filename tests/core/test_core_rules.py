@@ -12,6 +12,7 @@ OWNERS = {
     "core.tasks": {"core/machine.py"},
     "core.interactions": {"core/cards.py"},
     "core.runs": {"core/kernel.py", "core/machine.py"},
+    "core.jobs": {"core/jobs.py", "core/machine.py"},   # ROUND3 S3: manifest sync and job results
 }
 
 

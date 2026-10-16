@@ -16,7 +16,7 @@ from assistant_kernel.core.db import Database, all_rows, event, lock_project, on
 EVOLUTION_GOAL = "周度复盘：根据最近的运行记录提出改进建议"
 EVOLUTION_TZ = ZoneInfo("Asia/Shanghai")
 
-CONTROL_RUNS = ("pm_turn", "supervisor", "validation", "publish", "bootstrap", "triage")
+CONTROL_RUNS = ("pm_turn", "supervisor", "validation", "publish", "bootstrap", "triage", "job")
 
 
 class LeaseLost(Exception):
@@ -208,9 +208,14 @@ class Kernel:
                                                  THEN r.result->'delegations' ELSE '[]'::jsonb END) d
                 WHERE r.project_id=%s AND r.run_type='pm_turn' AND r.created_at > now() - %s::interval
                 GROUP BY 1 ORDER BY 2 DESC""", (project_id, since))
+            job_runs = await all_rows(c, """
+                SELECT input->>'job_id' AS job_id, count(*) FILTER (WHERE status='succeeded') AS ok,
+                       count(*) FILTER (WHERE status='failed') AS failed, max(error->>'message') AS example
+                FROM core.runs WHERE project_id=%s AND run_type='job' AND created_at > now() - %s::interval
+                GROUP BY 1 ORDER BY 1""", (project_id, since))
         return {"days": days, "tasks": tasks, "card_actions": [a["payload"] for a in actions],
                 "failures": failures, "event_counts": counts, "user_messages": inbound,
-                "delegations": [(d["name"] or "（未命名）", d["n"]) for d in delegated]}
+                "delegations": [(d["name"] or "（未命名）", d["n"]) for d in delegated], "jobs": job_runs}
 
     async def active_projects(self) -> list[str]:
         async with self.db.tx() as c:

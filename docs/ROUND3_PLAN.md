@@ -111,7 +111,7 @@
 
 ## 6. S3 通用运行时（定时作业与长驻服务）
 
-### 6.1 唯一来源：`runtime/manifest.yaml`（格式 `runtime-manifest.v1`）
+### 6.1 唯一来源：`jobs.yaml`（格式 `runtime-manifest.v1`）
 格式只在 Kernel 中定义一次（代码校验 + 合同说明），技能只引用。时间规则与 `schedule_time.py` 的校验一致：
 `{kind: once, at}`、`{kind: interval, anchor, seconds}`、`{kind: cron, expression}`，加 IANA 时区（默认 Asia/Shanghai）。
 
@@ -139,7 +139,7 @@ services:
 |---|---|---|
 | 需求 | 需求文档写"运行要求"：频率、失败通知、能否补跑 | PM |
 | 设计 | "运行方式"一节写作业表和服务表，字段与 manifest 一一对应 | PM |
-| 实施 | 候选文件 `runtime/manifest.yaml` 加脚本、agent 角色和技能、测试 | PM |
+| 实施 | 候选文件 `jobs.yaml` 加脚本、agent 角色和技能、测试 | PM |
 | 验证 | 字段齐全、时间规则合法、脚本和 agent 文件存在、ID 唯一 | Kernel |
 | 发布批准 | 批准发布即批准登记 | 用户 |
 | 登记 | 发布后同步到 `core.jobs`（新增启用、修改更新、删除退役）；服务生成 supervisord 程序配置并 `update`（只影响该程序） | Kernel |
@@ -151,11 +151,39 @@ services:
 - 不在 AI 容器内的现有 docker-compose 服务（equity-volume-alert 等）不在本期范围。
 - 配套：按 manifest 重写 `assistant-workflow-design`、`assistant-agent-design`；实施技能要求交付清单包含 manifest、测试和回退方式。
 
+**S3 完成记录（2026-10-16，已部署 0.39.1，迁移 0006）**：
+- 代码：
+  - `core/runtime.py`：`jobs.yaml` 的格式校验（作业 script / agent / service_restart，服务及其定期重启；时间规则复用
+    `schedule_time.py`）和 supervisord 控制（只写或删 `proj-<项目>-<服务>` 程序文件，然后只对该程序执行 `update`；代码中拒绝
+    `reload`、`shutdown` 和 `all`）；
+  - `core/jobs.py`：发布后的 `jobs.yaml` 同步到 `core.jobs`（新增、修改、退役，文件有误时在 Supervisor 频道提醒一次且不做任何改动）、
+    到期作业排队（错过的时间点只跑一次；上一次未结束则跳过并记事件）、`/jobs` 的查看 / 暂停 / 恢复 / 立即运行、服务健康检查
+    （离开 RUNNING 和恢复时各提醒一次）；
+  - 状态机：作业运行的入队（`machine.enqueue_job`，遵守"只有 machine/kernel 写 core.runs"的原则）、成功记录、agent 作业结果发到频道、
+    重试用尽后告警；
+  - 执行器 `executors/job.py`：脚本在项目目录运行，环境只有 PATH、HOME、TZ 和作业信息，拿不到 Kernel 的数据库和密钥，超时整组杀掉，
+    日志在 `runs/jobs/<id>/`；agent 作业加载项目内 `agents/<名称>/` 和 load.roles 含该名称的技能，只读运行一轮；
+  - 验证执行器在发布前检查候选 `jobs.yaml`（入口文件按"本次交付 + 现有文件"判断）；复盘材料加入作业成功和失败次数；
+  - 只有生产 dispatcher 运行这一切（`run_jobs=True`，`CORE_RUN_JOBS=0` 可关闭）；测试环境 dispatcher 已显式关闭。
+- 合同 `runtime-manifest.md`（设计、实施、Review 阶段注入 PM）；技能：workflow-design、agent-design 重写（2.0.1），
+  solution-design、implementation、task-continuity（设计文档第 9 节"运行方式"）、requirements（"运行要求"）、operation 更新；
+  三个项目的副本已更新。
+- 测试：全部 179 项通过（新增 `tests/core/test_runtime.py` 8 项）。
+- 真实环境验证（kernel-v12-validation，直接写入 `jobs.yaml`，未经任务流程）：
+  - 每分钟一次的脚本作业按时运行，环境中没有数据库变量；
+  - 服务注册为 `proj-kernel-v12-validation-heartbeat` 并处于 RUNNING；
+  - docling、kernel 进程不受影响；
+  - 删除 `jobs.yaml` 后作业和服务都已退役，程序被移除；
+  - 两条运行时通知都送达了 Discord；
+  - 测试文件已清理。
+- 未覆盖：一个真实任务从需求到发布 `jobs.yaml` 的完整流程（技能和合同已就绪，等真实需求时验证）；agent 作业只有单元测试，没有真实模型运行。
+
 ## 7. 修订记录
 
 | 日期 | 原结论 | 修订 | 原因 |
 |---|---|---|---|
 | 10-16 | S2 中 assistant-solution-design 增加"运行方式"一节 | 移到 S3，与 `runtime-manifest.v1` 一起定义 | 运行时上线前写进技能，PM 会产出没有组件读取的声明 |
+| 10-16 | 运行声明放在 `runtime/manifest.yaml` | 放在项目根目录的 `jobs.yaml` | vault 的 `runtime/` 目录存放 Kernel 内部数据（Codex 登录、凭据、快照），目录树工具也排除它；与 `/jobs` 命令同名，便于记忆 |
 | 10-16 | R3 章程使用新文档类型 `project_charter` | 章程就是创建项目任务的 task_contract | 复用草稿编辑和"批准绑定 sha"的机制，代码更少；格式差异由合同 `pm-bootstrap.md` 规定 |
 | 10-16 | 新项目可选 git_delivery / git-repo | R4a 上线前只接受 vault-files | 冒烟中 PM 选了尚未实现的代码交付，创建出来会名不副实 |
 | 10-16 | 会话轮换按上下文占比（60%）判断 | 按会话已运行的回合数（8 轮） | Codex 报告的 input_tokens 是一轮内多次请求的累计值，不等于上下文长度；自动压缩继续兜底防止超限 |

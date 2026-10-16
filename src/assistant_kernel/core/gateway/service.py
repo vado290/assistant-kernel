@@ -41,8 +41,10 @@ class GatewayService:
             return None
         project_id, role = route
         command = text.strip().split()
-        if command[0] in ("/status", "/pending", "/cancel", "/evolve"):     # text commands (shared-bot mode)
-            if command[0] == "/evolve":
+        if command[0] in ("/status", "/pending", "/cancel", "/evolve", "/jobs"):     # text commands (shared-bot mode)
+            if command[0] == "/jobs":
+                reply = await self.jobs_command(project_id, command[1:])
+            elif command[0] == "/evolve":
                 await self.kernel.start_evolution(project_id, idempotency_key=f"evolution:{project_id}:msg:{message_id}")
                 reply = "已安排一次复盘：PM 会回顾最近的运行记录并提出改进建议，结果在 Supervisor 频道的卡片里由你决定。"
             elif command[0] == "/status":
@@ -216,6 +218,23 @@ class GatewayService:
                 await self.kernel.set_card_display(card["interaction_id"], display)
 
     # ------------------------------------------------------------ slash commands
+
+    async def jobs_command(self, project_id: str, args: list[str]) -> str:
+        """/jobs · /jobs pause <id> · /jobs resume <id> · /jobs run <id> (ROUND3 S3)."""
+        from assistant_kernel.core import jobs
+        if not args:
+            return jobs.render_jobs(await jobs.list_jobs(self.kernel, project_id))
+        if len(args) != 2 or args[0] not in ("pause", "resume", "run"):
+            return "用法：/jobs · /jobs pause <id> · /jobs resume <id> · /jobs run <id>"
+        action, job_id = args
+        if action == "run":
+            run = await jobs.run_now(self.kernel, project_id, job_id)
+            return (f"已安排立即运行作业 {job_id}（不影响下次定时）；失败会在 Supervisor 频道提醒。" if run
+                    else f"没有找到作业 {job_id}。")
+        job = await jobs.set_status(self.kernel, project_id, job_id, "paused" if action == "pause" else "enabled")
+        if job is None:
+            return f"没有找到作业 {job_id}（服务不能暂停，只能通过修改 jobs.yaml 停用）。"
+        return f"作业 {job_id} 已暂停。" if action == "pause" else f"作业 {job_id} 已恢复。"
 
     async def status_text(self, channel_id: str) -> str:
         route = self.config.route(channel_id)

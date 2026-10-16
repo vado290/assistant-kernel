@@ -1,40 +1,39 @@
 ---
 name: assistant-workflow-design
-description: 设计或审查由Agent、MCP、Python、Service和人工门禁组成的Project Workflow；仅在任务涉及多节点编排或常驻服务时使用。
+description: 设计会自动运行的产物：定时脚本、产物内的 agent、常驻服务怎样拆分、怎样声明到 jobs.yaml、怎样保证可重复运行和故障恢复；产物需要定时或长期运行时使用。
 metadata:
-  version: "1.2.0"
+  version: "2.0.1"
   load: {roles: [pm], stages: [design, build], on_demand: true}
   changelog:
-    - "2026-10-16 改为按需读取（只在提示中列出名称和用途）；内容尚未按核心 v6 重写，其中的旧流程用语和输出字段一律以 assistant-project-agent 和输出要求为准"
+    - "2.0.1 2026-10-16 运行声明文件改为项目根目录的 jobs.yaml（vault 的 runtime/ 目录存放 Kernel 内部数据）"
+    - "2.0.0 2026-10-16 按核心 v6 和通用运行时（ROUND3 S3）重写：运行方式一律声明在 jobs.yaml，发布即登记"
 ---
 
-# Workflow与Service设计
+# 运行方式设计
 
-## 任务目标
+## 先选最简单的运行方式
+| 需求 | 用什么 | 说明 |
+|---|---|---|
+| 确定性的计算、汇总、转换、拉取数据 | **script 作业** | 首选。便宜、可测试、结果稳定 |
+| 需要理解、判断、写分析或建议 | **agent 作业** | 每次运行一轮模型，只读；结果发到频道 |
+| 持续监听、长连接、高频采集 | **service** | supervisord 托管、崩溃自动重启；可加定期重启 |
+| 一次性或人工触发 | 不登记 | 由任务完成，或用户用 `/jobs run` 手动运行已登记的作业 |
 
-把Project的长期业务过程分解为职责单一、输入输出明确、可独立调度和恢复的节点，并选择普通Python、Agent或必要时LangGraph作为最小合适编排方式。Workflow协调节点，Kernel保存业务Run和批准事实，不能出现多个状态所有者。
+能用脚本就不用 agent；能定时就不用常驻服务。一条流水线可以拆成几个作业：脚本先准备数据，agent 再基于数据写分析。
 
-## 节点类型
+## 设计文档"运行方式"一节要写清
+对每个作业或服务写一行，字段与 `jobs.yaml` 一一对应：id · 类型 · 入口 · 时间规则（含时区）· 超时 · 重试 · 告警频道；
+agent 作业再写 prompt 要点和结果发到哪里；服务写启动命令和是否定期重启。并说明：
+- **输入输出**：读哪些数据（项目内路径或外部接口）、产出写到哪里（项目内路径）、由谁看。
+- **可重复运行**：同一时间点被重跑不会重复发送、重复记账（例如先检查当天结果是否已存在）。
+- **增量**：周期作业从上次成功的边界继续，不每次全量重算；边界存在项目文件里。
+- **失败时**：重试几次、失败告警发给谁、人工如何补救（`/jobs run <id>`）、会不会留下半成品需要清理。
+- **配置和凭据**：脚本拿不到 Kernel 的数据库和密钥；外部服务的凭据怎么提供要在设计中写明，请用户确认。
 
-- Agent Node：研究、语义判断、综合和交互。
-- MCP Tool Node：实时查询或受控外部动作。
-- Python Node：确定性计算、转换、校验和批处理。
-- Service/Event Node：长连接、持续监听和高频采集。
-- Human Gate：业务批准或关键选择。
-- Validation Node：确定性验证，不是LLM Agent。
+## 产物内的 agent
+需要 agent 作业时，按 assistant-agent-design 设计它的 `agents/<名称>/config.yaml`、`role.md` 和专属技能。
 
-每个节点定义ID、类型、目标Agent/脚本/Tool、输入Schema、输出Schema、Artifact路径、前置依赖、timeout、retry、幂等键、失败去向和验收条件。子Agent的新Run继承当前Project文件Grant；`direct`目录写入立即生效，`gated`目标仍走candidate/Publisher。失败或取消后可能已有文件变化，必须先对账再重试。
-
-## 编排选择
-
-固定顺序、少量分支和普通人工等待优先使用持久化Python阶段任务；渠道和通知由Kernel现有入口和Outbox处理，业务定时由 Kernel Schedule 统一登记和触发。只有动态分支、并行汇合、循环返工和图状态恢复确实带来价值时才使用LangGraph。不能让Kernel和LangGraph同时拥有同一业务状态。
-
-## 增量与恢复
-
-周期节点读取watermark或上次成功边界，不从头执行整个Workflow。崩溃后根据Run、Artifact哈希和外部回执对账，不能盲目重放副作用。长驻Service只负责事件和确定性规则，复杂判断通过创建Agent Run完成。
-
-Service必须说明进程所有者、单实例或并发策略、健康检查、启动停止、重连、背压、凭据来源和怎样创建幂等Agent Run；不能把只存在于进程内存的状态当作可恢复业务事实。
-
-## 验证
-
-Implementation完成变更节点及受影响路径的测试。Validation Runner按 `validation-report.v2`核查必需的结构、组件、合同或短路径；完整Workflow耗时数小时或数天时，可以按批准计划延后E2E并建立后续验收Run。Review检查覆盖范围、deferred风险，以及正常、空输入、部分失败、重试、恢复、并发、人工拒绝和外部系统不可用场景。
+## 验证与 Review
+- 实施阶段：每个脚本至少真实运行一次（用测试数据或"只读/演练"参数），把命令和输出写进实施报告。
+- Kernel 在验证阶段检查 manifest 的格式、时间规则和入口文件是否存在。
+- Review 检查：可重复运行、失败处理、告警去向、凭据不入库、时间规则与需求一致。

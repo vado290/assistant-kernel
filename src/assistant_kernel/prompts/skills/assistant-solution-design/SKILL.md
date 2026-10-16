@@ -2,9 +2,11 @@
 name: assistant-solution-design
 description: 设计阶段：依据已批准的需求文档，比较可行方案，写出能直接指导实施和测试的设计文档。
 metadata:
-  version: "2.0.0"
+  version: "2.1.1"
   load: {roles: [pm], stages: [design]}
   changelog:
+    - "2.1.1 2026-10-16 运行声明文件改为项目根目录的 jobs.yaml（vault 的 runtime/ 目录存放 Kernel 内部数据）"
+    - "2.1.0 2026-10-16 设计文档增加'运行方式'，与通用运行时的 manifest 对应（ROUND3 S3）"
     - "2.0.0 2026-10-16 按核心 v6 就地重写（旧版使用已废弃的协议用语和输出字段）：由 pm-design.md 改写，增加需求覆盖和可并行子任务"
 ---
 
@@ -20,6 +22,8 @@ metadata:
    - 第 4 节文件变更清单：写目标路径和操作，实施阶段将严格按此执行；
    - 第 5 节测试方案：每个 A 写清怎么验证；
    - 第 8 节可并行的子任务：写集互不重叠的部分，供实施阶段委派。
+   - 第 9 节运行方式：产物需要定时运行、产物内有 agent、或需要常驻服务时，读 assistant-workflow-design 再写；
+     作业和服务最终声明在 jobs.yaml（格式见 Kernel 给出的说明），发布即登记。
 6. 完成后 outcome = completed，document.kind = solution_design。本阶段不写候选文件。
 
 ## 自检清单

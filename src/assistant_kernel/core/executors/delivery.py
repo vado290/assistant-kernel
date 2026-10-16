@@ -42,8 +42,38 @@ async def execute_validation(run: dict[str, Any], ctx) -> dict[str, Any]:
         ValidationRunner(settings).validate, project_id, task_id, _validation_policy(settings, project_id),
         {"bundle_uri": bundle["bundle_uri"], "bundle_file_sha256": bundle["bundle_file_sha256"]})
     issues = "\n".join(f"- {i.get('code')}: {i.get('message')}" for i in result.get("issues") or [])
-    return {"passed": result.get("release_gate") == "pass",
-            "report": (result.get("summary") or "") + (f"\n\n{issues}" if issues else "")}
+    manifest_problem = await asyncio.to_thread(check_runtime_manifest, settings, project_id, task_id)
+    if manifest_problem:
+        issues += f"\n- runtime_manifest: {manifest_problem}"
+    return {"passed": result.get("release_gate") == "pass" and not manifest_problem,
+            "report": (result.get("summary") or "") + (f"\n\n{issues.strip()}" if issues.strip() else "")}
+
+
+def check_runtime_manifest(settings, project_id: str, task_id: str) -> str | None:
+    """A jobs.yaml about to be published must be valid against the files the project will have."""
+    import json
+    from assistant_kernel.core import runtime
+    from assistant_kernel.storage import ProjectRuntimeManager
+    vault = ProjectRuntimeManager(settings.data_root).ensure(project_id).vault_root
+    candidate = vault / "runs" / task_id / "candidate"
+    listing = candidate / "manifest.json"
+    if not listing.is_file():
+        return None
+    prefix = "workspace://project/"
+    files = {f["target_uri"][len(prefix):]: f["operation"]
+             for f in json.loads(listing.read_text("utf-8")).get("files") or [] if f["target_uri"].startswith(prefix)}
+    if files.get(runtime.MANIFEST) not in ("create", "update"):
+        return None
+
+    def exists(path: str) -> bool:
+        operation = files.get(path)
+        return operation in ("create", "update") or (operation is None and (vault / path).exists())
+
+    try:
+        runtime.parse_manifest((candidate / "project" / runtime.MANIFEST).read_text("utf-8"), exists)
+    except runtime.ManifestError as exc:
+        return str(exc)
+    return None
 
 
 async def execute_publish(run: dict[str, Any], ctx) -> dict[str, Any]:

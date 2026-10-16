@@ -1,42 +1,49 @@
 ---
 name: assistant-agent-design
-description: 设计或审查Project的PM五阶段和Supervisor，包括Role、Config、Scope、Skill、MCP、Trigger与I/O；仅在任务涉及Agent结构时使用。
+description: 设计产物内部的 agent（由 jobs.yaml 的 agent 作业运行）：目录结构、config.yaml、role.md 和专属技能怎么写；修改本项目 PM/Supervisor 的角色要点时也参考。
 metadata:
-  version: "1.2.0"
+  version: "2.0.1"
   load: {roles: [pm], stages: [design, build], on_demand: true}
   changelog:
-    - "2026-10-16 改为按需读取（只在提示中列出名称和用途）；内容尚未按核心 v6 重写，其中的旧流程用语和输出字段一律以 assistant-project-agent 和输出要求为准"
+    - "2.0.1 2026-10-16 运行声明文件改为项目根目录的 jobs.yaml（vault 的 runtime/ 目录存放 Kernel 内部数据）"
+    - "2.0.0 2026-10-16 按核心 v6 和通用运行时（ROUND3 S3）重写：产物内 agent 由 agent 作业定时运行，只读，结果发到频道"
 ---
 
-# Agent设计
+# 产物内 agent 的设计
 
-## 任务目标
+## agent 是什么
+一份执行配置，不是常驻进程：定时到了，Kernel 用它的角色、技能和作业的 prompt 运行一轮模型（只读，不能改项目文件），
+最后一条消息就是结果，按作业的 `post_result` 发到频道。需要写文件的步骤交给脚本作业。
 
-为一个职责清楚的Agent生成可启动、可约束、可审查的Role和Config，使Kernel能够在每次Run中注入准确的模型参数、Project Scope、核心及专项Skill、MCP Tools、触发方式、输入输出和失败策略。Agent是执行配置，不是常驻进程。
+## 目录与文件
+```
+agents/<名称>/config.yaml     # 模型设置
+agents/<名称>/role.md         # 角色：身份、职责、边界、完成标准（几段即可）
+.agents/skills/<技能>/SKILL.md # 专属技能：metadata.load.roles 写 [<名称>]，Kernel 才会给它加载
+```
 
-## 设计边界
+config.yaml 最小写法：
+```yaml
+schema_version: agent-config.v2
+agent_id: analyst
+kind: worker
+status: active
+role: role.md
+harness:
+  provider: openai
+  reasoning_effort: medium
+  timeout_seconds: 900
+tools: [get_authorized_workspace, list_authorized_tree, read_authorized_file, vault_read_text]
+```
+只列它需要的只读工具。
 
-- Role只写身份、责任、权限边界、禁止事项和完成定义。
-- Skill写完成该类任务的方法、判断、提问和工具使用。
-- Config是机器执行的事实，不得依赖Role文字授予权限。
-- 长连接、持续监听、频繁轮询和硬规则属于Service；Service在需要推理时创建Agent Run。
-- PM 使用公共 Role 与五个显式阶段 Profile；每个 Profile 声明 required/available Skills、
-  MCP Server/tools 和输出产物。Profile 只能选择已有 Agent 能力上限内的集合。
-- 原生子Agent使用临时 Delegation 合同，不注册长期业务身份、不交互用户、不创建第二套
-  业务状态权威；Kernel child Run 与 Operator Agent 已退役。
+## 角色与技能的分工
+- **role.md** 写"我是谁、为谁服务、负责什么、不负责什么、结果怎样算好"。
+- **技能**写"怎么做"：读哪些数据、分析步骤、判断标准、输出格式（例如"三条发现，每条附数据和建议"）。
+- 作业的 **prompt** 只写这一次要做的事（例如"读取本周日报数据"），不重复角色和技能。
 
-## Config必填项
-
-使用 `agent-config.v2`，至少定义：`agent_id`、`agent_key`、`kind`、`status`、Role路径、核心与可选Skill、Scope profile、MCP Server及enabled tools、`entrypoints`、`triggers`、input/output Schema，以及 `harness` 中的provider、model、reasoning、timeout、retry和concurrency。Project文件权限由Kernel按Project Grant编译并固定到Run，不在每个Agent Config重复授权；没有真实运行支持的字段不得只写在Role中冒充已生效配置。
-
-默认只能访问当前Project业务资料及已激活的Project文件Grant；所有Project Agent继承同一文件范围。`direct`工作目录可读写执行，`gated`正式目标使用candidate/Publisher；运行历史、缓存、凭据、其他Project和外部动作分别受限。
-
-## 触发与常驻
-
-Agent Config可以引用用户消息、Schedule、Workflow节点或Service事件，但自身不保存计时循环。每次触发创建独立Run，使用稳定幂等键。需要持续在线时创建Service配置，并明确它怎样触发Agent。
-
-Agent必须通过Project Agent Registry动态发现。飞书直达和PM移交分别由 `entrypoints.feishu_slash` 与 `entrypoints.pm_handoff`控制；Supervisor的直接入口按已有Registry配置；Kernel child Run与Operator Agent已退役。Role、核心Skill、身份、Work Mode Bundle或关键Scope变化必须考虑Session compatibility和安全rotation。
-
-## 交付与审查
-
-Implementation必须同时生成Role、Config、所需Skill/MCP绑定和I/O Schema；Review检查权限是否足够完成任务但不超过身份所需，并验证Registry、trigger和entrypoint确实能创建该Agent Run。每次Run最终由Kernel解析为不可变 `ResolvedExecutionPlan`，Agent不得自行扩大其中的资源绑定。
+## 检查清单
+- [ ] 用户最终在频道看到的结果格式在技能里写清楚了，长度合适
+- [ ] 数据不足或读取失败时，agent 会如实说明而不是编造
+- [ ] 没有需要写文件的步骤（有的话改成脚本作业）
+- [ ] 技能的 load.roles 包含这个 agent 的名称
