@@ -95,6 +95,12 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
         ctx, run, config, prompt, task_id=task_id, stage=stage, session_id=session_id,
         tools=tools, sandbox="danger-full-access" if build else "read-only", candidates=build,
         subagents=MAX_SUBAGENTS if matched in SUBAGENT_STAGES else 0)
+    misfit = outcome_misfit(parsed, stage)
+    if misfit and model_result.physical_session_id:   # tell the PM once, in the same session, instead of failing blind
+        parsed, model_result = await call_for_json(
+            ctx, run, config, misfit + OUTPUT_REMINDER, task_id=task_id, stage=stage,
+            session_id=model_result.physical_session_id, tools=tools,
+            sandbox="danger-full-access" if build else "read-only", candidates=build)
     if parsed is None:
         return {"outcome": "invalid_output", "raw": model_result.final_text[:2000]}
     result = {"outcome": parsed.get("outcome"), "summary": str(parsed.get("summary") or ""),
@@ -136,6 +142,16 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
             report["bundle_sha"] = (task["documents"].get("validation") or {}).get("bundle_sha")
         result["report"] = report
     return result
+
+
+def outcome_misfit(parsed: dict[str, Any] | None, stage: str) -> str:
+    """A correction for an outcome the state machine would reject in this stage ('' when it fits)."""
+    outcome = (parsed or {}).get("outcome")
+    if outcome == "ready_for_validation" and stage != "build":
+        return ("你的 outcome 是 ready_for_validation，但它只用于实施阶段（提交候选文件供 Kernel 验证）。"
+                f"当前是 {STAGE_NAMES.get(stage, stage)} 阶段：本阶段工作完成请用 completed，其余内容不变。"
+                "不要做任何新的工作，只重新输出那个 JSON 对象。")
+    return ""
 
 
 def save_notes(settings, project_id: str, task_id: str, run_id: str, current: dict[str, Any] | None):

@@ -10,7 +10,7 @@ from assistant_kernel.core.executors.state import render_state, state_path
 
 from .sim import next_step
 from .test_dispatch import settle
-from .test_pm_executor import ask_then_answer, dispatcher, editing  # noqa: F401  (dispatcher is a fixture)
+from .test_pm_executor import ask_then_answer, dispatcher, editing, start_requirements_turn  # noqa: F401
 
 NOTES = "## 当前理解\n用户要团队日报\n## 下一步\n问清发送时间"
 
@@ -58,3 +58,16 @@ def test_early_turns_shrink_to_one_line():
     text = render_state(task, {"turns": turns, "actions": []}, STAGE_NAMES)
     assert "回合 1（需求分析，10-16 09:00）：小结0" in text and "指令0" not in text
     assert "指令11" in text and "已完成 PM 回合：12" in text
+
+
+async def test_an_outcome_of_another_stage_is_corrected_in_the_same_session(kernel, sim, dispatcher,  # noqa: F811
+                                                                            fake_harness):
+    task_id = await start_requirements_turn(kernel, sim, dispatcher)
+    fake_harness.script("pm", {"outcome": "ready_for_validation", "summary": "需求已写好", "questions": [],
+                               "document": None},
+                        {"outcome": "completed", "summary": "需求已写好", "questions": [], "document": None})
+    dispatcher.scripts.add("supervisor:evaluate", next_step("requirements"))
+    await settle(dispatcher)
+    first, fix = fake_harness.calls[-2:]
+    assert "只用于实施阶段" in fix.prompt and fix.physical_session_id is not None
+    assert (await sim.task(task_id))["state"] == "awaiting_user"   # completed → Supervisor → card, not a failure

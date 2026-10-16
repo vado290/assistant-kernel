@@ -10,6 +10,8 @@
   "document": {"kind": "task_contract | solution_design | implementation_report | review_report | improvement_proposal", "verdict": "pass | changes"}
 }
 
+- outcome：本阶段工作完成用 completed（需求、设计、Review、运营和复盘都是如此，轻量流程也一样）；
+  ready_for_validation 只用于实施阶段，表示候选文件已写好、请 Kernel 验证。
 - questions 只在 outcome 为 needs_input 时填写，否则为 []；options 和 recommended 可省略。
 - **文档通过工具编辑，不放进 JSON**：本阶段的文档是一份草稿，先调用 get_authorized_workspace，再用
   read_task_document 读取，用 edit_task_document 修改：`edits` 是 `[{"old": 原文片段, "new": 新文字}]`，
