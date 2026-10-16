@@ -14,7 +14,8 @@ ACTION_STYLES = {"execute": "success", "approve": "success", "retry": "primary",
                  "published": "success", "stop": "danger", "reject": "danger", "failed": "danger"}
 DECISION_TITLES = {"release": "申请发布", "complete": "建议结束任务", "cancel": "建议取消任务",
                    "new_task": "建议新建任务", "run_failed": "执行失败",
-                   "reconcile": "发布结果需要核对", "create_project": "创建新项目",
+                   "reconcile": "发布结果需要核对", "create_project": "按章程创建新项目",
+                   "project_task": "开始创建项目",
                    "followups": "建议排队的新任务", "shared_update": "修改公共背景"}
 DONE_REPLIES = {"execute": "已确认，PM 将开始执行。", "approve": "已批准。", "reject": "已记录：不同意。",
                 "stop": "任务已停止。", "retry": "已安排重试。", "continue": "已继续。",
@@ -98,10 +99,13 @@ def render_item(item: dict[str, Any]) -> dict[str, Any]:
                      f"\n\n**修改后的内容**\n{data['content']}\n\n批准后 Kernel 写入，所有项目从下一轮起使用新内容。")
         spec = (content.get("data") or {}).get("spec")
         if spec:
-            profile = spec["business_profile"]
             body += (f"\n\n项目 ID：`{spec['project_id']}`\n名称：{spec['display_name']}\n用途：{spec['purpose']}\n"
-                     f"行业：{profile['industry']}\n组织：{profile['organization']}\n使用者：{profile['users']}\n"
-                     f"说明：{profile['notes']}\n\n批准后将创建项目目录、PM/Supervisor 配置和 Discord 频道。")
+                     f"能力：{'、'.join(spec.get('capabilities') or []) or '无'} · 交付方式：{spec.get('delivery')} · "
+                     f"共享级别：{spec.get('share_with_kernel')}\n章程全文见本任务的需求文档。\n\n"
+                     "批准即批准这份章程：Kernel 将按它创建项目目录、章程、PM/Supervisor 配置、技能和 Discord 频道。")
+        goal = (content.get("data") or {}).get("goal")
+        if content["decision"] == "project_task" and goal:
+            body += f"\n\n新任务：{goal}\n批准后先与你商定项目章程，章程批准后才会创建项目；当前任务随之结束。"
         text, attachment = _fit(body)
     return {"text": text, "buttons": buttons, "attachment": attachment}
 

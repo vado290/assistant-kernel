@@ -26,8 +26,9 @@ REASONS = {
     "validation_failed": "Kernel 验证未通过", "publish_failed": "发布失败",
     "release_rejected": "用户没有批准发布", "complete_rejected": "用户不同意结束任务",
     "cancel_rejected": "用户不同意取消任务",
-    "create_project_rejected": "用户没有批准你提出的项目规格", "bootstrap_failed": "创建项目失败",
+    "create_project_rejected": "用户没有批准按当前章程创建项目", "bootstrap_failed": "创建项目失败",
     "followups_rejected": "用户没有批准你提出的后续任务",
+    "project_task_rejected": "用户不同意开始创建项目的任务",
 }
 KIND_NAMES = {"delivery": "交付", "evolution": "周度复盘（自我进化）", "bootstrap": "创建项目"}
 TRACK_NAMES = {"full": "完整流程（需求→设计→实施→Review→发布）", "quick": "轻量流程（需求含简要方案→实施→发布）"}
@@ -123,6 +124,10 @@ async def execute_supervisor(run: dict[str, Any], ctx) -> dict[str, Any]:
             sections.append("## 项目名录（Kernel 汇总，各项目章程的用途、范围和路由信息）\n\n" + catalog)
     sections.append(prompt_text(PURPOSE_PROMPT[purpose]))
     if "project_management" in caps and purpose == "evaluate":
+        if task and task["kind"] == "bootstrap":   # a new project must not duplicate an existing one
+            catalog = await asyncio.to_thread(project_catalog, settings, await kernel.active_projects(),
+                                              exclude=project_id)
+            sections.append("## 项目名录（Kernel 汇总，各项目章程的用途、范围和路由信息）\n\n" + catalog)
         sections.append(prompt_text("supervisor-kernel"))
     if "shared_context" in caps and purpose == "consult":
         sections.append(prompt_text("supervisor-shared"))

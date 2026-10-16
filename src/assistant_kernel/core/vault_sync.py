@@ -102,7 +102,7 @@ async def _archive_backgrounds(kernel, settings) -> int:
             SELECT t.task_id, t.project_id, t.goal, t.documents->'task_contract' AS contract,
                    t.documents->'domain_brief' AS brief, m.user_id
             FROM core.tasks t LEFT JOIN core.messages m ON m.message_id = t.source_message_id
-            WHERE t.approvals ? 'requirements'
+            WHERE t.approvals ? 'requirements' AND t.kind <> 'bootstrap'   -- a charter goes to the new project instead
               AND t.documents->'task_contract'->>'sha256' = t.approvals->'requirements'->>'doc_sha'
               AND NOT EXISTS (SELECT 1 FROM core.task_events e WHERE e.task_id = t.task_id
                               AND e.kind = 'background_archived'

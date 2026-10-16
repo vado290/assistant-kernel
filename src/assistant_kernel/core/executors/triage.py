@@ -24,7 +24,7 @@ async def execute_triage(run: dict[str, Any], ctx) -> dict[str, Any]:
     sections.append("## 本项目对你的角色要求\n\n" + config.role_text)
     if config.skills_text:
         sections.append(config.skills_text)
-    if "routing" in caps:
+    if caps & {"routing", "project_management"}:
         catalog = await asyncio.to_thread(project_catalog, settings, await kernel.active_projects(), exclude=project_id)
         sections.append("## 项目名录（Kernel 汇总，各项目章程的用途、范围和路由信息）\n\n" + catalog)
     sections.append("## 最近的对话\n\n" + render_messages(await kernel.recent_messages(project_id)))
@@ -32,6 +32,8 @@ async def execute_triage(run: dict[str, Any], ctx) -> dict[str, Any]:
     sections.append(prompt_text("triage"))
     if "routing" in caps:
         sections.append(prompt_text("routing"))
+    if "project_management" in caps:
+        sections.append(prompt_text("triage-projects"))
     parsed, model_result = await call_for_json(
         ctx, run, config, "\n\n".join(sections), task_id=None, stage=None, session_id=None,
         tools=READ_ONLY_TOOLS, sandbox="read-only")

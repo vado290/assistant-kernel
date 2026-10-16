@@ -27,7 +27,38 @@ def fill(text: str, values: dict[str, str]) -> str:
     return text
 
 
+CHARTER_ONLY_IN_TASK = ("创建参数", "用户画像观察", "修订记录")   # sections of the draft that do not belong in the charter
+ROLE_SECTIONS = {"pm": "本项目对 PM 的特别要求", "supervisor": "本项目对 Supervisor 的特别要求"}
+
+
+def drop_section(markdown: str, title: str) -> str:
+    lines = markdown.splitlines()
+    bounds = skills.section_bounds(lines, title)
+    return markdown if bounds is None else "\n".join(lines[:bounds[0]] + lines[bounds[2]:])
+
+
+def render_charter(spec: dict[str, Any], draft: str, created: str, task_id: str) -> str:
+    """The new project's knowledge/charter.md from the approved charter draft of the creation task."""
+    body = draft
+    for title in CHARTER_ONLY_IN_TASK:
+        body = drop_section(body, title)
+    body = "\n".join(line for line in body.splitlines() if not line.startswith("# ")).strip()   # its own title goes
+    header = (f"# {spec['display_name']} · 项目章程\n\n> 项目 ID：`{spec['project_id']}` · 创建于 {created}（任务 {task_id[:8]}）。"
+              "PM 和 Supervisor 每一轮都会读本章程；第 1、5、7 节同时用于 kernel 的项目路由。\n"
+              "> 第 1–7 节通过任务修改；第 9 节由 Kernel 在需求文档获批时自动追加。\n\n")
+    text = header + body + "\n"
+    changes = skills.section_text(text, "变更记录")
+    text = skills.replace_section(text, "8 变更记录", (changes + f"\n- {created} 创建项目（章程经用户批准）").strip())
+    if not skills.section_bounds(text.splitlines(), "背景信息存档"):
+        text = skills.replace_section(text, "9 背景信息存档", "（需求文档获批时由 Kernel 追加）")
+    return text
+
+
 def write_project_files(settings, spec: dict[str, Any]) -> list[str]:
+    """Create the project's vault from the template and the approved charter. Repeatable: the vault is ours
+    (project.yaml is written first and marks it), and everything below is derived deterministically from `spec`."""
+    from assistant_kernel.core.executors.common import read_document
+    from assistant_kernel.core.vault_sync import append_profile, write_brief
     runtime = ProjectRuntimeManager(settings.data_root)
     vault = runtime.describe(spec["project_id"]).vault_root
     existing = vault / "project.yaml"
@@ -36,8 +67,10 @@ def write_project_files(settings, spec: dict[str, Any]) -> list[str]:
     if vault.exists() and not ours:
         raise PermissionError(f"a vault for {spec['project_id']} already exists and was not created by this bootstrap")
     runtime.ensure(spec["project_id"])
+    created = datetime.now(timezone.utc).date().isoformat()
     values = {"project_id": spec["project_id"], "display_name": spec["display_name"], "purpose": spec["purpose"],
-              "created_at": datetime.now(timezone.utc).date().isoformat(), **spec["business_profile"]}
+              "created_at": created, "industry": "（见章程）", "organization": "（见章程）", "users": "（见章程）",
+              "notes": "（见章程）"}
     written = []
     # project.yaml first: it marks the vault as ours, so an interrupted run can be repeated.
     for source in sorted((p for p in TEMPLATE.rglob("*") if p.is_file()), key=lambda p: p.name != "project.yaml"):
@@ -45,8 +78,33 @@ def write_project_files(settings, spec: dict[str, Any]) -> list[str]:
         if target.exists():
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(fill(source.read_text("utf-8"), values), "utf-8")
+        target.write_text(fill(source.read_text("utf-8"), values), "utf-8", newline="\n")
         written.append(target.relative_to(vault).as_posix())
+    config = yaml.safe_load(existing.read_text("utf-8")) or {}
+    config.update({key: spec[key] for key in ("capabilities", "delivery", "share_with_kernel") if key in spec})
+    existing.write_text(yaml.safe_dump(config, allow_unicode=True, sort_keys=False), "utf-8", newline="\n")
+    source = spec.get("source_project") or "kernel"   # the creation task's documents live in the creating project
+    charter_doc = spec.get("charter")
+    draft = read_document(settings, source, charter_doc) if charter_doc else ""
+    if draft:
+        task_id = str(spec.get("task_id") or "")
+        (vault / "knowledge" / "charter.md").write_text(render_charter(spec, draft, created, task_id), "utf-8",
+                                                        newline="\n")
+        observed = skills.section_text(draft, "用户画像观察")
+        if observed.strip() and observed.strip() not in ("无", "无。", "（无）"):
+            append_profile(vault / "knowledge" / "user-profile.md", spec.get("user_id") or "默认",
+                           f"profile:{charter_doc['sha256'][:12]}", f"{created} · 创建项目时的观察", observed)
+    for role, title in ROLE_SECTIONS.items():
+        note = spec.get(f"{role}_role")
+        path = vault / "agents" / role / "role.md"
+        if note and path.is_file():
+            path.write_text(skills.replace_section(path.read_text("utf-8"), title, note), "utf-8", newline="\n")
+    brief = spec.get("brief")
+    if brief:
+        research = read_document(settings, source, brief)
+        if research.strip():
+            write_brief(vault / "knowledge" / "domain-brief.md", f"brief:{brief['sha256'][:12]}",
+                        f"{created} · 创建项目时的调研", research)
     capabilities = skills.project_config(vault)["capabilities"]
     written += [f".agents/skills/{name}" for name in skills.install_templates(vault, capabilities)]
     return written

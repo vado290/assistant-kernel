@@ -88,3 +88,19 @@ async def test_brief_draft_profile_context_and_delegations(kernel, sim, dispatch
 def test_brief_is_editable_only_in_requirements():
     assert drafts.BRIEF in drafts.editable("requirements") and drafts.BRIEF not in drafts.editable("design")
     assert drafts.NOTES in drafts.editable("design")
+
+
+async def test_pm_executor_checks_the_charter_of_a_creation_task(kernel, sim, dispatcher, fake_harness,  # noqa: F811
+                                                                 kernel_settings):
+    from .test_bootstrap import CHARTER
+    task = await kernel.create_task("p1", goal="创建销售日报项目", origin="user", kind="bootstrap")
+    dispatcher.scripts.add("supervisor:evaluate", next_step("requirements", "商定章程"))
+    await settle(dispatcher)
+    await kernel.act("p1", (await sim.item("p1", task["task_id"]))["item_id"], "execute")
+    fake_harness.script("pm", editing(kernel_settings, {"outcome": "completed", "summary": "章程已写好", "questions": [],
+                                                        "document": {"kind": "task_contract"}}, content=CHARTER))
+    dispatcher.scripts.add("supervisor:evaluate", next_step("requirements"))
+    await settle(dispatcher)
+    assert "创建参数" in fake_harness.calls[-1].prompt and "Kernel 直接解析" in fake_harness.calls[-1].prompt
+    contract = (await sim.task(task["task_id"]))["documents"]["task_contract"]
+    assert contract["spec"]["project_id"] == "sales-report" and "spec_error" not in contract

@@ -22,20 +22,49 @@ CURSOR_RUN = {
 PROJECT_ID = re.compile(r"[a-z][a-z0-9-]{2,39}")
 
 
+CREATION_SECTION = "创建参数"      # contract (prompts/core/pm-bootstrap.md): the YAML block Kernel creates a project from
+PROJECT_CAPABILITIES = ("routing", "project_management", "shared_context")   # kernel_maintenance: kernel only
+DELIVERIES = ("vault-files",)   # git_delivery / git-repo come with R4a (code delivery); until then they would not work
+SHARE_LEVELS = ("metrics", "improvements", "full")
+
+
 def project_spec(spec: Any) -> dict[str, Any]:
-    """Validate and normalise a new-project spec proposed by the management Supervisor."""
+    """Validate and normalise the creation parameters of a new project (ROUND2 R3)."""
     if not isinstance(spec, dict):
-        raise ValueError("project spec must be an object")
+        raise ValueError("创建参数必须是一个 YAML 对象")
     project_id = str(spec.get("project_id") or "").strip()
     if not PROJECT_ID.fullmatch(project_id):
-        raise ValueError("project_id must be 3–40 lowercase letters, digits or '-', starting with a letter")
+        raise ValueError("project_id 必须是 3–40 个小写字母、数字或连字符，以字母开头")
     display_name, purpose = str(spec.get("display_name") or "").strip(), str(spec.get("purpose") or "").strip()
     if not display_name or not purpose:
-        raise ValueError("project spec needs display_name and purpose")
-    profile = spec.get("business_profile") if isinstance(spec.get("business_profile"), dict) else {}
+        raise ValueError("缺少 display_name 或 purpose")
+    capabilities = [str(c) for c in spec.get("capabilities") or []]
+    unknown = sorted(set(capabilities) - set(PROJECT_CAPABILITIES))
+    if unknown:
+        raise ValueError(f"未知或不允许的能力 {unknown}；可选：{', '.join(PROJECT_CAPABILITIES)}")
+    delivery = str(spec.get("delivery") or "vault-files")
+    share = str(spec.get("share_with_kernel") or "improvements")
+    if delivery not in DELIVERIES or share not in SHARE_LEVELS:
+        raise ValueError(f"delivery 只能是 {DELIVERIES}，share_with_kernel 只能是 {SHARE_LEVELS}")
     return {"project_id": project_id, "display_name": display_name[:80], "purpose": purpose[:500],
-            "business_profile": {k: str(profile.get(k) or "（未提供）")[:500]
-                                 for k in ("industry", "organization", "users", "notes")}}
+            "capabilities": sorted(set(capabilities)), "delivery": delivery, "share_with_kernel": share,
+            "pm_role": str(spec.get("pm_role") or "").strip()[:2000],
+            "supervisor_role": str(spec.get("supervisor_role") or "").strip()[:2000]}
+
+
+def charter_spec(markdown: str) -> dict[str, Any]:
+    """Creation parameters from a charter draft's "创建参数" section (a YAML block); raises ValueError."""
+    import yaml
+    from assistant_kernel.core.skills import section_text
+    block = section_text(markdown, CREATION_SECTION)
+    if not block:
+        raise ValueError(f"章程缺少'{CREATION_SECTION}'一节")
+    fenced = re.search(r"```(?:ya?ml)?\s*\n(.*?)```", block, re.S)
+    try:
+        data = yaml.safe_load(fenced.group(1) if fenced else block)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"'{CREATION_SECTION}'不是合法的 YAML：{exc}") from exc
+    return project_spec(data)
 
 INITIAL_STAGE = {"delivery": "requirements", "bootstrap": "requirements", "evolution": "operate"}
 
@@ -66,6 +95,8 @@ DOCUMENT_FOR_APPROVAL = {"requirements": "task_contract", "design": "solution_de
 
 
 def stage_moves(task: dict[str, Any]) -> set[str]:
+    if task.get("kind") == "bootstrap":   # a project-creation task only drafts its charter; approval creates the project
+        return {"requirements"} if task["stage"] == "requirements" else set()
     return (QUICK_MOVES if task.get("track") == "quick" else STAGE_MOVES).get(task["stage"], set())
 
 

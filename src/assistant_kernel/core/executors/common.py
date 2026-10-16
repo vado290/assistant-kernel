@@ -137,6 +137,10 @@ def document_sections(settings, task: dict[str, Any]) -> list[tuple[str, str, st
         document = task["documents"].get(kind)
         if document:
             body = read_document(settings, task["project_id"], document)
+            if document.get("spec_error"):
+                body += f"\n\n> Kernel 检查：创建参数有误，无法创建项目：{document['spec_error']}"
+            elif document.get("spec"):
+                body += "\n\n> Kernel 检查：创建参数有效，可以提议创建项目。"
             sections.append((kind, document["sha256"], f"### {title}（sha {document['sha256'][:12]}）\n\n{body}"))
     validation = task["documents"].get("validation")
     if validation:   # written by Kernel, it has no revision sha of its own

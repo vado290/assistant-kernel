@@ -11,7 +11,7 @@ harness:
   provider: openai
   reasoning_effort: medium
   sandbox: project-scope
-  timeout_seconds: 600
+  timeout_seconds: 1800
 kind: manager
 mcp_servers: {}
 role: role.md

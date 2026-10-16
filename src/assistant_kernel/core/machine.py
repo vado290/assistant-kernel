@@ -28,6 +28,7 @@ DECISION_ACTIONS = {
     "run_failed": ("retry", "stop"),
     "reconcile": ("published", "failed"),
     "create_project": ("approve", "reject"),
+    "project_task": ("approve", "reject"),
     "followups": ("approve", "reject"),
     "shared_update": ("approve", "reject"),
 }
@@ -319,11 +320,19 @@ def _supervisor_item(task, run_input: dict[str, Any], result: dict[str, Any]) ->
     if decision == "propose_project":
         if "project_management" not in (result.get("_capabilities") or ()):
             raise InvalidResult("only a project with the project_management capability can create projects")
-        try:
-            spec = rules.project_spec(result.get("spec"))
-        except ValueError as exc:
-            raise InvalidResult(str(exc)) from exc
-        return _decision(task, "create_project", message or f"是否创建项目 {spec['project_id']}？", spec=spec)
+        if task["kind"] != "bootstrap":   # first agree a charter with the user, in a project-creation task
+            goal = str(result.get("goal") or "").strip()
+            if not goal:
+                raise InvalidResult("propose_project outside a project-creation task needs a goal")
+            return _decision(task, "project_task", message or "是否开始一个创建项目的任务，先商定项目章程？",
+                             goal=goal, reason=str(result.get("reason") or "").strip())
+        contract = task["documents"].get("task_contract") or {}
+        if not contract.get("spec"):
+            raise InvalidResult("the charter has no valid creation parameters yet: "
+                                + (contract.get("spec_error") or "no charter document"))
+        spec = contract["spec"]
+        return _decision(task, "create_project", message or f"是否按章程创建项目 {spec['project_id']}？",
+                         spec=spec, doc_sha=contract["sha256"])
     raise InvalidResult(f"unsupported Supervisor decision {decision!r}")
 
 
@@ -450,10 +459,17 @@ async def _consult_result(c, run, result) -> None:
             await _upgrade_item(c, task, item, upgrade)
 
 
+async def _source_user(c, task) -> str | None:
+    """The user whose message started the task (the creation task's user profile goes to the new project)."""
+    row = await one(c, "SELECT user_id FROM core.messages WHERE message_id=%s", (task["source_message_id"],)) \
+        if task.get("source_message_id") else None
+    return (row or {}).get("user_id")
+
+
 async def _task_from_message(c, project_id: str, message: dict[str, Any], *, goal: str,
-                             reason: str | None = None) -> dict[str, Any]:
+                             reason: str | None = None, kind: str = "delivery") -> dict[str, Any]:
     task = await create_task(c, project_id, goal=goal, origin="user", source_message_id=message["message_id"],
-                             reason=reason, idempotency_key=f"message-task:{message['message_id']}")
+                             reason=reason, kind=kind, idempotency_key=f"message-task:{message['message_id']}")
     await c.execute("UPDATE core.messages SET task_id=%s, consumed_by_run_id=NULL WHERE message_id=%s",
                     (task["task_id"], message["message_id"]))
     return task
@@ -471,7 +487,10 @@ async def _triage_result(c, run, result) -> None:
         await notify(c, project_id, "pm", reply, chat=chat)
     elif decision == "start_task":
         goal = str(result.get("goal") or "").strip() or message["body"].get("text", "")
-        task = await _task_from_message(c, project_id, message, goal=goal,
+        kind = "bootstrap" if result.get("task_kind") == "bootstrap" else "delivery"
+        if kind == "bootstrap" and "project_management" not in (result.get("_capabilities") or ()):
+            raise InvalidResult("only a project with the project_management capability can create projects")
+        task = await _task_from_message(c, project_id, message, goal=goal, kind=kind,
                                         reason=str(result.get("reason") or "").strip() or None)
         await notify(c, project_id, "pm", reply or f"好的，开始处理：{goal[:100]}", chat=chat, task_id=task["task_id"])
     elif decision == "route":
@@ -623,13 +642,28 @@ async def _decision_action(c, task, item, action, values, source_message_id):
                               origin="evolution" if task["kind"] == "evolution" else "supervisor",
                               parent_task_id=task["task_id"], idempotency_key=f"followup:{item['item_id']}:{number}")
         return await close(c, task, "completed", "followups_queued")
+    if decision == "project_task":
+        if action == "reject":
+            return await to_supervising(c, task, "project_task_rejected", text=note)
+        await create_task(c, task["project_id"], goal=data["goal"], reason=data.get("reason") or None, kind="bootstrap",
+                          origin="supervisor", parent_task_id=task["task_id"], idempotency_key=f"project-task:{item['item_id']}")
+        return await close(c, task, "completed", "converted_to_project_task")
     if decision == "create_project":
         if action == "reject":
             return await to_supervising(c, task, "create_project_rejected", text=note)
+        if rules.doc_sha(task, "task_contract") != data["doc_sha"]:
+            raise cards.StaleItem("the charter changed after this card was shown")
         exists = await one(c, "SELECT 1 FROM core.projects WHERE project_id=%s", (data["spec"]["project_id"],))
         if exists:
             raise ValueError(f"project {data['spec']['project_id']} already exists")
-        return await to_bootstrapping(c, task, data["spec"])
+        # Approving the creation approves the charter: the bootstrap builds the project from exactly this revision.
+        approvals = {**task["approvals"], "requirements": {"doc_sha": data["doc_sha"],
+                                                           "message_id": _str(source_message_id)}}
+        task = await _update(c, task, approvals=approvals)
+        return await to_bootstrapping(c, task, {**data["spec"], "charter": task["documents"]["task_contract"],
+                                                "brief": task["documents"].get("domain_brief"),
+                                                "user_id": await _source_user(c, task),
+                                                "source_project": task["project_id"], "task_id": str(task["task_id"])})
     if decision == "reconcile":
         if action == "published":
             return await close(c, task, "completed", "published_after_reconcile")

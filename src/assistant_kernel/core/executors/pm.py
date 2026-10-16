@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from assistant_kernel.core import drafts
+from assistant_kernel.core import drafts, rules
 from assistant_kernel.core.drafts import DOCUMENT_STAGE, STAGE_DOCUMENT
 from assistant_kernel.core.executors.common import (
     BRIEF_HEADING, CANDIDATE_TOOLS, DOMAIN_BRIEF, MVP_TOOLS, PROFILE_HEADING, USER_PROFILE, call_for_json, charter,
@@ -88,6 +88,8 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
         ("config", config.config_sha256, "\n\n".join(["## 本项目对你的角色要求\n\n" + config.role_text,
                                                       *([config.skills_text] if config.skills_text else [])])),
         *([("digest", drafts.text_sha(digest), digest)] if digest else []),
+        *([("bootstrap", drafts.text_sha(creation := prompt_text("pm-bootstrap")), creation)]
+          if task["kind"] == "bootstrap" else []),
     ]
     documents = await asyncio.to_thread(document_sections, settings, task)
     output = prompt_text("pm-output")
@@ -149,6 +151,11 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
                                          str(run["run_id"]), kind, payload, "pm")
         await asyncio.to_thread(drafts.save, settings, run["project_id"], task_id, kind, markdown, report["sha256"])
         seen[kind] = report["sha256"]   # the PM wrote it, so the next resumed turn need not resend it
+        if kind == "task_contract" and task["kind"] == "bootstrap":   # the charter: Kernel creates the project from it
+            try:
+                report["spec"] = rules.charter_spec(markdown)
+            except ValueError as exc:
+                report["spec_error"] = str(exc)
         if kind == "implementation_report":
             report["bundle_sha"] = await asyncio.to_thread(seal_candidates, settings, run["project_id"],
                                                            str(task["task_id"]), report["sha256"])

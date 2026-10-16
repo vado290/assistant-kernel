@@ -309,6 +309,23 @@ task 本身（批准绑定文档、单一主线、PM 会话连续、可追溯）
 
 退出标准：从 kernel 频道一句"帮我建一个……项目"出发，经过多问题卡片商定章程，批准后项目可用，新项目能被分诊匹配。
 
+**R3 完成记录（2026-10-16，已部署 0.38.1）**：
+- 入口：kernel（`project_management` 能力）的分诊用 `start_task` + `task_kind: bootstrap` 直接开始创建项目任务；在普通任务中，
+  Supervisor 的 `propose_project {goal, reason}` 显示"开始创建项目"卡片，批准后结束当前任务、排入创建项目任务。
+- 创建项目任务只有需求阶段（`rules.stage_moves`）。**章程就是本任务的需求文档（task_contract）**，没有另设 `project_charter` 类型：
+  草稿编辑、批准绑定 sha 的机制原样复用。格式由合同 `pm-bootstrap.md`（Kernel 注入）规定：章程 1–9 节 + "创建参数"YAML 代码块 +
+  "用户画像观察"。PM 执行器每次保存时解析创建参数，结果（有效 / 错误原因）显示在文档末尾，Supervisor 和 PM 都能看到。
+- 章程通过检查后，Supervisor `propose_project`（不再写规格）→"按章程创建新项目"卡片列出参数 → 批准即批准章程（绑定 sha，
+  章程变了旧卡作废）→ BootstrapExecutor 按章程生成新项目的 `knowledge/charter.md`（去掉创建参数、画像观察、修订记录，写入变更记录）、
+  `project.yaml`（能力、交付方式、共享级别）、PM/Supervisor 角色要点、行业速写、用户画像、模板技能和 Discord 频道。
+  创建项目任务的章程不会被归档进 kernel 自己的章程。
+- 技能：assistant-project-chartering 启用（1.0.1）；`supervisor-kernel.md`、新增 `triage-projects.md`；Supervisor 评估创建项目任务时看到项目名录（查重）。
+- 真实模型冒烟（临时数据库，停在创建卡片前、未实际创建）：行业调研 → 3 轮共 22 个问题 → 章程通过 Kernel 检查 → 卡片显示正确。
+  发现并修复两点：PM 选了尚未实现的 `git_delivery`/`git-repo`（R4a 之前只接受 vault-files，合同和技能同步说明）；
+  首轮"调研 + 提问"超过 PM 的 600 秒超时，重试后成功（模板和三个项目的 PM 超时改为 1800 秒）。
+- 测试：全部 172 项通过（`tests/core/test_bootstrap.py` 按新流程重写，另有执行器解析章程的测试）。
+- 待办：用户在 Discord 真实创建一个项目（会创建真实频道和 vault）。
+
 ### R4a 代码交付（通用）
 1. 进入实施阶段时，Kernel 准备 git worktree：`assistant-data/workspaces/<项目>/<任务>`，分支 `task/<任务编号>`，从 main 拉出。
 2. 提交实施报告时，Kernel 读取最新提交编号作为 `bundle_sha`，后续批准都绑定它。

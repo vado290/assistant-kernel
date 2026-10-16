@@ -156,4 +156,6 @@ services:
 | 日期 | 原结论 | 修订 | 原因 |
 |---|---|---|---|
 | 10-16 | S2 中 assistant-solution-design 增加"运行方式"一节 | 移到 S3，与 `runtime-manifest.v1` 一起定义 | 运行时上线前写进技能，PM 会产出没有组件读取的声明 |
+| 10-16 | R3 章程使用新文档类型 `project_charter` | 章程就是创建项目任务的 task_contract | 复用草稿编辑和"批准绑定 sha"的机制，代码更少；格式差异由合同 `pm-bootstrap.md` 规定 |
+| 10-16 | 新项目可选 git_delivery / git-repo | R4a 上线前只接受 vault-files | 冒烟中 PM 选了尚未实现的代码交付，创建出来会名不副实 |
 | 10-16 | 会话轮换按上下文占比（60%）判断 | 按会话已运行的回合数（8 轮） | Codex 报告的 input_tokens 是一轮内多次请求的累计值，不等于上下文长度；自动压缩继续兜底防止超限 |
