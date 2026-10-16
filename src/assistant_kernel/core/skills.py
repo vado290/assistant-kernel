@@ -138,6 +138,21 @@ def digest(paths: list[Path]) -> str:
     return h.hexdigest()
 
 
+def body_sha(body: str) -> str:
+    """Short fingerprint of a skill body; a copy whose body still has it was never edited by the project."""
+    return hashlib.sha256(body.encode()).hexdigest()[:16]
+
+
+def _install(skill: Skill, target: Path) -> None:
+    if target.exists():
+        shutil.rmtree(target)
+    shutil.copytree(skill.path.parent, target)
+    text = (target / "SKILL.md").read_text("utf-8")
+    stamp = f'  template: {{name: {skill.name}, version: "{skill.version}", sha: "{body_sha(skill.body)}"}}'
+    text = re.sub(r"(\nmetadata:\n)", lambda m: m.group(1) + stamp + NL, text, count=1)
+    (target / "SKILL.md").write_text(text, "utf-8", newline="\n")
+
+
 def install_templates(vault: Path, capabilities: frozenset[str]) -> list[str]:
     """Copy the template skills a project can use into its vault, recording their origin. Existing copies stay."""
     installed = []
@@ -147,13 +162,30 @@ def install_templates(vault: Path, capabilities: frozenset[str]) -> list[str]:
         target = vault / ".agents" / "skills" / skill.name
         if target.exists():
             continue
-        shutil.copytree(skill.path.parent, target)
-        text = (target / "SKILL.md").read_text("utf-8")
-        text = re.sub(r"(\nmetadata:\n)", rf'\1  template: {{name: {skill.name}, version: "{skill.version}"}}\n',
-                      text, count=1)
-        (target / "SKILL.md").write_text(text, "utf-8", newline="\n")
+        _install(skill, target)
         installed.append(skill.name)
     return installed
+
+
+def refresh_unmodified(vault: Path, known: dict[str, str] | None = None) -> tuple[list[str], list[str]]:
+    """Bring copies the project never edited up to the current template; returns (refreshed, kept as edited).
+
+    Only for Kernel rollouts: a copy counts as unmodified when its body still matches the fingerprint
+    recorded at install (or one in ``known``, for copies installed before fingerprints were recorded).
+    """
+    templates = {s.name: s for s in template_skills()}
+    refreshed, kept = [], []
+    for copy in project_skills(vault):
+        template = templates.get(copy.name)
+        if template is None or copy.version == template.version and copy.load == template.load:
+            continue
+        unmodified = body_sha(copy.body) in {copy.template.get("sha"), (known or {}).get(copy.name)} - {None}
+        if unmodified:
+            _install(template, copy.path.parent)
+            refreshed.append(copy.name)
+        else:
+            kept.append(copy.name)
+    return refreshed, kept
 
 
 # ------------------------------------------------------------------ shared-context sections

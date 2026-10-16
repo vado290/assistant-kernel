@@ -71,9 +71,9 @@ async def test_project_is_created_after_approval(kernel, sim, dispatcher, kernel
     # the created project's agent files load in every stage
     for stage in ("requirements", "design", "build", "review", "operate", "evolution"):
         config = load_agent(kernel_settings, "sales-report", "pm", stage=stage)
-        assert config.agent_key == "project:sales-report:manager" and "assistant-project-agent@2.0.0" in config.skill_labels
+        assert config.agent_key == "project:sales-report:manager" and any(l.startswith("assistant-project-agent@") for l in config.skill_labels)
     supervisor = load_agent(kernel_settings, "sales-report", "supervisor", purpose="evaluate")
-    assert "销售日报" in supervisor.role_text and "assistant-goal-supervisor@6.0.0" in supervisor.skill_labels
+    assert "销售日报" in supervisor.role_text and any(l.startswith("assistant-goal-supervisor@") for l in supervisor.skill_labels)
 
 
 async def test_only_the_management_project_can_propose_projects(kernel, sim, dispatcher):

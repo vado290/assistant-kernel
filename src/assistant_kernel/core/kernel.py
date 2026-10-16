@@ -16,7 +16,7 @@ from assistant_kernel.core.db import Database, all_rows, event, lock_project, on
 EVOLUTION_GOAL = "周度复盘：根据最近的运行记录提出改进建议"
 EVOLUTION_TZ = ZoneInfo("Asia/Shanghai")
 
-CONTROL_RUNS = ("pm_turn", "supervisor", "validation", "publish", "bootstrap")
+CONTROL_RUNS = ("pm_turn", "supervisor", "validation", "publish", "bootstrap", "triage")
 
 
 class LeaseLost(Exception):
@@ -24,9 +24,10 @@ class LeaseLost(Exception):
 
 
 class Kernel:
-    def __init__(self, settings: KernelSettings, *, retry_backoff_seconds: float = 15.0):
+    def __init__(self, settings: KernelSettings, *, retry_backoff_seconds: float = 15.0, triage: bool = True):
         self.db = Database(settings)
         self.retry_backoff_seconds = retry_backoff_seconds
+        self.triage = triage   # idle PM-channel messages go to triage first (R2.1); tests may start tasks directly
 
     # ------------------------------------------------------------ projects and messages
 
@@ -53,8 +54,9 @@ class Kernel:
                 (project_id, channel, chat_id, user_id, role, Jsonb({"text": text}), external_event_id))
             if message is None:
                 return {"action": "duplicate"}
-            route = machine.user_input if role == "pm" else machine.consult
-            return {"message_id": str(message["message_id"]), **await route(c, project_id, message)}
+            routed = (await machine.user_input(c, project_id, message, triage=self.triage) if role == "pm"
+                      else await machine.consult(c, project_id, message))
+            return {"message_id": str(message["message_id"]), **routed}
 
     async def create_task(self, project_id: str, **fields: Any) -> dict[str, Any]:
         async with self.db.tx() as c:
@@ -184,6 +186,11 @@ class Kernel:
         return {"days": days, "tasks": tasks, "card_actions": [a["payload"] for a in actions],
                 "failures": failures, "event_counts": counts, "user_messages": inbound}
 
+    async def active_projects(self) -> list[str]:
+        async with self.db.tx() as c:
+            return [r["project_id"] for r in await all_rows(
+                c, "SELECT project_id FROM core.projects WHERE status='active' ORDER BY project_id")]
+
     async def active_task(self, project_id: str) -> dict[str, Any] | None:
         async with self.db.tx() as c:
             return await one(c, "SELECT * FROM core.tasks WHERE project_id=%s AND state = ANY(%s)",
@@ -213,7 +220,7 @@ class Kernel:
                           AND (r.task_id IS NULL OR NOT EXISTS (
                                SELECT 1 FROM core.runs x WHERE x.task_id = r.task_id
                                AND x.status IN ('running','reconciling')))
-                        ORDER BY (t.priority = 'urgent') DESC NULLS LAST, r.created_at
+                        ORDER BY r.created_at
                         FOR UPDATE OF r SKIP LOCKED LIMIT 1)
                     RETURNING *""",
                     (worker_id, uuid.uuid4(), lease_seconds, list(run_types), list(rules.ACTIVE_STATES)))

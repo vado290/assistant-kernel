@@ -47,7 +47,7 @@ def fake_harness():
 @pytest.fixture
 async def kernel(kernel_settings):
     from assistant_kernel.core.kernel import Kernel
-    k = Kernel(kernel_settings, retry_backoff_seconds=0)
+    k = Kernel(kernel_settings, retry_backoff_seconds=0, triage=False)   # tests start tasks directly
     for project in ("p1", "p2"):
         await k.ensure_project(project)
     return k

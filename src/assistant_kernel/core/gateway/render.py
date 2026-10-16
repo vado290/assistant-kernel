@@ -13,13 +13,17 @@ ACTION_LABELS = {"execute": "执行", "revise": "修改…", "stop": "停止任�
 ACTION_STYLES = {"execute": "success", "approve": "success", "retry": "primary", "continue": "primary",
                  "published": "success", "stop": "danger", "reject": "danger", "failed": "danger"}
 DECISION_TITLES = {"release": "申请发布", "complete": "建议结束任务", "cancel": "建议取消任务",
-                   "new_task": "建议新建任务", "run_failed": "执行失败", "turn_budget": "回合数已达上限",
+                   "new_task": "建议新建任务", "run_failed": "执行失败",
                    "reconcile": "发布结果需要核对", "create_project": "创建新项目",
                    "followups": "建议排队的新任务", "shared_update": "修改公共背景"}
 DONE_REPLIES = {"execute": "已确认，PM 将开始执行。", "approve": "已批准。", "reject": "已记录：不同意。",
                 "stop": "任务已停止。", "retry": "已安排重试。", "continue": "已继续。",
                 "published": "已记录：发布成功。", "failed": "已记录：发布失败。", "submit": "答案已提交。",
                 "revise": "你的想法已交给 Supervisor，它会据此重新安排。"}
+
+
+TRACK_NOTES = {"quick": "⚡ 建议走轻量流程：需求文档里写简要方案，批准后直接实施，跳过设计和 Review（发布仍需你批准）。",
+               "full": "📐 建议改走完整流程：需求 → 设计 → 实施 → Review → 发布。"}
 
 
 def button(item_id: str, action: str, label: str | None = None) -> dict[str, str]:
@@ -71,6 +75,8 @@ def render_item(item: dict[str, Any]) -> dict[str, Any]:
     elif item["kind"] == "next_step":
         stage = STAGE_NAMES.get(content["target_stage"], content["target_stage"])
         lines = [f"**▶ 下一步：{stage}**", message]
+        if content.get("track_changed"):
+            lines.append(TRACK_NOTES.get(content.get("track"), ""))
         if content.get("approve"):
             names = "、".join(APPROVAL_NAMES.get(a, a) for a in content["approve"])
             lines.append(f"⚠ 点「执行」即同时批准：{names}")

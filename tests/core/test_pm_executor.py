@@ -39,6 +39,7 @@ async def test_pm_question_turn(kernel, sim, dispatcher, fake_harness):
     prompt = fake_harness.calls[-1].prompt
     assert "梳理日报需求" in prompt and "做一个日报工具" in prompt and "当前阶段：需求分析" in prompt
     assert fake_harness.calls[-1].physical_session_id is None       # first turn of a stage is fresh
+    assert fake_harness.calls[-1].sandbox == "read-only"            # requirements never writes the vault
     item = await sim.item("p1", task_id)
     assert item["deliver_to"] == "pm" and item["content"]["pm_questions"][0]["id"] == "q1"
 
@@ -95,3 +96,42 @@ async def test_document_of_another_stage_is_rejected(kernel, sim, dispatcher, fa
 async def test_build_without_candidate_files_gets_a_bound_marker(kernel, sim, dispatcher, fake_harness, kernel_settings):
     from assistant_kernel.core.executors.pm import seal_candidates
     assert seal_candidates(kernel_settings, "p1", "00000000-0000-0000-0000-000000000000", "abc") == "no-files:abc"
+
+
+@pytest.mark.parametrize("stage,kind,sandbox", [
+    ("requirements", "work", "read-only"), ("design", "work", "read-only"), ("review", "work", "read-only"),
+    ("operate", "work", "read-only"), ("operate", "evolution", "read-only"), ("build", "work", "danger-full-access"),
+])
+async def test_only_build_turns_may_write_outside_the_kernel(monkeypatch, kernel_settings, project_files,
+                                                             stage, kind, sandbox):
+    """Outside build the PM runs in Codex's read-only sandbox; project files change only via candidates."""
+    from types import SimpleNamespace
+
+    from assistant_kernel.core.executors import pm
+    from assistant_kernel.core.executors.common import CANDIDATE_TOOLS
+
+    seen = {}
+
+    async def fake_call(ctx, run, config, prompt, **kwargs):
+        seen.update(kwargs)
+        return None, SimpleNamespace(final_text="")
+
+    class StubKernel:
+        async def get_task(self, task_id):
+            return {"task_id": task_id, "project_id": "p1", "kind": kind, "goal": "日报", "documents": {},
+                    "pm_session": {}}
+
+        async def turn_inputs(self, run):
+            return []
+
+        async def project_digest(self, project_id):
+            return {}
+
+    monkeypatch.setattr(pm, "call_for_json", fake_call)
+    monkeypatch.setattr(pm, "render_digest", lambda digest: "")
+    ctx = SimpleNamespace(kernel=StubKernel(), services={"settings": kernel_settings})
+    run = {"run_id": "r1", "task_id": "t1", "project_id": "p1", "input": {"stage": stage}}
+    assert (await pm.execute_pm(run, ctx))["outcome"] == "invalid_output"
+    assert seen["sandbox"] == sandbox
+    assert seen["candidates"] is (stage == "build")
+    assert bool(seen["tools"] & CANDIDATE_TOOLS) is (stage == "build")

@@ -91,8 +91,9 @@ class DiscordTransport:
         channel = await self._channel(channel_id)
         await channel.get_partial_message(int(message_id)).edit(content=text, view=self._view(buttons))
 
-    def link(self, channel_id, message_id) -> str:
-        return f"https://discord.com/channels/{self.guild_id}/{channel_id}/{message_id}"
+    def link(self, channel_id, message_id=None) -> str:
+        base = f"https://discord.com/channels/{self.guild_id}/{channel_id}"
+        return f"{base}/{message_id}" if message_id else base
 
 
 class CoreDiscordClient(discord.Client):

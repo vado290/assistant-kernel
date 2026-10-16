@@ -19,7 +19,7 @@ REMINDERS = (timedelta(hours=1), timedelta(hours=24))
 class Transport(Protocol):
     async def send(self, channel_id: str, text: str, buttons: list[dict] = (), attachment: str | None = None) -> str: ...
     async def edit(self, channel_id: str, message_id: str, text: str, buttons: list[dict] = ()) -> None: ...
-    def link(self, channel_id: str, message_id: str) -> str: ...
+    def link(self, channel_id: str, message_id: str | None = None) -> str: ...
 
 
 @dataclass
@@ -170,14 +170,28 @@ class GatewayService:
             channel_id = (message["chat_id"] if message["channel"] == "discord" and message["chat_id"]
                           else channels.supervisor_channel_id if message["role"] == "supervisor"
                           else channels.pm_channel_id)
+            text = message["body"].get("text", "")
+            if message["body"].get("link_message"):
+                text += f"\n👉 {await self._link_to(message['body']['link_message'])}"
             try:
-                external = await self.transport.send(channel_id, message["body"].get("text", ""))
+                external = await self.transport.send(channel_id, text)
             except Exception:
                 log.exception("delivery of message %s failed; will retry", message["message_id"])
                 continue
             await self.kernel.mark_delivered(message["message_id"], external_id=f"out:{external}")
             delivered += 1
         return delivered
+
+    async def _link_to(self, message_id: str) -> str:
+        """Link to an outbound message (e.g. a handoff note in another project's Supervisor channel);
+        the channel itself when that message has not been delivered yet."""
+        target = await self.kernel.get_message(message_id)
+        channels = self.config.projects.get(target["project_id"]) if target else None
+        if channels is None:
+            return "（目标项目的频道未配置）"
+        external = str(target.get("external_event_id") or "")
+        sent = external.removeprefix("out:") if external.startswith("out:") else None
+        return self.transport.link(channels.supervisor_channel_id, sent)
 
     async def remind(self, now: datetime | None = None) -> None:
         now = now or datetime.now(timezone.utc)

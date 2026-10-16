@@ -8,7 +8,7 @@ import re
 from typing import Any
 
 ACTIVE_STATES = ("pm", "supervising", "awaiting_user", "validating", "publishing", "bootstrapping")
-TERMINAL_STATES = ("completed", "cancelled", "failed")
+TERMINAL_STATES = ("completed", "cancelled")
 
 # Each active state is waited on by exactly one cursor (plan principle P7).
 CURSOR_RUN = {
@@ -37,8 +37,7 @@ def project_spec(spec: Any) -> dict[str, Any]:
             "business_profile": {k: str(profile.get(k) or "（未提供）")[:500]
                                  for k in ("industry", "organization", "users", "notes")}}
 
-INITIAL_STAGE = {"delivery": "requirements", "bootstrap": "requirements",
-                 "operation": "operate", "evolution": "operate"}
+INITIAL_STAGE = {"delivery": "requirements", "bootstrap": "requirements", "evolution": "operate"}
 
 # Stage moves the Supervisor may propose; everything else is rejected by Kernel.
 STAGE_MOVES = {
@@ -50,10 +49,24 @@ STAGE_MOVES = {
     "operate": {"operate"},
 }
 
+# The quick track (R2.3): the requirements document carries a short plan; no design or review stage.
+QUICK_MOVES = {
+    "requirements": {"requirements", "build"},
+    "build": {"build", "release", "requirements"},
+    "release": {"release"},
+    "operate": {"operate"},
+}
+TRACKS = ("full", "quick")
+
 # Moves that need a still-valid user approval of the document the stage produced.
-APPROVAL_FOR_MOVE = {("requirements", "design"): "requirements", ("design", "build"): "design"}
+APPROVAL_FOR_MOVE = {("requirements", "design"): "requirements", ("design", "build"): "design",
+                     ("requirements", "build"): "requirements"}   # the last one only exists on the quick track
 
 DOCUMENT_FOR_APPROVAL = {"requirements": "task_contract", "design": "solution_design"}
+
+
+def stage_moves(task: dict[str, Any]) -> set[str]:
+    return (QUICK_MOVES if task.get("track") == "quick" else STAGE_MOVES).get(task["stage"], set())
 
 
 def doc_sha(task: dict[str, Any], name: str) -> str | None:
@@ -104,7 +117,7 @@ def move_error(task: dict[str, Any], target: str, *, approving: tuple[str, ...] 
     `approving` lists approvals that are being granted in the same user action.
     """
     stage = task["stage"]
-    if target not in STAGE_MOVES.get(stage, set()):
+    if target not in stage_moves(task):
         return f"stage move {stage} → {target} is not allowed"
     kind = APPROVAL_FOR_MOVE.get((stage, target))
     if kind:
@@ -116,4 +129,6 @@ def move_error(task: dict[str, Any], target: str, *, approving: tuple[str, ...] 
         return "the current implementation has not passed validation"
     if (stage, target) == ("review", "release") and not review_passed(task):
         return "review has not passed for the validated bundle"
+    if (stage, target) == ("build", "release") and not validated_bundle(task):   # quick track
+        return "the current implementation has not passed validation"
     return None

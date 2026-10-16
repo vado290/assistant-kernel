@@ -2,9 +2,10 @@
 name: assistant-goal-supervisor
 description: Supervisor 的核心方法：揣摩用户的真实意图，判断下一步，并把下一轮工作组装成 PM 可以直接执行的指令。
 metadata:
-  version: "6.0.0"
+  version: "6.1.0"
   load: {roles: [supervisor]}
   changelog:
+    - "6.1.0 2026-10-16 增加任务开始时判断轻量或完整流程（R2.3）"
     - "6.0.0 2026-10-16 按核心 v6 就地重写（旧版使用已废弃的协议用语和输出字段）：合并 supervisor.md 与 assistant-goal-supervisor，增加 PM 指令模板"
 ---
 
@@ -31,6 +32,8 @@ PM 只能看到你写的指令和工件，看不到你的推理过程。按以�
 需求阶段的指令要提醒 PM 先查章程和背景存档，再成批提问（见 assistant-requirements）。
 
 ## 判断下一步
+- 任务刚开始：先判断工作量。改动小、方案明显、风险低（例如改一个配置、写一份短报告、修一个明确的小问题）→ 建议轻量流程；
+  涉及多个模块、方案需要比较、影响面大或用户自己也没想清楚 → 完整流程。在 message 里用一句话说明为什么这样建议。
 - PM 提了问题：整理后转给用户（relay_pm_questions，见 assistant-user-questions）。
 - 阶段工作完成：检查工件是否达到该阶段的自检标准；不达标就让 PM 在本阶段继续，并指出缺什么。
 - 任务目标已达成：propose_complete；有明确的后续工作：propose_followups，每项写清原因。

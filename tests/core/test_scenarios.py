@@ -205,12 +205,6 @@ async def test_s06_new_work_from_supervisor_channel(kernel, sim):
     assert (await sim.task(task_id))["state"] == "awaiting_user"
 
 
-@deferred
-async def test_s07_urgent_task_suspends_and_resumes():
-    """Urgent task approved → active task suspended at a safe point → urgent task runs and completes →
-    original task resumes through a supervisor(resume) evaluation. MVP: urgent tasks only jump the queue."""
-
-
 async def test_s08_cancel_while_pm_running(kernel, sim):
     task_id = await start_task(kernel, sim)
     nxt = await kernel.create_task("p1", goal="排队任务", origin="user")
@@ -282,19 +276,40 @@ async def test_s13_requirements_change_invalidates_design_approval(kernel, sim):
     assert not rules.approval_valid(task, "requirements") and not rules.approval_valid(task, "design")
 
 
-async def test_s14_turn_budget_exceeded(kernel, sim):
-    task_id = await start_task(kernel, sim)
-    async with kernel.db.tx() as c:
-        await c.execute("UPDATE core.tasks SET max_turns=1 WHERE task_id=%s", (task_id,))
-    await execute_next(kernel, sim, task_id, "requirements")
-    sim.script("pm_turn", pm("completed"))
-    await execute_next(kernel, sim, task_id, "requirements")
-    sim.script("pm_turn", pm("completed"))
+async def test_s14_quick_track_skips_design_and_review(kernel, sim):
+    """R2.3: the Supervisor proposes the quick track; requirements approval leads straight to build, and a
+    validated bundle may go to release without a review. Design is not reachable on the quick track."""
+    task_id = await start_task(kernel, sim, text="把日报标题改成周报")
+    sim.script("supervisor:evaluate", {**next_step("requirements", "写需求和简要方案"), "track": "quick"})
     await sim.drain()
     item = await sim.item("p1", task_id)
-    assert item["content"]["decision"] == "turn_budget"
-    await kernel.act("p1", item["item_id"], "continue")
-    assert (await sim.task(task_id))["state"] == "supervising"
+    assert item["content"]["track"] == "quick" and item["content"]["track_changed"]
+    await kernel.act("p1", item["item_id"], "execute")
+    assert (await sim.task(task_id))["track"] == "quick"
+
+    sim.script("pm_turn", pm("completed", report=report("task_contract", "r1")))
+    sim.script("supervisor:evaluate", next_step("design"), next_step("design"), next_step("design"))
+    await sim.drain()
+    assert (await sim.item("p1", task_id))["content"]["decision"] == "run_failed"   # no design on the quick track
+    await kernel.act("p1", (await sim.item("p1", task_id))["item_id"], "retry")
+    sim.script("supervisor:evaluate", next_step("build", "按简要方案实施"))
+    await sim.drain()
+    build = await sim.item("p1", task_id)
+    assert build["content"]["approve"] == ["requirements"]
+    await kernel.act("p1", build["item_id"], "execute")
+    assert (await sim.task(task_id))["stage"] == "build"
+
+    sim.script("pm_turn", pm("ready_for_validation", report=report("implementation_report", "i1", bundle_sha="b1")))
+    sim.script("validation", {"passed": True})
+    sim.script("supervisor:evaluate", next_step("release"))
+    await sim.drain()
+    release = await sim.item("p1", task_id)
+    assert release["content"]["decision"] == "release" and release["content"]["data"]["review_sha"] is None
+    await kernel.act("p1", release["item_id"], "approve")
+    sim.script("publish", {"outcome": "published"})
+    await sim.drain()
+    task = await sim.task(task_id)
+    assert (task["state"], task["close_reason"]) == ("completed", "published")
 
 
 async def test_s15_duplicate_channel_event_is_idempotent(kernel, sim):

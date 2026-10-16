@@ -263,3 +263,32 @@ def isolated_codex_config_query(monkeypatch):
             (archive_dir/'mcp-runtime.fixture.json').write_text(json.dumps({'exposed':payload['scoped_tools'],'test_fake':True}))
         return result
     monkeypatch.setattr('assistant_kernel.harness.mcp_config.compile_mcp',compile_fixture)
+
+
+async def test_read_only_turn_keeps_scope_auth_and_resume(tmp_path, monkeypatch):
+    calls = []
+
+    async def fake_process(*command, **kwargs):
+        calls.append((command, kwargs["env"]))
+        return 0, (
+            b'{"type":"thread.started","thread_id":"thread-ro"}\n'
+            b'{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}\n'
+            b'{"type":"turn.completed","usage":{"input_tokens":10}}\n'
+        ), b"", 1
+
+    monkeypatch.setattr("assistant_kernel.harness.codex_cli.run_managed_process", fake_process)
+    harness = CodexCliHarness(ProjectRuntimeManager(tmp_path), codex_binary="codex")
+    scope = {"KERNEL_SCOPE_PROJECT_ID": "p", "KERNEL_SCOPE_ALLOWED_TOOLS": "vault_list"}
+    for session in (None, "thread-ro"):
+        await harness.run_turn(AgentTurnRequest(
+            project_id="p", prompt="read", cwd=tmp_path, sandbox="read-only", physical_session_id=session,
+            codex_home=tmp_path / "codex-home", scoped_tools=("vault_list",), scope_context=scope))
+    (fresh, fresh_env), (resumed, resumed_env) = calls
+    assert fresh[fresh.index("--sandbox") + 1] == "read-only"
+    assert "resume" in resumed and "--sandbox" not in resumed and 'sandbox_mode="read-only"' in resumed
+    for command, env in calls:
+        joined = " ".join(command)
+        assert env["CODEX_HOME"] == str(tmp_path / "codex-home") and env.get("KERNEL_MCP_CONFIG_PATH")
+        assert "assistant_kernel.core.tools" in joined and "enabled_tools" in joined
+        assert 'shell_environment_policy.filters."POSTGRES_*"="exclude"' in command
+        assert 'approval_policy="never"' not in command

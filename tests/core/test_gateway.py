@@ -28,8 +28,8 @@ class FakeTransport:
     async def edit(self, channel_id, message_id, text, buttons=()):
         self.messages[message_id].update(text=text, buttons=list(buttons))
 
-    def link(self, channel_id, message_id):
-        return f"https://discord/{channel_id}/{message_id}"
+    def link(self, channel_id, message_id=None):
+        return f"https://discord/{channel_id}/{message_id}" if message_id else f"https://discord/{channel_id}"
 
     def in_channel(self, channel):
         return [self.messages[m] for m in self.order if self.messages[m]["channel"] == channel]

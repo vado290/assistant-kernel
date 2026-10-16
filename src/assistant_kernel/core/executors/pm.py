@@ -12,6 +12,11 @@ from assistant_kernel.core.executors.digest import render_digest
 STAGE_NAMES = {"requirements": "需求分析", "design": "方案设计", "build": "实施与自测", "review": "独立 Review",
                "operate": "运营", "evolution": "周度复盘"}
 SUBAGENT_STAGES = {"requirements", "design", "build", "review", "evolution"}
+QUICK_NOTES = {   # process facts for the quick track (R2.3); Kernel states them, skills need not
+    "requirements": "本任务不单独做设计和 Review。需求文档除常规章节外，必须包含'简要方案'一节：要改哪些文件、怎么做、怎么测试；"
+                    "用户批准需求即同时批准这个方案",
+    "build": "按需求文档中的'简要方案'实施并自测；完成后 Kernel 验证，验证通过即可申请发布，没有单独的 Review",
+}
 MAX_SUBAGENTS = 3
 DOCUMENT_STAGE = {"task_contract": "requirements", "solution_design": "design",
                   "implementation_report": "build", "review_report": "review",
@@ -28,6 +33,8 @@ def render_turn(task: dict[str, Any], run_input: dict[str, Any], inputs: list[di
     lines = [f"- 任务目标：{task['goal']}", f"- 当前阶段：{STAGE_NAMES.get(stage, stage)}（{stage}）"]
     if task.get("reason"):
         lines.append(f"- 发起原因：{task['reason']}")
+    if task.get("track") == "quick" and stage in QUICK_NOTES:
+        lines.append(f"- 流程：轻量（{QUICK_NOTES[stage]}）")
     if run_input.get("kind") == "instruction":
         lines.append(f"\n### 本轮指令（用户已确认）\n\n{run_input['instruction']}")
     elif run_input.get("kind") == "answers":
@@ -67,11 +74,13 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
         prompt_text("pm-output"),
     ])
     fresh = run_input.get("fresh_session", True)
-    tools = MVP_TOOLS if stage == "build" else MVP_TOOLS - CANDIDATE_TOOLS
+    build = stage == "build"
+    # Outside build the PM only reads: project files change solely through candidates → validate → publish.
+    tools = MVP_TOOLS if build else MVP_TOOLS - CANDIDATE_TOOLS
     parsed, model_result = await call_for_json(
         ctx, run, config, prompt, task_id=str(task["task_id"]), stage=stage,
         session_id=None if fresh else task["pm_session"].get("native_session_id"),
-        tools=tools, sandbox="danger-full-access", candidates=stage == "build",
+        tools=tools, sandbox="danger-full-access" if build else "read-only", candidates=build,
         subagents=MAX_SUBAGENTS if matched in SUBAGENT_STAGES else 0)
     if parsed is None:
         return {"outcome": "invalid_output", "raw": model_result.final_text[:2000]}

@@ -8,7 +8,8 @@ from typing import Any
 from assistant_kernel.core import rules
 from assistant_kernel.core import skills as skill_rules
 from assistant_kernel.core.executors.common import (
-    READ_ONLY_TOOLS, call_for_json, capabilities, charter, load_agent, prompt_text, render_documents,
+    READ_ONLY_TOOLS, call_for_json, capabilities, charter, load_agent, project_catalog, prompt_text,
+    render_documents,
 )
 
 STAGE_ORDER = ["requirements", "design", "build", "review", "release", "operate"]
@@ -18,8 +19,8 @@ PURPOSE_NAMES = {"evaluate": "评估并安排下一步", "review_input": "卡片
 REASONS = {
     "start": "新任务刚开始，安排第一步",
     "pm_questions": "PM 提出了问题，需要整理给用户",
-    "pm_completed": "PM 完成了本轮工作", "pm_continue": "PM 本轮未完成，需要继续",
-    "pm_needs_approval": "PM 提交了需要批准的文档", "pm_failed": "PM 报告本轮失败",
+    "pm_completed": "PM 完成了本轮工作",
+    "pm_failed": "PM 报告本轮失败",
     "pm_return": "PM 建议回到更早的阶段", "answers": "用户回答了你上次的问题",
     "revise": "用户要求修改你上次提出的下一步", "validation_passed": "Kernel 验证通过",
     "validation_failed": "Kernel 验证未通过", "publish_failed": "发布失败",
@@ -28,12 +29,13 @@ REASONS = {
     "create_project_rejected": "用户没有批准你提出的项目规格", "bootstrap_failed": "创建项目失败",
     "followups_rejected": "用户没有批准你提出的后续任务",
 }
-KIND_NAMES = {"delivery": "交付", "operation": "运营", "evolution": "周度复盘（自我进化）", "bootstrap": "创建项目"}
+KIND_NAMES = {"delivery": "交付", "evolution": "周度复盘（自我进化）", "bootstrap": "创建项目"}
+TRACK_NAMES = {"full": "完整流程（需求→设计→实施→Review→发布）", "quick": "轻量流程（需求含简要方案→实施→发布）"}
 
 
 def allowed_moves(task: dict[str, Any]) -> str:
-    lines = []
-    for target in sorted(rules.STAGE_MOVES.get(task["stage"], ()), key=STAGE_ORDER.index):
+    lines = [f"当前流程：{TRACK_NAMES.get(task.get('track', 'full'))}"]
+    for target in sorted(rules.stage_moves(task), key=STAGE_ORDER.index):
         approve = rules.approvals_needed(task, target)
         error = rules.move_error(task, target, approving=tuple(approve))
         if error:
@@ -109,12 +111,20 @@ async def execute_supervisor(run: dict[str, Any], ctx) -> dict[str, Any]:
         sections.append(f"## 用户刚发的新消息\n\n{message['body'].get('text', '')}")
     else:
         message = await kernel.get_message(run_input["message_id"])
-        sections.append(f"## 用户在 Supervisor 频道的发言\n\n{message['body'].get('text', '')}")
+        source = message["body"].get("handoff_from")
+        title = f"从项目 {source} 转交来的请求（交接说明）" if source else "用户在 Supervisor 频道的发言"
+        sections.append(f"## {title}\n\n{message['body'].get('text', '')}")
+        if "routing" in caps:
+            catalog = await asyncio.to_thread(project_catalog, settings, await kernel.active_projects(),
+                                              exclude=project_id)
+            sections.append("## 项目名录（Kernel 汇总，各项目章程的用途、范围和路由信息）\n\n" + catalog)
     sections.append(prompt_text(PURPOSE_PROMPT[purpose]))
     if "project_management" in caps and purpose == "evaluate":
         sections.append(prompt_text("supervisor-kernel"))
     if "shared_context" in caps and purpose == "consult":
         sections.append(prompt_text("supervisor-shared"))
+    if "routing" in caps and purpose == "consult":
+        sections.append(prompt_text("routing"))
     parsed, model_result = await call_for_json(
         ctx, run, config, "\n\n".join(sections), task_id=str(task_id) if task_id else None, stage=None,
         session_id=None, tools=READ_ONLY_TOOLS, sandbox="read-only")

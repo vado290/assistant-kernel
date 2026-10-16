@@ -8,6 +8,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from assistant_kernel.harness.base import AgentTurnRequest, AgentTurnResult
 from assistant_kernel.core import skills as skill_rules
 from assistant_kernel.core.agents import AgentConfig, AgentLoader
@@ -88,6 +90,27 @@ def charter(settings, project_id: str) -> str:
     """The project charter (knowledge/charter.md); empty when the project has none."""
     path = ProjectRuntimeManager(settings.data_root).ensure(project_id).vault_root / "knowledge" / "charter.md"
     return path.read_text("utf-8").strip() if path.is_file() else ""
+
+
+CATALOG_SECTIONS = ("项目用途", "范围", "路由信息")
+
+
+def project_catalog(settings, project_ids: list[str], *, exclude: str) -> str:
+    """Routing view of the other projects (R2.2): purpose, scope and routing info from each charter."""
+    runtime = ProjectRuntimeManager(settings.data_root)
+    parts = []
+    for project_id in project_ids:
+        if project_id == exclude:
+            continue
+        vault = runtime.ensure(project_id).vault_root
+        text = charter(settings, project_id)
+        sections = [f"**{title}**\n{skill_rules.section_text(text, title)}" for title in CATALOG_SECTIONS
+                    if skill_rules.section_text(text, title)]
+        if not sections:   # no charter yet: name and purpose from project.yaml
+            config = yaml.safe_load((vault / "project.yaml").read_text("utf-8")) if (vault / "project.yaml").is_file() else {}
+            sections = [f"**项目用途**\n{(config or {}).get('purpose') or '（未写明）'}"]
+        parts.append(f"### 项目 `{project_id}`\n\n" + "\n\n".join(sections))
+    return "\n\n".join(parts) or "（没有其他项目）"
 
 
 def render_documents(settings, task: dict[str, Any]) -> str:

@@ -15,11 +15,10 @@ from assistant_kernel.core.db import all_rows, event, one
 from assistant_kernel.core.skills import SHARED_FILES
 
 MUTEX = {"pm_turn": "pm", "supervisor": "supervisor", "validation": "validation", "publish": "publish",
-         "bootstrap": "bootstrap"}
+         "bootstrap": "bootstrap", "triage": "triage"}
 STAGE_NAMES = {"requirements": "需求分析", "design": "方案设计", "build": "实施与自测",
                "review": "独立 Review", "release": "发布", "operate": "运营"}
 JSON_FIELDS = ("documents", "approvals", "pm_session")
-EXTRA_TURNS = 12
 
 DECISION_ACTIONS = {
     "release": ("approve", "reject"),
@@ -27,7 +26,6 @@ DECISION_ACTIONS = {
     "cancel": ("approve", "reject"),
     "new_task": ("approve", "reject"),
     "run_failed": ("retry", "stop"),
-    "turn_budget": ("continue", "stop"),
     "reconcile": ("published", "failed"),
     "create_project": ("approve", "reject"),
     "followups": ("approve", "reject"),
@@ -71,15 +69,17 @@ async def enqueue(c, project_id: str, run_type: str, purpose: str = "default", r
          Jsonb(base), f"{MUTEX[run_type]}:{project_id}" if run_type in MUTEX else None))
 
 
-async def notify(c, project_id: str, role: str, text: str, *, task_id=None, chat: dict | None = None) -> None:
-    """Queue an outbound message (delivered by the gateway in phase 3)."""
+async def notify(c, project_id: str, role: str, text: str, *, task_id=None, chat: dict | None = None,
+                 **body: Any):
+    """Queue an outbound message for the gateway; extra body fields (e.g. link_message) travel with it."""
     chat = chat or {}
-    await c.execute(
-        """INSERT INTO core.messages(project_id, channel, chat_id, user_id, direction, role, body, task_id,
-                                     delivery_status)
-           VALUES (%s, %s, %s, %s, 'outbound', %s, %s, %s, 'pending')""",
+    row = await one(
+        c, """INSERT INTO core.messages(project_id, channel, chat_id, user_id, direction, role, body, task_id,
+                                        delivery_status)
+              VALUES (%s, %s, %s, %s, 'outbound', %s, %s, %s, 'pending') RETURNING message_id""",
         (project_id, chat.get("channel", "kernel"), chat.get("chat_id"), chat.get("user_id"), role,
-         Jsonb({"text": text}), task_id))
+         Jsonb({"text": text, **body}), task_id))
+    return row["message_id"]
 
 
 # ---------------------------------------------------------------- transitions (each creates one cursor)
@@ -160,7 +160,7 @@ async def activate_next(c, project_id: str) -> dict[str, Any] | None:
     if active:
         return None
     task = await one(c, """SELECT * FROM core.tasks WHERE project_id=%s AND state='queued'
-                           ORDER BY (priority='urgent') DESC, created_at LIMIT 1 FOR UPDATE""", (project_id,))
+                           ORDER BY created_at LIMIT 1 FOR UPDATE""", (project_id,))
     if task is None:
         return None
     task = await _update(c, task, stage=rules.INITIAL_STAGE[task["kind"]])
@@ -170,14 +170,14 @@ async def activate_next(c, project_id: str) -> dict[str, Any] | None:
 
 
 async def create_task(c, project_id: str, *, goal: str, origin: str, kind: str = "delivery",
-                      source_message_id=None, priority: str = "normal", parent_task_id=None,
+                      source_message_id=None, parent_task_id=None,
                       idempotency_key: str | None = None, reason: str | None = None) -> dict[str, Any]:
     task = await one(
-        c, """INSERT INTO core.tasks(project_id, kind, origin, priority, goal, source_message_id,
+        c, """INSERT INTO core.tasks(project_id, kind, origin, goal, source_message_id,
                                      parent_task_id, idempotency_key, reason, created_at)
-              VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, clock_timestamp())
+              VALUES (%s, %s, %s, %s, %s, %s, %s, %s, clock_timestamp())
               ON CONFLICT (idempotency_key) DO NOTHING RETURNING *""",
-        (project_id, kind, origin, priority, goal, source_message_id, parent_task_id, idempotency_key, reason))
+        (project_id, kind, origin, goal, source_message_id, parent_task_id, idempotency_key, reason))
     if task is None:
         return await one(c, "SELECT * FROM core.tasks WHERE idempotency_key=%s", (idempotency_key,))
     await event(c, project_id, "task_created", task_id=task["task_id"], origin=origin, kind=kind)
@@ -199,6 +199,8 @@ def is_cursor(task: dict[str, Any] | None, run: dict[str, Any]) -> bool:
 async def on_result(c, run: dict[str, Any], result: dict[str, Any]) -> None:
     if run["run_type"] == "supervisor" and run["purpose"] == "consult":
         return await _consult_result(c, run, result)
+    if run["run_type"] == "triage":
+        return await _triage_result(c, run, result)
     task = await load_task(c, run["task_id"])
     if run["purpose"] == "review_input":
         return await _review_input_result(c, task, run, result)
@@ -226,17 +228,14 @@ async def _pm_result(c, task, run, result) -> None:
     if summary:
         await notify(c, task["project_id"], "pm", f"PM（{STAGE_NAMES.get(task['stage'], task['stage'])}）：{summary}",
                      task_id=task["task_id"])
-    if task["turn_count"] > task["max_turns"]:
-        await to_awaiting(c, task, _decision(task, "turn_budget", f"已执行 {task['turn_count']} 轮，是否继续？",
-                                             pm_result=result))
-    elif outcome == "needs_input":
+    if outcome == "needs_input":
         questions = _checked_questions(result.get("questions"))
         await to_supervising(c, task, "pm_questions", pm_questions=questions, summary=summary)
     elif outcome == "ready_for_validation":
         if task["stage"] != "build" or not (docs.get("implementation_report") or {}).get("bundle_sha"):
             raise InvalidResult("validation needs the build stage and an implementation_report with bundle_sha")
         await to_validating(c, task)
-    elif outcome in ("completed", "needs_approval", "continue", "failed"):
+    elif outcome in ("completed", "failed"):
         await to_supervising(c, task, "pm_" + outcome, summary=summary)
     elif outcome in ("return_to_requirements", "return_to_design"):
         await to_supervising(c, task, "pm_return", target=outcome.removeprefix("return_to_"), summary=summary)
@@ -284,15 +283,19 @@ def _supervisor_item(task, run_input: dict[str, Any], result: dict[str, Any]) ->
                              bundle_sha=bundle, review_sha=rules.doc_sha(task, "review_report"))
         if not result.get("instruction"):
             raise InvalidResult("propose_next needs an instruction")
-        approve = rules.approvals_needed(task, target)
-        error = rules.move_error(task, target, approving=tuple(approve))
+        # The Supervisor may propose a track; executing the card confirms it (R2.3).
+        track = result.get("track") if result.get("track") in rules.TRACKS else task.get("track", "full")
+        planned = {**task, "track": track}
+        approve = rules.approvals_needed(planned, target)
+        error = rules.move_error(planned, target, approving=tuple(approve))
         if error:
             raise InvalidResult(error)
         shas = {kind: rules.doc_sha(task, rules.DOCUMENT_FOR_APPROVAL[kind]) for kind in approve}
         return cards.new_item(target_kind="task", target_id=str(task["task_id"]), kind="next_step",
                               origin="supervisor", deliver_to="pm",
                               content={"message": message, "instruction": result["instruction"],
-                                       "target_stage": target, "approve": approve, "doc_shas": shas})
+                                       "target_stage": target, "approve": approve, "doc_shas": shas,
+                                       "track": track, "track_changed": track != task.get("track", "full")})
     if decision in ("propose_complete", "propose_cancel"):
         return _decision(task, decision.removeprefix("propose_"), message)
     if decision == "propose_followups":
@@ -408,8 +411,10 @@ async def _consult_result(c, run, result) -> None:
         raise InvalidResult("a consultation must reply to the user")
     message = await one(c, "SELECT * FROM core.messages WHERE message_id=%s", (run["input"]["message_id"],))
     chat = {"channel": message["channel"], "chat_id": message["chat_id"], "user_id": message["user_id"]}
-    if result.get("reply"):
-        await notify(c, run["project_id"], "supervisor", result["reply"], chat=chat)
+    link = {}
+    if isinstance(result.get("route"), dict) and "routing" in (result.get("_capabilities") or ()):
+        link = {"link_message": str(await _route(c, run["project_id"], message, result["route"]))}
+    await notify(c, run["project_id"], "supervisor", result["reply"], chat=chat, **link)
     new_task = result.get("propose_new_task")
     if new_task:
         await cards.add_item(c, run["project_id"], cards.new_item(
@@ -432,13 +437,68 @@ async def _consult_result(c, run, result) -> None:
             await _upgrade_item(c, task, item, upgrade)
 
 
+async def _task_from_message(c, project_id: str, message: dict[str, Any], *, goal: str,
+                             reason: str | None = None) -> dict[str, Any]:
+    task = await create_task(c, project_id, goal=goal, origin="user", source_message_id=message["message_id"],
+                             reason=reason, idempotency_key=f"message-task:{message['message_id']}")
+    await c.execute("UPDATE core.messages SET task_id=%s, consumed_by_run_id=NULL WHERE message_id=%s",
+                    (task["task_id"], message["message_id"]))
+    return task
+
+
+async def _triage_result(c, run, result) -> None:
+    """chat → reply; start_task → a task from the message; route → hand over to another project (R2.1/R2.2)."""
+    project_id, decision = run["project_id"], result.get("decision")
+    message = await one(c, "SELECT * FROM core.messages WHERE message_id=%s", (run["input"]["message_id"],))
+    chat = {"channel": message["channel"], "chat_id": message["chat_id"], "user_id": message["user_id"]}
+    reply = str(result.get("reply") or "").strip()
+    if decision == "chat":
+        if not reply:
+            raise InvalidResult("chat needs a reply")
+        await notify(c, project_id, "pm", reply, chat=chat)
+    elif decision == "start_task":
+        goal = str(result.get("goal") or "").strip() or message["body"].get("text", "")
+        task = await _task_from_message(c, project_id, message, goal=goal,
+                                        reason=str(result.get("reason") or "").strip() or None)
+        await notify(c, project_id, "pm", reply or f"好的，开始处理：{goal[:100]}", chat=chat, task_id=task["task_id"])
+    elif decision == "route":
+        if "routing" not in (result.get("_capabilities") or ()) or not isinstance(result.get("route"), dict):
+            raise InvalidResult("route needs the routing capability and a route object")
+        handoff = await _route(c, project_id, message, result["route"])
+        await notify(c, project_id, "pm", reply or "这件事更适合由另一个项目处理，已经转交。", chat=chat,
+                     link_message=str(handoff))
+    else:
+        raise InvalidResult(f"unsupported triage decision {decision!r}")
+    await event(c, project_id, "triaged", decision=decision, message_id=message["message_id"])
+
+
+async def _route(c, source: str, message: dict[str, Any], route: dict[str, Any]):
+    """Hand a request to another project's Supervisor; returns the outbound handoff note to link to."""
+    target = str(route.get("project_id") or "").strip()
+    handoff = str(route.get("handoff") or "").strip()
+    known = await one(c, "SELECT 1 FROM core.projects WHERE project_id=%s AND status='active'", (target,))
+    if not handoff or target == source or not known:
+        raise InvalidResult(f"route needs another active project and a handoff note (got {target!r})")
+    inbound = await one(
+        c, """INSERT INTO core.messages(project_id, channel, user_id, direction, role, body)
+              VALUES (%s, 'kernel', %s, 'inbound', 'supervisor', %s) RETURNING *""",
+        (target, message["user_id"], Jsonb({"text": handoff, "handoff_from": source,
+                                            "source_message_id": str(message["message_id"])})))
+    note = await notify(c, target, "supervisor", f"📨 来自 {source} 的转交：\n{handoff}")
+    await consult(c, target, inbound)
+    await event(c, source, "routed", target=target, message_id=message["message_id"])
+    return note
+
+
 async def on_exhausted(c, run: dict[str, Any]) -> None:
     """A run failed after all retries: give the user a way forward instead of getting stuck."""
-    if run["purpose"] in ("review_input", "consult"):
+    if run["purpose"] in ("review_input", "consult") or run["run_type"] == "triage":
         await event(c, run["project_id"], "side_run_failed", task_id=run["task_id"], run_id=run["run_id"])
+        reason = str((run.get("error") or {}).get("message", ""))[:200]
         if run["purpose"] == "consult":   # tell the user instead of failing silently
-            reason = str((run.get("error") or {}).get("message", ""))[:200]
             await notify(c, run["project_id"], "supervisor", f"⚠ Supervisor 暂时无法回答这条消息，请稍后再问。（{reason}）")
+        elif run["run_type"] == "triage":
+            await notify(c, run["project_id"], "pm", f"⚠ 暂时无法处理这条消息，请稍后再说一次。（{reason}）")
         return
     task = await load_task(c, run["task_id"])
     if not is_cursor(task, run):
@@ -516,10 +576,11 @@ async def _next_step_action(c, task, item, action, values, source_message_id):
         approvals[kind] = {"doc_sha": sha, "message_id": _str(source_message_id)}
         if kind == "design":
             approvals[kind]["based_on_requirements_sha"] = rules.doc_sha(task, "task_contract")
-    error = rules.move_error({**task, "approvals": approvals}, content["target_stage"])
+    track = content.get("track") or task["track"]
+    error = rules.move_error({**task, "approvals": approvals, "track": track}, content["target_stage"])
     if error:
         raise cards.StaleItem(error)
-    task = await _update(c, task, approvals=approvals)
+    task = await _update(c, task, approvals=approvals, track=track)
     return await to_pm(c, task, {"kind": "instruction", "instruction": content["instruction"],
                                  "note": values.get("text", "")}, stage=content["target_stage"])
 
@@ -541,11 +602,6 @@ async def _decision_action(c, task, item, action, values, source_message_id):
         if action == "reject":
             return await to_supervising(c, task, f"{decision}_rejected", text=note)
         return await close(c, task, "completed" if decision == "complete" else "cancelled", f"user_{decision}")
-    if decision == "turn_budget":
-        if action == "stop":
-            return await close(c, task, "cancelled", "turn_budget_stopped")
-        task = await _update(c, task, max_turns=task["turn_count"] + EXTRA_TURNS)
-        return await to_supervising(c, task, "pm_continue", summary=data["pm_result"].get("summary", ""))
     if decision == "followups":
         if action == "reject":
             return await to_supervising(c, task, "followups_rejected", text=note)
@@ -609,16 +665,15 @@ def _str(value) -> str | None:
 
 # ---------------------------------------------------------------- user input
 
-async def user_input(c, project_id: str, message: dict[str, Any]) -> dict[str, Any]:
-    """PM-channel text: supplements the active task, or starts a new task when the project is idle."""
+async def user_input(c, project_id: str, message: dict[str, Any], *, triage: bool = True) -> dict[str, Any]:
+    """PM-channel text: supplements the active task; when the project is idle, triage decides (R2.1)."""
     active = await one(c, "SELECT * FROM core.tasks WHERE project_id=%s AND state = ANY(%s) FOR UPDATE",
                        (project_id, list(rules.ACTIVE_STATES)))
     if active is None:
-        task = await create_task(c, project_id, goal=message["body"].get("text", ""), origin="user",
-                                 source_message_id=message["message_id"],
-                                 idempotency_key=f"message-task:{message['message_id']}")
-        await c.execute("UPDATE core.messages SET task_id=%s, consumed_by_run_id=NULL WHERE message_id=%s",
-                        (task["task_id"], message["message_id"]))
+        if triage:
+            run = await enqueue(c, project_id, "triage", "default", {"message_id": str(message["message_id"])})
+            return {"action": "triage", "run_id": str(run["run_id"])}
+        task = await _task_from_message(c, project_id, message, goal=message["body"].get("text", ""))
         return {"action": "created", "task_id": str(task["task_id"])}
     await c.execute("UPDATE core.messages SET task_id=%s WHERE message_id=%s",
                     (active["task_id"], message["message_id"]))

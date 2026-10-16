@@ -120,9 +120,11 @@ class CodexCliHarness:
         if request.sandbox == 'danger-full-access':
             if request.permission_profile:
                 raise ValueError('shared Project agreement cannot use a per-Run directory permission profile')
-            runtime_overrides.extend(['-c','approval_policy="never"','-c','shell_environment_policy.inherit="core"'])
-            for name in ['POSTGRES_*','ASSISTANT_*','KERNEL_SCOPE_*','RAG_ENV_FILE']:
-                runtime_overrides.extend(['-c','shell_environment_policy.filters.'+json.dumps(name)+'="exclude"'])
+            runtime_overrides.extend(['-c','approval_policy="never"'])
+        # The model's shell never sees database or scope variables, whatever the sandbox.
+        runtime_overrides.extend(['-c','shell_environment_policy.inherit="core"'])
+        for name in ['POSTGRES_*','ASSISTANT_*','KERNEL_SCOPE_*','RAG_ENV_FILE']:
+            runtime_overrides.extend(['-c','shell_environment_policy.filters.'+json.dumps(name)+'="exclude"'])
         if request.permission_profile:
             if not re.fullmatch(r"kernel_run_[A-Za-z0-9_]+", request.permission_profile):
                 raise ValueError("invalid pinned Codex permission profile")

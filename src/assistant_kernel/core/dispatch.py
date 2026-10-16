@@ -17,7 +17,7 @@ from assistant_kernel.core.kernel import CONTROL_RUNS, Kernel, LeaseLost
 from assistant_kernel.core.vault_sync import sync_vaults
 
 log = logging.getLogger(__name__)
-MODEL_RUNS = ("pm_turn", "supervisor")
+MODEL_RUNS = ("pm_turn", "supervisor", "triage")
 
 
 @dataclass
