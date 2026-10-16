@@ -71,6 +71,8 @@ function Wait-Ready($expectedVersion) {
 $version = (Select-String -LiteralPath (Join-Path $PSScriptRoot "..\pyproject.toml") -Pattern '^version = "(.+)"$').Matches[0].Groups[1].Value
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 Step "build wheel $version ($stamp)"
+# setuptools reuses build/ between builds, so files deleted from the source would ship again.
+InContainer rm -rf "$Kernel/build"
 InContainer $BasePython -m pip wheel --quiet --no-deps -w "$Wheels/$stamp" $Kernel
 $wheel = "$(docker exec AI sh -c "ls $Wheels/$stamp/*.whl")".Trim()
 if (-not $wheel) { throw "wheel build produced no file" }
