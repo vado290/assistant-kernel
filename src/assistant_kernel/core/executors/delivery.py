@@ -93,7 +93,9 @@ async def execute_publish(run: dict[str, Any], ctx) -> dict[str, Any]:
             files = await asyncio.to_thread(gitdelivery.fast_forward, code, bundle_sha[len(gitdelivery.PREFIX):])
         except gitdelivery.GitError as exc:
             return {"outcome": "failed", "error": str(exc)}
-        return {"outcome": "published", "files": [f"git://{code['main']}/{f}" for f in files]}
+        return {"outcome": "published", "files": [f"git://{code['main']}/{f}" for f in files],
+                "note": code["release_note"].format(commit=bundle_sha[len(gitdelivery.PREFIX):][:12])
+                if code["release_note"] else ""}
     bundle, problem = await asyncio.to_thread(_reseal, settings, project_id, task_id, bundle_sha)
     if problem:
         return {"outcome": "failed", "error": problem}

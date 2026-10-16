@@ -92,3 +92,18 @@ async def test_too_many_followups_are_invalid(kernel, sim):
     sim.script("supervisor:evaluate", bad, bad, bad)
     await sim.drain()
     assert (await sim.item("p1"))["content"]["decision"] == "run_failed"
+
+
+async def test_review_material_lists_template_updates_and_other_projects(kernel, kernel_settings, project_files):
+    from assistant_kernel.core import skills
+    from assistant_kernel.core.executors.digest import evolution_material
+    skills.install_templates(project_files, frozenset())
+    copy = project_files / ".agents" / "skills" / "assistant-requirements" / "SKILL.md"
+    copy.write_text(copy.read_text("utf-8").replace('\n  version: "', '\n  version: "0.0.', 1), "utf-8")   # older copy
+    text = await evolution_material(kernel, kernel_settings, "p1")
+    assert "公共模板有更新" in text and "assistant-requirements" in text and "其他项目" not in text
+    (project_files / "project.yaml").write_text(
+        "schema_version: project.v2\nproject_id: p1\nlayout_version: 2\ncapabilities: [kernel_maintenance]\n", "utf-8")
+    await kernel.receive("p2", role="pm", text="p2 的一个需求")
+    text = await evolution_material(kernel, kernel_settings, "p1")
+    assert "其他项目的运营概况" in text and "- p2（improvements）：任务 1" in text and "p2 的一个需求" in text

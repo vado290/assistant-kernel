@@ -137,3 +137,20 @@ def test_new_code_projects_get_a_repository(kernel_settings):
     cfg = gitdelivery.config(kernel_settings, "sales-report")
     assert cfg["repo"] == vault / "repo" and git(cfg["repo"], "rev-parse", "--abbrev-ref", "HEAD") == "main"
     assert (vault / ".agents" / "skills" / "assistant-git-delivery").is_dir()
+
+
+def test_tests_get_only_the_allowed_environment(kernel_settings, repo, project_files, monkeypatch):
+    data = yaml.safe_load((project_files / "project.yaml").read_text("utf-8"))
+    data["validation"] = {"command": "python3 -c \"import os,sys; sys.exit(0 if os.environ.get('ASSISTANT_POSTGRES_HOST')"
+                                     " and not os.environ.get('SECRET_TOKEN') else 1)\"",
+                          "pass_env": ["ASSISTANT_POSTGRES_*"]}
+    data["release_note"] = "kernel {commit} 已合并到 main，需要部署时请执行 deploy.ps1"
+    (project_files / "project.yaml").write_text(yaml.safe_dump(data), "utf-8")
+    monkeypatch.setenv("ASSISTANT_POSTGRES_HOST", "db")
+    monkeypatch.setenv("SECRET_TOKEN", "x")
+    cfg = gitdelivery.config(kernel_settings, "p1")
+    path = gitdelivery.ensure_worktree(cfg, "t-env")
+    (path / "hello.py").write_text("print('x')\n", "utf-8")
+    commit = gitdelivery.seal(cfg, "t-env", "env")
+    assert gitdelivery.validate(cfg, "t-env", commit[4:])[0] is True
+    assert cfg["release_note"].format(commit=commit[4:16]).startswith(f"kernel {commit[4:16]}")

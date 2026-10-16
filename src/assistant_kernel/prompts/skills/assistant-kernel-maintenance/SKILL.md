@@ -2,9 +2,10 @@
 name: assistant-kernel-maintenance
 description: kernel 项目改造自身时的额外规则：运行中的 kernel 与被修改的代码严格分开，改动要守住核心原则并有测试保障，部署由用户执行。
 metadata:
-  version: "0.1.0"
-  load: {disabled: true, roles: [pm, supervisor], stages: [design, build, review, evolution], purposes: [evaluate], capabilities: [kernel_maintenance]}
+  version: "1.0.0"
+  load: {roles: [pm, supervisor], stages: [design, build, review, evolution], purposes: [evaluate], capabilities: [kernel_maintenance]}
   changelog:
+    - "1.0.0 2026-10-16 启用（R4b）：kernel 以代码交付方式维护自身，Kernel 自动提交，测试在提交上运行，合并后由用户部署"
     - "0.1.0 2026-10-16 草稿：随 R4b（kernel 自我维护）启用"
 ---
 
@@ -15,9 +16,11 @@ metadata:
 - 代码仓库根目录的 `AGENTS.md` 和 `docs/ARCHITECTURE.md` 描述了目录结构、核心原则和测试方法，先读它们。
   改了架构或原则，就同步修改这两份文档。
 - 不得修改生产环境的虚拟环境、配置、数据库，也不得执行部署脚本。
+- 测试命令由 Kernel 在验证阶段对你的提交运行（核心测试会自建并删除临时数据库）；实施时你也应在工作区里运行相关测试，
+  命令见 AGENTS.md。发布后 main 快进到你的提交，用户执行 `deploy.ps1` 才会上线。
 
 ## PM：设计与实施
-1. 设计文档必须说明改动是否影响核心原则（例如"每个活动任务只有一个游标""卡片每个项目一张"），以及如何保证不被破坏。
+1. 设计文档必须说明改动是否影响 `docs/ARCHITECTURE.md` 中的核心原则（例如"每个活动任务只有一个游标""卡片每个项目一张"），以及如何保证不被破坏。
 2. 修改状态机或决定类型时，必须新增或修改对应的场景测试。
 3. 修改提示文本或技能时，说明会影响哪些角色、哪些场合，并按 assistant-capability-maintenance 更新版本和变更记录。
 4. 数据库迁移只能新增；迁移要能在已有数据上重复执行而不出错。

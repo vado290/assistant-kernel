@@ -10,7 +10,7 @@ from assistant_kernel.core.executors.common import (
     BRIEF_HEADING, CANDIDATE_TOOLS, DOMAIN_BRIEF, MVP_TOOLS, PROFILE_HEADING, USER_PROFILE, call_for_json, charter,
     document_sections, knowledge_text, load_agent, prompt_text, write_document,
 )
-from assistant_kernel.core.executors.digest import render_digest
+from assistant_kernel.core.executors.digest import evolution_material
 from assistant_kernel.core.executors.state import render_state, write_state
 
 STAGE_NAMES = {"requirements": "需求分析", "design": "方案设计", "build": "实施与自测", "review": "独立 Review",
@@ -72,7 +72,7 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
     profile = await asyncio.to_thread(knowledge_text, settings, run["project_id"], USER_PROFILE)
     brief = await asyncio.to_thread(knowledge_text, settings, run["project_id"], DOMAIN_BRIEF) \
         if matched in BRIEF_STAGES else ""
-    digest = render_digest(await kernel.project_digest(run["project_id"])) if task["kind"] == "evolution" else ""
+    digest = await evolution_material(kernel, settings, run["project_id"]) if task["kind"] == "evolution" else ""
     task_id = str(task["task_id"])
     session_id = None if run_input.get("fresh_session", True) else task["pm_session"].get("native_session_id")
     stage_kind = STAGE_DOCUMENT.get(stage)

@@ -370,6 +370,23 @@ task 本身（批准绑定文档、单一主线、PM 会话连续、可追溯）
 3. **跨项目运营汇总**（第 6 节）进入 kernel 的周度复盘；各项目复盘材料中加入"模板有更新"。
 4. 启用技能 assistant-kernel-maintenance。
 
+**R4b 完成记录（2026-10-16，已部署 0.41.0）**：
+- kernel 仓库的 `main` 快进到 `kernel/r1-skills`（经用户同意），R4b 在分支 `kernel/r4b` 上完成后同样快进合并；工作副本回到 `main`，
+  这样 kernel 任务的发布（快进 main）和用户的 `deploy.ps1` 用的是同一个分支。
+- 仓库级设置 `core.autocrlf=true`（与 Windows 的全局设置一致），容器内的 git 不再把 CRLF 工作副本看成有改动；
+  否则主工作区检出 main 时，发布会因为"有未提交的改动"被拒绝。
+- 仓库加入 `AGENTS.md`（Codex 在 worktree 中自动读取）和 `docs/ARCHITECTURE.md`（核心原则、任务流程、模块、进程）。
+- kernel 项目改为代码交付：`project.yaml` 中能力加上 `kernel_maintenance`、`git_delivery`，`repository: /home/v/AI/assistant-kernel`，
+  验证命令用测试 venv 运行全部测试（`PYTHONPATH=src`，只放行 `ASSISTANT_POSTGRES_*` 环境变量，口令由测试自己从 rag-stack/.env 读取），
+  发布后由 `release_note` 提示"已合并到 main，需要部署时执行 deploy.ps1"。
+  与计划的差异：不另建 `kernel-venvs/task`。测试只读取测试 venv，不安装任何东西，与部署互不干扰。
+- 通用补充：`validation.pass_env`（测试命令可放行的环境变量）和 `release_note`（发布后的提示）。
+- 周度复盘材料：每个项目都会看到"公共模板有更新"（副本版本落后于模板的技能及模板的变更记录）。kernel 还会看到其他项目的运营概况：
+  按共享级别，metrics 给出各项计数，improvements 再加最近的任务，full 再加用户的修改意见。
+- 技能 assistant-kernel-maintenance 1.0.0 启用。
+- 测试：全部通过（新增环境变量放行、发布提示、复盘材料的测试）。
+- 未覆盖：一个真实的 kernel 改造任务从需求走到合并（等用户在 kernel 频道提出第一个改进需求时验证）。
+
 ## 8. 迭代原由的记录（闭环）
 
 | 记录在哪里 | 记什么 | 由谁写 |

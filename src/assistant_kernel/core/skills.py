@@ -167,6 +167,20 @@ def install_templates(vault: Path, capabilities: frozenset[str]) -> list[str]:
     return installed
 
 
+def template_updates(vault: Path) -> list[dict[str, str]]:
+    """Project skill copies whose template has a newer version (copies the project edited are never overwritten;
+    the weekly review decides what to adopt)."""
+    templates = {s.name: s for s in template_skills()}
+    updates = []
+    for copy in project_skills(vault):
+        template = templates.get(copy.name)
+        if template and template.version != copy.version:
+            changelog = re.findall(r'^\s*-\s*"(.+?)"\s*$', template.path.read_text("utf-8"), re.M)[:2]
+            updates.append({"name": copy.name, "copy": copy.version, "template": template.version,
+                            "changes": "；".join(changelog) or "（无变更记录）"})
+    return updates
+
+
 def refresh_unmodified(vault: Path, known: dict[str, str] | None = None) -> tuple[list[str], list[str]]:
     """Bring copies the project never edited up to the current template; returns (refreshed, kept as edited).
 

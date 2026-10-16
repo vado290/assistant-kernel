@@ -13,6 +13,7 @@ project.yaml:  delivery: git-repo
 """
 from __future__ import annotations
 
+import fnmatch
 import os
 import subprocess
 from pathlib import Path
@@ -51,7 +52,9 @@ def config(settings, project_id: str) -> dict[str, Any] | None:
             "main": str(data.get("main_branch") or "main"),
             "workspaces": settings.data_root / "workspaces" / project_id,
             "test_command": str(validation.get("command") or "").strip(),
-            "test_timeout": int(validation.get("timeout_seconds") or 1800)}
+            "test_timeout": int(validation.get("timeout_seconds") or 1800),
+            "pass_env": [str(p) for p in validation.get("pass_env") or []],   # e.g. POSTGRES_* for kernel's tests
+            "release_note": str(data.get("release_note") or "").strip()}
 
 
 def branch(task_id: str) -> str:
@@ -109,7 +112,8 @@ def validate(cfg: dict[str, Any], task_id: str, sha: str) -> tuple[bool, str]:
     summary = f"提交 {sha[:12]}，相对 {cfg['main']} 改动 {len(files)} 个文件：" + "、".join(files[:20])
     if not cfg["test_command"]:
         return True, summary + "\n本项目没有配置测试命令（project.yaml 的 validation.command），只确认了提交；Review 时要人工核对测试。"
-    env = {key: os.environ[key] for key in PASSED_ENV if key in os.environ}
+    env = {key: value for key, value in os.environ.items()
+           if key in PASSED_ENV or any(fnmatch.fnmatchcase(key, pattern) for pattern in cfg["pass_env"])}
     try:
         done = subprocess.run(["bash", "-lc", cfg["test_command"]], cwd=str(path), env=env, capture_output=True,
                               text=True, timeout=cfg["test_timeout"])

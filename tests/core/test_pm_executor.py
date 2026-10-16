@@ -249,7 +249,9 @@ async def test_only_build_turns_may_write_outside_the_kernel(monkeypatch, kernel
             return {}
 
     monkeypatch.setattr(pm, "call_for_json", fake_call)
-    monkeypatch.setattr(pm, "render_digest", lambda digest: "")
+    async def no_material(*args):
+        return ""
+    monkeypatch.setattr(pm, "evolution_material", no_material)
     ctx = SimpleNamespace(kernel=StubKernel(), services={"settings": kernel_settings})
     run = {"run_id": "r1", "task_id": "t1", "project_id": "p1", "input": {"stage": stage}}
     assert (await pm.execute_pm(run, ctx))["outcome"] == "invalid_output"

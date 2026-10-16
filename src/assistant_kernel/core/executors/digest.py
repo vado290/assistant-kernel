@@ -6,6 +6,53 @@ from typing import Any
 UNSURE = ("不清楚", "不知道", "不确定", "随便", "都行")
 
 
+async def evolution_material(kernel, settings, project_id: str) -> str:
+    """Everything a weekly review reads: the project's own digest, template updates its skill copies have not taken,
+    and — for the kernel (kernel_maintenance) — what the other projects share with it (ROUND2 R4b)."""
+    from assistant_kernel.core import skills
+    from assistant_kernel.storage import ProjectRuntimeManager
+    runtime = ProjectRuntimeManager(settings.data_root)
+    vault = runtime.ensure(project_id).vault_root
+    parts = [render_digest(await kernel.project_digest(project_id))]
+    updates = skills.template_updates(vault)
+    if updates:
+        parts.append("### 公共模板有更新（本项目的副本没有跟进；是否采用、采用哪些部分由你在建议中提出）\n" + "\n".join(
+            f"- {u['name']}：本项目 {u['copy']}，模板 {u['template']}。模板最近的变更：{u['changes']}" for u in updates))
+    if "kernel_maintenance" in skills.project_config(vault)["capabilities"]:
+        lines = []
+        for other in await kernel.active_projects():
+            if other == project_id:
+                continue
+            share = skills.project_config(runtime.ensure(other).vault_root)["share_with_kernel"]
+            lines.append(summarize_project(other, share, await kernel.project_digest(other)))
+        if lines:
+            parts.append("### 其他项目的运营概况（按各项目的共享级别；用来发现多个项目共同的问题，据此改进公共模板）\n"
+                         + "\n".join(lines))
+    return "\n\n".join(parts)
+
+
+def summarize_project(project_id: str, share: str, digest: dict[str, Any]) -> str:
+    tasks = digest["tasks"]
+    done = sum(1 for t in tasks if t["state"] == "completed")
+    stopped = sum(1 for t in tasks if t["state"] == "cancelled")
+    actions = digest["card_actions"]
+    revised = sum(1 for a in actions if a.get("action") == "revise")
+    rejected = sum(1 for a in actions if a.get("action") in ("reject", "stop"))
+    failed = sum(f["n"] for f in digest["failures"])
+    jobs_failed = sum(j["failed"] for j in digest.get("jobs") or [])
+    line = (f"- {project_id}（{share}）：任务 {len(tasks)}（完成 {done}、停止 {stopped}），用户发言 {digest['user_messages']}，"
+            f"卡片修改 {revised}、拒绝或停止 {rejected}，失败或重试的执行 {failed}，作业失败 {jobs_failed}")
+    if share in ("improvements", "full"):
+        goals = [t["goal"][:60] for t in tasks if t.get("kind") == "delivery"][:5]
+        if goals:
+            line += "；最近的任务：" + "；".join(goals)
+    if share == "full":
+        texts = [str(a.get("text"))[:80] for a in actions if a.get("text")][:3]
+        if texts:
+            line += "；用户的修改意见：" + "；".join(texts)
+    return line
+
+
 def render_digest(digest: dict[str, Any]) -> str:
     lines = [f"### 最近 {digest['days']} 天的运行记录（Kernel 统计，事实以此为准）",
              f"- 用户发言 {digest['user_messages']} 条；任务 {len(digest['tasks'])} 个"]

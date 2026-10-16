@@ -396,6 +396,8 @@ async def _publish_result(c, task, run, result) -> None:
     outcome = result.get("outcome")
     if outcome == "published":
         await close(c, task, "completed", "published", published_files=result.get("files"))
+        if result.get("note"):   # the project's own release note, e.g. kernel: "ready to deploy"
+            await notify(c, task["project_id"], "pm", str(result["note"])[:1000], task_id=task["task_id"])
     elif outcome == "failed":
         await to_supervising(c, task, "publish_failed", error=result.get("error"))
     else:
