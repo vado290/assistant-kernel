@@ -230,7 +230,7 @@ main 已快进到最新提交；本轮在分支 `kernel/r1-skills` 上进行，�
 - I6 已解决：项目可以通过正常发布修改自己的章程、角色和技能。验证器原先要求技能含"## 任务目标"标题，与新规范冲突，
   改为检查 `metadata.load` 和 `metadata.version`。
 - 后续各期的 4 个草稿技能标为 `disabled`，到对应一期再启用（避免在 R1 中被加载）。
-- 测试：全部 139 项通过、4 项跳过。
+- 测试：全部 138 项通过、4 项跳过。
 - 生产 vault 已迁移（kernel、trading-risk-bot、kernel-v12-validation）：旧技能副本、profiles、旧角色和 kernel 的 intake agent 归档在
   各 vault 的 `archive/round2-r1/`；已确认当前运行的旧版本代码在新 vault 上仍能正常加载。
 - **待办**：部署 0.33.x 到生产（自动部署被权限拦截，需用户执行 `deploy.ps1` 或授权），之后在 Discord 走一遍主线，再快进合并到 main。
