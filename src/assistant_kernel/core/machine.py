@@ -10,7 +10,7 @@ from typing import Any
 
 from psycopg.types.json import Jsonb
 
-from assistant_kernel.core import cards, rules
+from assistant_kernel.core import cards, drafts, rules
 from assistant_kernel.core.db import all_rows, event, one
 from assistant_kernel.core.skills import SHARED_FILES
 
@@ -225,11 +225,10 @@ async def _pm_result(c, task, run, result) -> None:
                 or not report.get("sha256"):
             raise InvalidResult("report needs a known kind and sha256")
         docs[report["kind"]] = report
-    notes = result.get("notes")
-    if notes:
-        if notes.get("kind") != "working_notes" or not notes.get("sha256"):
-            raise InvalidResult("notes need kind working_notes and sha256")
-        docs["working_notes"] = notes
+    for free in result.get("free_documents") or []:   # working notes, domain brief: saved without approval
+        if free.get("kind") not in drafts.FREE_DOCUMENTS or not free.get("sha256"):
+            raise InvalidResult("free documents need a known kind and sha256")
+        docs[free["kind"]] = free
     # `seen`: fingerprints of what this session was given, so a resumed turn sends only what changed.
     # `turns`: how many turns this native session has run; a long one is rotated (ROUND3_PLAN 4.3).
     previous = task["pm_session"]

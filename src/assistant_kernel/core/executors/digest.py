@@ -26,6 +26,9 @@ def render_digest(digest: dict[str, Any]) -> str:
     counts = digest["event_counts"]
     lines.append(f"- 卡片因新输入被改写 {counts.get('card_upgraded', 0)} 次；Supervisor 因新消息重新评估 "
                  f"{counts.get('supervisor_reevaluate', 0)} 次；作废的过期结果 {counts.get('stale_result', 0)} 次")
+    delegations = digest.get("delegations") or []
+    lines.append("- PM 自报使用的子 agent：" + ("、".join(f"{name} × {n}" for name, n in delegations) if delegations
+                                             else "无（需求阶段没有派调研子 agent 时，留意是否该派而未派）"))
     if digest["failures"]:
         lines.append("- 失败或重试过的执行：")
         for f in digest["failures"]:

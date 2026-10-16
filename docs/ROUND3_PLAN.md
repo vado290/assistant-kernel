@@ -91,6 +91,24 @@
 - **子 agent 记录**：PM 输出增加可选字段 `delegations: [{name, goal, result}]`，Kernel 记入运行结果和复盘材料。
 - **行业速写存档**：随需求批准写入项目 `knowledge/`，有效期内不重复调研。
 
+**S2 完成记录（2026-10-16，已部署 0.37.0）**：
+- 代码：
+  - 新文档类型 `domain_brief`（只在需求阶段可编辑，调研子 agent 可直接写入；与工作笔记统称"自由文档"：有变化即存修订版，不需批准）；
+  - 需求获批时，Kernel 除背景存档外，把需求文档的"用户画像观察"按用户（来源消息的用户 ID）追加到 `knowledge/user-profile.md`，
+    把行业速写写成 `knowledge/domain-brief.md`（旧版移到 `knowledge/archive/`）；都可重复执行；
+  - 用户画像注入 PM（每轮，续轮只在变化时）和 Supervisor 的上下文；行业速写注入需求、设计和复盘阶段的 PM；
+  - PM 输出可选字段 `delegations`，记入运行结果、任务状态簿和复盘材料（按子 agent 名称计数）。
+- 技能：新增 assistant-domain-research 1.0.0（按需读取）、assistant-user-insight 1.0.0（PM 与 Supervisor 常驻）；
+  修改 assistant-requirements 3.1.0、assistant-subagent-orchestration 2.1.0（四个子 agent 定义）、assistant-task-continuity 2.3.0、
+  assistant-evolution-review 1.1.0。三个项目都已安装新技能并更新副本（`scripts/round3_s2_vaults.py`；R1 时安装、没有指纹的副本
+  用 `scripts/round2_r2_vaults.py` 的已知指纹识别后更新，现在所有副本都有指纹）。
+- 测试：全部 167 项通过、3 项跳过（新增 `tests/core/test_s2.py`）。
+- 调整：设计文档的"运行方式"一节推迟到 S3，与 manifest 字段一起定义，避免技能先引用尚不存在的运行时。
+- 真实模型冒烟（kernel-v12-validation，任务"上海约 20 家连锁便利店的每日经营日报规范"）：主线走通（提问 7 项 → 需求 → 实施 → 验证 →
+  发布 → 完成）。PM 在第 1 轮按技能派出 industry-research 子 agent，写成约 6900 字的行业速写（定位参数、有效期、带来源编号的事实、
+  候选问题），7 个问题即取材于此；`delegations` 进入了状态簿；需求获批后 Kernel 把速写存为 `knowledge/domain-brief.md`。
+  需求文档的"用户画像观察"为"无"（自动驾驶只答了一轮，未达到"至少两次"的证据要求），画像追加由单元测试覆盖。
+
 ## 6. S3 通用运行时（定时作业与长驻服务）
 
 ### 6.1 唯一来源：`runtime/manifest.yaml`（格式 `runtime-manifest.v1`）
@@ -137,3 +155,5 @@ services:
 
 | 日期 | 原结论 | 修订 | 原因 |
 |---|---|---|---|
+| 10-16 | S2 中 assistant-solution-design 增加"运行方式"一节 | 移到 S3，与 `runtime-manifest.v1` 一起定义 | 运行时上线前写进技能，PM 会产出没有组件读取的声明 |
+| 10-16 | 会话轮换按上下文占比（60%）判断 | 按会话已运行的回合数（8 轮） | Codex 报告的 input_tokens 是一轮内多次请求的累计值，不等于上下文长度；自动压缩继续兜底防止超限 |

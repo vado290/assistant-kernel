@@ -86,10 +86,21 @@ def read_document(settings, project_id: str, document: dict[str, Any]) -> str:
     return drafts.revision_markdown(settings, project_id, document)
 
 
+USER_PROFILE = "user-profile.md"    # per project, one section per user; Kernel appends on requirements approval
+DOMAIN_BRIEF = "domain-brief.md"    # the latest approved industry research
+PROFILE_HEADING = "## 用户画像（本项目积累；[推断] 项未经用户确认，用户纠正优先）\n\n"
+BRIEF_HEADING = "## 行业速写（knowledge/domain-brief.md，注意其日期和有效期）\n\n"
+
+
+def knowledge_text(settings, project_id: str, name: str) -> str:
+    """A file under the project's knowledge/ folder; empty when it does not exist."""
+    path = ProjectRuntimeManager(settings.data_root).ensure(project_id).vault_root / "knowledge" / name
+    return path.read_text("utf-8").strip() if path.is_file() else ""
+
+
 def charter(settings, project_id: str) -> str:
     """The project charter (knowledge/charter.md); empty when the project has none."""
-    path = ProjectRuntimeManager(settings.data_root).ensure(project_id).vault_root / "knowledge" / "charter.md"
-    return path.read_text("utf-8").strip() if path.is_file() else ""
+    return knowledge_text(settings, project_id, "charter.md")
 
 
 CATALOG_SECTIONS = ("项目用途", "范围", "路由信息")
@@ -115,7 +126,8 @@ def project_catalog(settings, project_ids: list[str], *, exclude: str) -> str:
 
 DOCUMENT_TITLES = {"task_contract": "需求文档", "solution_design": "设计文档",
                    "implementation_report": "实施报告", "review_report": "Review 报告",
-                   "improvement_proposal": "改进建议", "working_notes": "PM 工作笔记"}
+                   "improvement_proposal": "改进建议", "working_notes": "PM 工作笔记",
+                   "domain_brief": "行业速写（本任务调研）"}
 
 
 def document_sections(settings, task: dict[str, Any]) -> list[tuple[str, str, str]]:

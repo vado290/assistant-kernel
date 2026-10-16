@@ -26,3 +26,10 @@
   所以要写到"换个人接手也能继续"的程度；状态簿已记录的原话和回答不必抄写，写你的理解、判断和打算。
 - failed 只用于确实无法继续的情况，并在 summary 中说明原因。
 - task_contract（需求文档）必须包含一个标题为"背景信息存档"的章节：用户批准后，Kernel 会把这一节原样追加到项目章程。没有新信息时写"无"。
+- task_contract 还必须包含一个标题为"用户画像观察"的章节：本任务中观察到的、与协作方式有关的用户特点（每条写维度、观察、证据，
+  未经用户确认的标 [推断]）。用户批准后，Kernel 把它追加到项目的 knowledge/user-profile.md。没有新观察时写"无"。
+- **行业速写（domain_brief）**：需求阶段的行业调研结果，用 edit_task_document 编辑（通常由调研子 agent 写入），不需要批准，
+  不写进 document 字段；需求文档获批时，Kernel 把它存为项目的 knowledge/domain-brief.md，以后的任务直接使用。
+- **delegations（可选）**：本轮派过子 agent 时，在 JSON 中加
+  `"delegations": [{"name": "子 agent 定义名称", "goal": "交给它的目标", "result": "一句话结果"}]`。
+  Kernel 看不到子 agent 的过程，只能靠这里的记录做交接和复盘；没派就省略。

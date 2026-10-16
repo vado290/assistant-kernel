@@ -202,8 +202,15 @@ class Kernel:
                 (project_id, since))).fetchall())
             inbound = (await one(c, """SELECT count(*) AS n FROM core.messages WHERE project_id=%s AND direction='inbound'
                                        AND body ? 'text' AND created_at > now() - %s::interval""", (project_id, since)))["n"]
+            delegated = await all_rows(c, """
+                SELECT d->>'name' AS name, count(*) AS n FROM core.runs r,
+                       jsonb_array_elements(CASE WHEN jsonb_typeof(r.result->'delegations') = 'array'
+                                                 THEN r.result->'delegations' ELSE '[]'::jsonb END) d
+                WHERE r.project_id=%s AND r.run_type='pm_turn' AND r.created_at > now() - %s::interval
+                GROUP BY 1 ORDER BY 2 DESC""", (project_id, since))
         return {"days": days, "tasks": tasks, "card_actions": [a["payload"] for a in actions],
-                "failures": failures, "event_counts": counts, "user_messages": inbound}
+                "failures": failures, "event_counts": counts, "user_messages": inbound,
+                "delegations": [(d["name"] or "（未命名）", d["n"]) for d in delegated]}
 
     async def active_projects(self) -> list[str]:
         async with self.db.tx() as c:

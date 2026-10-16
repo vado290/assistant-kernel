@@ -4,13 +4,15 @@ The state machine only changes the database. Whatever must also land in a vault 
 on the dispatcher's maintenance tick. Every step is idempotent: the file is checked for its marker
 before writing, and a task event records that the step is done.
 
-- background archive: an approved requirements document's "背景信息存档" goes into the charter;
+- background archive: an approved requirements document's "背景信息存档" goes into the charter, its
+  "用户画像观察" into knowledge/user-profile.md, and the task's domain brief into knowledge/domain-brief.md;
 - iteration log: every finished task gets one line in the project's changes/iterations.md;
 - shared context: an approved update is written into the kernel's knowledge/shared file.
 """
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,6 +25,9 @@ from assistant_kernel.storage import ProjectRuntimeManager
 
 log = logging.getLogger(__name__)
 ARCHIVE = "背景信息存档"
+PROFILE_SECTION = "用户画像观察"
+PROFILE_HEADER = ("# 用户画像\n\n每位用户一节。Kernel 在需求文档获批时追加其中的\"用户画像观察\"；周度复盘可以提议整理。"
+                  "标 [推断] 的内容未经用户确认，用户的纠正优先。\n")
 EMPTY = {"", "无", "无。", "（无）", "暂无"}
 STATE_NAMES = {"completed": "完成", "cancelled": "取消", "failed": "失败"}
 
@@ -61,12 +66,42 @@ def append_archive(charter: Path, marker: str, heading: str, body: str) -> bool:
     return True
 
 
+def append_profile(path: Path, user: str, marker: str, heading: str, body: str) -> bool:
+    """Add one dated observation to the user's section of knowledge/user-profile.md; False when already there."""
+    text = path.read_text("utf-8") if path.is_file() else PROFILE_HEADER
+    if marker in text:
+        return False
+    section = f"用户 {user}"
+    entry = f"### {heading} <!-- {marker} -->\n\n{body.strip()}"
+    text = skills.replace_section(text, section, (skills.section_text(text, section) + "\n\n" + entry).strip())
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, "utf-8", newline="\n")
+    return True
+
+
+def write_brief(path: Path, marker: str, heading: str, body: str) -> bool:
+    """Replace knowledge/domain-brief.md with the newly approved research; the previous one moves to knowledge/archive/."""
+    if path.is_file():
+        old = path.read_text("utf-8")
+        if marker in old:
+            return False
+        archive = path.parent / "archive" / f"domain-brief-{hashlib.sha256(old.encode()).hexdigest()[:12]}.md"
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        archive.write_text(old, "utf-8", newline="\n")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"# 行业速写\n\n> {heading} <!-- {marker} -->\n\n{body.strip()}\n", "utf-8", newline="\n")
+    return True
+
+
 async def _archive_backgrounds(kernel, settings) -> int:
+    """On requirements approval: background → charter, user-profile observations → user-profile.md,
+    the task's domain brief → knowledge/domain-brief.md."""
     from assistant_kernel.core.executors.common import read_document
     async with kernel.db.tx() as c:
         rows = await all_rows(c, """
-            SELECT t.task_id, t.project_id, t.goal, t.documents->'task_contract' AS contract
-            FROM core.tasks t
+            SELECT t.task_id, t.project_id, t.goal, t.documents->'task_contract' AS contract,
+                   t.documents->'domain_brief' AS brief, m.user_id
+            FROM core.tasks t LEFT JOIN core.messages m ON m.message_id = t.source_message_id
             WHERE t.approvals ? 'requirements'
               AND t.documents->'task_contract'->>'sha256' = t.approvals->'requirements'->>'doc_sha'
               AND NOT EXISTS (SELECT 1 FROM core.task_events e WHERE e.task_id = t.task_id
@@ -77,14 +112,27 @@ async def _archive_backgrounds(kernel, settings) -> int:
         sha = row["contract"]["sha256"]
         markdown = await asyncio.to_thread(read_document, settings, row["project_id"], row["contract"])
         body = skills.section_text(markdown, ARCHIVE)
-        charter = _vault(settings, row["project_id"]) / "knowledge" / "charter.md"
+        knowledge = _vault(settings, row["project_id"]) / "knowledge"
+        charter = knowledge / "charter.md"
+        heading = f"{_today()} · {row['goal'][:40]}（任务 {str(row['task_id'])[:8]}）"
         written = False
         if body.strip() not in EMPTY and charter.is_file():
-            heading = f"{_today()} · {row['goal'][:40]}（任务 {str(row['task_id'])[:8]}）"
             written = await asyncio.to_thread(append_archive, charter, f"archive:{sha[:12]}", heading, body)
+        observed = skills.section_text(markdown, PROFILE_SECTION)
+        profiled = False
+        if observed.strip() not in EMPTY:
+            profiled = await asyncio.to_thread(append_profile, knowledge / "user-profile.md", row["user_id"] or "默认",
+                                               f"profile:{sha[:12]}", heading, observed)
+        briefed = False
+        if row["brief"]:
+            research = await asyncio.to_thread(read_document, settings, row["project_id"], row["brief"])
+            if research.strip():
+                briefed = await asyncio.to_thread(write_brief, knowledge / "domain-brief.md",
+                                                  f"brief:{row['brief']['sha256'][:12]}", f"{heading} 调研，随需求批准存档",
+                                                  research)
         async with kernel.db.tx() as c:
             await event(c, row["project_id"], "background_archived", task_id=row["task_id"], doc_sha=sha,
-                        written=written, empty=body.strip() in EMPTY)
+                        written=written, empty=body.strip() in EMPTY, profiled=profiled, briefed=briefed)
         count += written
     return count
 

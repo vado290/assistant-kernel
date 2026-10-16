@@ -19,12 +19,19 @@ DOCUMENT_STAGE = {"task_contract": "requirements", "solution_design": "design",
                   "improvement_proposal": "operate"}
 STAGE_DOCUMENT = {stage: kind for kind, stage in DOCUMENT_STAGE.items()}
 NOTES = "working_notes"   # the PM's own running notes (ROUND3_PLAN 4.2): editable in every stage, never approved
-KINDS = (*DOCUMENT_STAGE, NOTES)
+BRIEF = "domain_brief"    # industry research (ROUND3_PLAN 5): archived to knowledge/ when requirements are approved
+FREE_DOCUMENTS = {NOTES: None, BRIEF: {"requirements"}}   # kind → stages where it may be edited (None: every stage)
+KINDS = (*DOCUMENT_STAGE, *FREE_DOCUMENTS)
+
+
+def free_kinds(stage: str | None) -> set[str]:
+    """Documents saved whenever they change, without approval: the working notes, and the brief in requirements."""
+    return {kind for kind, stages in FREE_DOCUMENTS.items() if stages is None or stage in stages}
 
 
 def editable(stage: str | None) -> set[str]:
-    """Document kinds a PM turn in `stage` may edit: that stage's document and the working notes."""
-    return {kind for kind in (STAGE_DOCUMENT.get(stage or ""), NOTES) if kind}
+    """Document kinds a PM turn in `stage` may edit: that stage's document plus the free documents."""
+    return {kind for kind in (STAGE_DOCUMENT.get(stage or ""),) if kind} | free_kinds(stage)
 
 
 def text_sha(text: str) -> str:

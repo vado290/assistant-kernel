@@ -7,7 +7,8 @@ from typing import Any
 from assistant_kernel.core import drafts
 from assistant_kernel.core.drafts import DOCUMENT_STAGE, STAGE_DOCUMENT
 from assistant_kernel.core.executors.common import (
-    CANDIDATE_TOOLS, MVP_TOOLS, call_for_json, charter, document_sections, load_agent, prompt_text, write_document,
+    BRIEF_HEADING, CANDIDATE_TOOLS, DOMAIN_BRIEF, MVP_TOOLS, PROFILE_HEADING, USER_PROFILE, call_for_json, charter,
+    document_sections, knowledge_text, load_agent, prompt_text, write_document,
 )
 from assistant_kernel.core.executors.digest import render_digest
 from assistant_kernel.core.executors.state import render_state, write_state
@@ -21,6 +22,8 @@ QUICK_NOTES = {   # process facts for the quick track (R2.3); Kernel states them
     "build": "按需求文档中的'简要方案'实施并自测；完成后 Kernel 验证，验证通过即可申请发布，没有单独的 Review",
 }
 MAX_SUBAGENTS = 3
+MAX_DELEGATIONS = 10
+BRIEF_STAGES = {"requirements", "design", "evolution"}   # where the archived industry brief is worth its tokens
 RESUMED_NOTE = ("（同一会话的续轮：章程、角色要求、技能和文档中与上一轮相同的部分不再重复发送，下面只有变化的部分；"
                 "需要文档原文时调用 read_task_document，需要完整的任务记录时读 {state}。）")
 OUTPUT_REMINDER = "输出要求与上一轮相同：最后一条消息只输出那一个 JSON 对象。"
@@ -65,6 +68,9 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
                                      task_kind=task["kind"])
     inputs = await kernel.turn_inputs(run)
     project_charter = await asyncio.to_thread(charter, settings, run["project_id"])
+    profile = await asyncio.to_thread(knowledge_text, settings, run["project_id"], USER_PROFILE)
+    brief = await asyncio.to_thread(knowledge_text, settings, run["project_id"], DOMAIN_BRIEF) \
+        if matched in BRIEF_STAGES else ""
     digest = render_digest(await kernel.project_digest(run["project_id"])) if task["kind"] == "evolution" else ""
     task_id = str(task["task_id"])
     session_id = None if run_input.get("fresh_session", True) else task["pm_session"].get("native_session_id")
@@ -77,6 +83,8 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
     state_file = await asyncio.to_thread(write_state, settings, run["project_id"], task_id, state_text)
     context = [
         *([("charter", drafts.text_sha(project_charter), "## 项目章程\n\n" + project_charter)] if project_charter else []),
+        *([("profile", drafts.text_sha(profile), PROFILE_HEADING + profile)] if profile else []),
+        *([("brief", drafts.text_sha(brief), BRIEF_HEADING + brief)] if brief else []),
         ("config", config.config_sha256, "\n\n".join(["## 本项目对你的角色要求\n\n" + config.role_text,
                                                       *([config.skills_text] if config.skills_text else [])])),
         *([("digest", drafts.text_sha(digest), digest)] if digest else []),
@@ -120,11 +128,18 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
             return {"outcome": "invalid_output", "raw": f"{named} was named but its draft is empty"}
         if named == stage_kind or edited != current:
             markdown = edited
-    notes = await asyncio.to_thread(save_notes, settings, run["project_id"], task_id, str(run["run_id"]),
-                                    task["documents"].get(drafts.NOTES))
-    if notes:
-        result["notes"] = notes
-        seen[drafts.NOTES] = notes["sha256"]   # the PM wrote them, so a resumed turn need not resend them
+    delegations = checked_delegations(parsed.get("delegations"))
+    if delegations:
+        result["delegations"] = delegations
+    free = []
+    for kind in sorted(drafts.free_kinds(stage)):
+        saved = await asyncio.to_thread(save_free_document, settings, run["project_id"], task_id, str(run["run_id"]),
+                                        kind, task["documents"].get(kind))
+        if saved:
+            free.append(saved)
+            seen[kind] = saved["sha256"]   # the PM wrote it, so a resumed turn need not resend it
+    if free:
+        result["free_documents"] = free
     if markdown:
         kind = stage_kind
         payload = {"markdown": markdown}
@@ -154,14 +169,24 @@ def outcome_misfit(parsed: dict[str, Any] | None, stage: str) -> str:
     return ""
 
 
-def save_notes(settings, project_id: str, task_id: str, run_id: str, current: dict[str, Any] | None):
-    """Store the working-notes draft as a new revision when the PM changed it this turn."""
-    draft = drafts.load(settings, project_id, task_id, drafts.NOTES)
+def checked_delegations(value: Any) -> list[dict[str, str]]:
+    """The subagents the PM reports it used this turn (Kernel cannot see them itself); malformed entries are dropped."""
+    if not isinstance(value, list):
+        return []
+    entries = [{key: str(item.get(key) or "")[:300] for key in ("name", "goal", "result")}
+               for item in value[:MAX_DELEGATIONS] if isinstance(item, dict)]
+    return [entry for entry in entries if entry["name"] or entry["goal"]]
+
+
+def save_free_document(settings, project_id: str, task_id: str, run_id: str, kind: str,
+                       current: dict[str, Any] | None):
+    """Store a free document's draft (working notes, domain brief) as a new revision when it changed this turn."""
+    draft = drafts.load(settings, project_id, task_id, kind)
     text = str((draft or {}).get("markdown") or "")
     if not text.strip() or text == drafts.revision_markdown(settings, project_id, current):
         return None
-    report = write_document(settings, project_id, task_id, run_id, drafts.NOTES, {"markdown": text}, "pm")
-    drafts.save(settings, project_id, task_id, drafts.NOTES, text, report["sha256"])
+    report = write_document(settings, project_id, task_id, run_id, kind, {"markdown": text}, "pm")
+    drafts.save(settings, project_id, task_id, kind, text, report["sha256"])
     return report
 
 

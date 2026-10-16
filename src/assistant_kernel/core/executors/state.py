@@ -62,6 +62,8 @@ def render_state(task: dict[str, Any], ledger: dict[str, Any], stage_names: dict
         lines.append(f"  - PM 结果（{result.get('outcome', '')}）：{_cut(result.get('summary'), 500)}")
         for q in result.get("questions") or []:
             lines.append(f"  - PM 提问：{_cut(q.get('text'), 200)}")
+        for d in result.get("delegations") or []:
+            lines.append(f"  - 子 agent「{_cut(d.get('name'), 40)}」：{_cut(d.get('goal'), 150)} → {_cut(d.get('result'), 200)}")
 
     others = [a for a in ledger["actions"] if a.get("action") != "submit"][-ACTION_LIMIT:]
     if others:
