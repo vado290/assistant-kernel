@@ -223,6 +223,18 @@ main 已快进到最新提交；本轮在分支 `kernel/r1-skills` 上进行，�
 退出标准：三个项目每轮只加载新技能；一次真实的需求对话能用多问题卡片收集背景，批准后章程第 9 节有存档；
 复盘建议批准后，新任务带原因，`iterations.md` 有记录。
 
+**R1 完成记录（2026-10-16，分支 `kernel/r1-skills`，提交 `077a472`）**：
+- 代码：技能加载器（`core/skills.py`）、合同与技能分离、章程与背景存档、公共背景及更新卡片（`propose_shared_update`）、
+  能力取代写死的 kernel 判断、PM 开启子 agent（最多 3 个）、后续任务带原因、迭代记录（`core/vault_sync.py`，在调度器维护节拍上执行，
+  每步幂等）、创建项目时交付模板技能、迁移 0004（任务原因列）。
+- I6 已解决：项目可以通过正常发布修改自己的章程、角色和技能。验证器原先要求技能含"## 任务目标"标题，与新规范冲突，
+  改为检查 `metadata.load` 和 `metadata.version`。
+- 后续各期的 4 个草稿技能标为 `disabled`，到对应一期再启用（避免在 R1 中被加载）。
+- 测试：全部 139 项通过、4 项跳过。
+- 生产 vault 已迁移（kernel、trading-risk-bot、kernel-v12-validation）：旧技能副本、profiles、旧角色和 kernel 的 intake agent 归档在
+  各 vault 的 `archive/round2-r1/`；已确认当前运行的旧版本代码在新 vault 上仍能正常加载。
+- **待办**：部署 0.33.x 到生产（自动部署被权限拦截，需用户执行 `deploy.ps1` 或授权），之后在 Discord 走一遍主线，再快进合并到 main。
+
 ### R2 分诊与路由
 1. 项目空闲时，PM 频道的消息先由分诊处理（只读、全新会话、用 PM 的角色），输出 `chat` / `start_task` / `route` / `propose_project`；
    Supervisor 频道的咨询增加 `route`。
