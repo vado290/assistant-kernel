@@ -237,7 +237,10 @@ async def test_only_build_turns_may_write_outside_the_kernel(monkeypatch, kernel
     class StubKernel:
         async def get_task(self, task_id):
             return {"task_id": task_id, "project_id": "p1", "kind": kind, "goal": "日报", "documents": {},
-                    "pm_session": {}}
+                    "pm_session": {}, "stage": stage, "approvals": {}}
+
+        async def task_ledger(self, task_id):
+            return {"turns": [], "actions": []}
 
         async def turn_inputs(self, run):
             return []

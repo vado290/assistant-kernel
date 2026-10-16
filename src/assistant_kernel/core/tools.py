@@ -296,15 +296,15 @@ def build_server(scope: Scope) -> MCPServer:
         return row["documents"] or {}
 
     def document_kind(kind: str) -> str:
-        if kind not in drafts.DOCUMENT_STAGE:
-            raise ValueError(f"unknown document kind {kind!r}; one of " + ", ".join(drafts.DOCUMENT_STAGE))
+        if kind not in drafts.KINDS:
+            raise ValueError(f"unknown document kind {kind!r}; one of " + ", ".join(drafts.KINDS))
         return kind
 
     @tool(READ_ONLY)
     async def read_task_document(kind: str) -> dict:
         """Read one of this task's documents: the current stage's working draft, else the current revision."""
         document = (await task_documents()).get(document_kind(kind))
-        if kind == drafts.STAGE_DOCUMENT.get(scope.stage or ""):
+        if kind in drafts.editable(scope.stage):
             draft = drafts.ensure(settings, project_id, scope.task_id, kind, document)
             return {"kind": kind, "source": "draft", "markdown": draft["markdown"],
                     "sha256": drafts.text_sha(draft["markdown"]), "revision_sha256": draft["base_sha256"]}
@@ -315,11 +315,12 @@ def build_server(scope: Scope) -> MCPServer:
     @tool(DRAFT_WRITE)
     async def edit_task_document(kind: str, edits: list[dict[str, str]] | None = None,
                                  content: str | None = None) -> dict:
-        """Edit the current stage's document draft: exact-text edits [{old, new}] (each old must occur exactly
-        once), or the whole text as content. Kernel saves the draft as a new revision when the turn ends."""
-        expected = drafts.STAGE_DOCUMENT.get(scope.stage or "")
-        if document_kind(kind) != expected:
-            raise PermissionError(f"stage {scope.stage!r} can only edit {expected!r}, not {kind!r}")
+        """Edit the current stage's document draft or the working notes: exact-text edits [{old, new}] (each old
+        must occur exactly once), or the whole text as content. Kernel saves the draft as a new revision when the
+        turn ends."""
+        allowed = drafts.editable(scope.stage)
+        if document_kind(kind) not in allowed:
+            raise PermissionError(f"stage {scope.stage!r} can only edit {sorted(allowed)}, not {kind!r}")
         if (edits is None) == (content is None):
             raise ValueError("give either edits or content")
         draft = drafts.ensure(settings, project_id, scope.task_id, kind, (await task_documents()).get(kind))

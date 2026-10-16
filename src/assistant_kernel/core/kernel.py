@@ -162,6 +162,25 @@ class Kernel:
                                        idempotency_key=f"evolution:{row['project_id']}:{week_key}")
         return [row["project_id"] for row in due]
 
+    async def task_ledger(self, task_id) -> dict[str, Any]:
+        """The recorded facts of one task: its finished PM turns (input and output), the user messages each turn
+        consumed, and the card actions. Read-only; rendered by executors/state.py."""
+        async with self.db.tx() as c:
+            turns = await all_rows(c, """SELECT run_id, input, result, created_at FROM core.runs
+                                         WHERE task_id=%s AND run_type='pm_turn' AND status='succeeded'
+                                         ORDER BY created_at""", (task_id,))
+            messages = await all_rows(c, """SELECT consumed_by_run_id, body->>'text' AS text FROM core.messages
+                                            WHERE task_id=%s AND direction='inbound' AND consumed_by_run_id IS NOT NULL
+                                            ORDER BY created_at""", (task_id,))
+            actions = await all_rows(c, """SELECT payload, created_at FROM core.task_events
+                                           WHERE task_id=%s AND kind='card_action' ORDER BY event_id""", (task_id,))
+        supplements: dict[str, list[str]] = {}
+        for m in messages:
+            if m["text"]:
+                supplements.setdefault(str(m["consumed_by_run_id"]), []).append(m["text"])
+        return {"turns": [{**t, "supplements": supplements.get(str(t["run_id"]), [])} for t in turns],
+                "actions": [{**a["payload"], "at": a["created_at"]} for a in actions]}
+
     async def project_digest(self, project_id: str, days: int = 7) -> dict[str, Any]:
         """What happened in a project recently: the evidence a weekly evolution review works from."""
         since = f"{int(days)} days"

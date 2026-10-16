@@ -115,7 +115,7 @@ def project_catalog(settings, project_ids: list[str], *, exclude: str) -> str:
 
 DOCUMENT_TITLES = {"task_contract": "需求文档", "solution_design": "设计文档",
                    "implementation_report": "实施报告", "review_report": "Review 报告",
-                   "improvement_proposal": "改进建议"}
+                   "improvement_proposal": "改进建议", "working_notes": "PM 工作笔记"}
 
 
 def document_sections(settings, task: dict[str, Any]) -> list[tuple[str, str, str]]:

@@ -33,6 +33,7 @@ DECISION_ACTIONS = {
 }
 MAX_SHARED_UPDATE = 4000
 MAX_FOLLOWUPS = 5
+SESSION_TURNS = 8          # PM turns one native session may run before a fresh one takes over from the ledger
 EVOLUTION_INSTRUCTION = ("做本项目的周度复盘：依据下面 Kernel 提供的运行记录和项目现有文件，找出最值得改进的地方，"
                          "提交 improvement_proposal 文档。")
 
@@ -92,7 +93,9 @@ async def to_supervising(c, task, reason: str, **data: Any) -> dict[str, Any]:
 
 async def to_pm(c, task, turn_input: dict[str, Any], *, stage: str | None = None) -> dict[str, Any]:
     stage = stage or task["stage"]
-    fresh = task["pm_session"].get("stage") != stage
+    session = task["pm_session"]
+    # A new session on a stage change or after SESSION_TURNS turns; it resumes from the ledger, notes and documents.
+    fresh = session.get("stage") != stage or (session.get("turns") or 1) >= SESSION_TURNS
     task = await _update(c, task, state="pm", stage=stage)
     await enqueue(c, task["project_id"], "pm_turn", "default",
                   {**turn_input, "stage": stage, "fresh_session": fresh}, task=task)
@@ -222,9 +225,18 @@ async def _pm_result(c, task, run, result) -> None:
                 or not report.get("sha256"):
             raise InvalidResult("report needs a known kind and sha256")
         docs[report["kind"]] = report
+    notes = result.get("notes")
+    if notes:
+        if notes.get("kind") != "working_notes" or not notes.get("sha256"):
+            raise InvalidResult("notes need kind working_notes and sha256")
+        docs["working_notes"] = notes
     # `seen`: fingerprints of what this session was given, so a resumed turn sends only what changed.
+    # `turns`: how many turns this native session has run; a long one is rotated (ROUND3_PLAN 4.3).
+    previous = task["pm_session"]
+    same_session = run["input"].get("fresh_session") is False and previous.get("native_session_id") == result.get("session_id")
     session = {"stage": run["input"]["stage"], "native_session_id": result.get("session_id"),
-               "config_sha256": result.get("config_sha256"), "seen": result.get("seen")}
+               "config_sha256": result.get("config_sha256"), "seen": result.get("seen"),
+               "turns": (previous.get("turns") or 1) + 1 if same_session else 1}
     task = await _update(c, task, documents=docs, pm_session=session, turn_count=task["turn_count"] + 1)
     summary = result.get("summary", "")
     if summary:

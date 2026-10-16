@@ -10,6 +10,7 @@ from assistant_kernel.core.executors.common import (
     CANDIDATE_TOOLS, MVP_TOOLS, call_for_json, charter, document_sections, load_agent, prompt_text, write_document,
 )
 from assistant_kernel.core.executors.digest import render_digest
+from assistant_kernel.core.executors.state import render_state, write_state
 
 STAGE_NAMES = {"requirements": "需求分析", "design": "方案设计", "build": "实施与自测", "review": "独立 Review",
                "operate": "运营", "evolution": "周度复盘"}
@@ -21,7 +22,7 @@ QUICK_NOTES = {   # process facts for the quick track (R2.3); Kernel states them
 }
 MAX_SUBAGENTS = 3
 RESUMED_NOTE = ("（同一会话的续轮：章程、角色要求、技能和文档中与上一轮相同的部分不再重复发送，下面只有变化的部分；"
-                "需要文档原文时调用 read_task_document。）")
+                "需要文档原文时调用 read_task_document，需要完整的任务记录时读 {state}。）")
 OUTPUT_REMINDER = "输出要求与上一轮相同：最后一条消息只输出那一个 JSON 对象。"
 
 
@@ -68,9 +69,12 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
     task_id = str(task["task_id"])
     session_id = None if run_input.get("fresh_session", True) else task["pm_session"].get("native_session_id")
     stage_kind = STAGE_DOCUMENT.get(stage)
-    if stage_kind:   # a new session starts from the current revision; a resumed one keeps its unsaved edits
-        await asyncio.to_thread(drafts.ensure, settings, run["project_id"], task_id, stage_kind,
-                                task["documents"].get(stage_kind), reset=session_id is None)
+    for kind in drafts.editable(stage):   # a new session starts from the current revision; a resumed one keeps edits
+        await asyncio.to_thread(drafts.ensure, settings, run["project_id"], task_id, kind,
+                                task["documents"].get(kind), reset=session_id is None)
+    # The ledger is the handoff: a new session gets it in full, a resumed one already lived through it.
+    state_text = render_state(task, await kernel.task_ledger(task["task_id"]), STAGE_NAMES)
+    state_file = await asyncio.to_thread(write_state, settings, run["project_id"], task_id, state_text)
     context = [
         *([("charter", drafts.text_sha(project_charter), "## 项目章程\n\n" + project_charter)] if project_charter else []),
         ("config", config.config_sha256, "\n\n".join(["## 本项目对你的角色要求\n\n" + config.role_text,
@@ -82,7 +86,8 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
     seen = {key: fingerprint for key, fingerprint, _ in context + documents} | {"output": drafts.text_sha(output)}
     previous = task["pm_session"].get("seen") if session_id else None
     prompt = render_prompt(f"# 项目 {run['project_id']} · PM 回合（{STAGE_NAMES.get(matched, matched)}）",
-                           context, documents, render_turn(task, run_input, inputs), output, seen, previous)
+                           context, documents, render_turn(task, run_input, inputs), output, seen, previous,
+                           state=state_text, state_file=state_file)
     build = stage == "build"
     # Outside build the PM only reads: project files change solely through candidates → validate → publish.
     tools = MVP_TOOLS if build else MVP_TOOLS - CANDIDATE_TOOLS
@@ -109,6 +114,11 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
             return {"outcome": "invalid_output", "raw": f"{named} was named but its draft is empty"}
         if named == stage_kind or edited != current:
             markdown = edited
+    notes = await asyncio.to_thread(save_notes, settings, run["project_id"], task_id, str(run["run_id"]),
+                                    task["documents"].get(drafts.NOTES))
+    if notes:
+        result["notes"] = notes
+        seen[drafts.NOTES] = notes["sha256"]   # the PM wrote them, so a resumed turn need not resend them
     if markdown:
         kind = stage_kind
         payload = {"markdown": markdown}
@@ -128,8 +138,20 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
     return result
 
 
+def save_notes(settings, project_id: str, task_id: str, run_id: str, current: dict[str, Any] | None):
+    """Store the working-notes draft as a new revision when the PM changed it this turn."""
+    draft = drafts.load(settings, project_id, task_id, drafts.NOTES)
+    text = str((draft or {}).get("markdown") or "")
+    if not text.strip() or text == drafts.revision_markdown(settings, project_id, current):
+        return None
+    report = write_document(settings, project_id, task_id, run_id, drafts.NOTES, {"markdown": text}, "pm")
+    drafts.save(settings, project_id, task_id, drafts.NOTES, text, report["sha256"])
+    return report
+
+
 def render_prompt(header: str, context: list[tuple[str, str, str]], documents: list[tuple[str, str, str]],
-                  turn: str, output: str, seen: dict[str, str], previous: dict[str, str] | None) -> str:
+                  turn: str, output: str, seen: dict[str, str], previous: dict[str, str] | None, *,
+                  state: str = "", state_file: str = "runs/<任务>/state.md") -> str:
     """The full prompt for a new session; on a resumed one only what changed since the previous PM turn.
 
     A resumed Codex session already holds the earlier prompts, and the appended prompt is not part of the cached
@@ -137,12 +159,13 @@ def render_prompt(header: str, context: list[tuple[str, str, str]], documents: l
     """
     if previous is None:
         return "\n\n".join([header, *(text for _, _, text in context),
+                            *(["## 任务状态簿（Kernel 记录的事实，优先于你的记忆）\n\n" + state] if state else []),
                             "## 已生效文档\n\n" + ("\n\n".join(t for _, _, t in documents) or "（暂无已生效文档）"),
                             "## 本轮上下文\n\n" + turn, output])
     changed = lambda items: [text for key, fingerprint, text in items if previous.get(key) != fingerprint]  # noqa: E731
     changed_documents = changed(documents)
     return "\n\n".join([
-        header, RESUMED_NOTE, *changed(context),
+        header, RESUMED_NOTE.format(state=state_file), *changed(context),
         *(["## 有更新的文档\n\n" + "\n\n".join(changed_documents)] if changed_documents else []),
         "## 本轮上下文\n\n" + turn,
         output if previous.get("output") != seen["output"] else OUTPUT_REMINDER,

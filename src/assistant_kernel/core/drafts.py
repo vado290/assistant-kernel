@@ -18,6 +18,13 @@ DOCUMENT_STAGE = {"task_contract": "requirements", "solution_design": "design",
                   "implementation_report": "build", "review_report": "review",
                   "improvement_proposal": "operate"}
 STAGE_DOCUMENT = {stage: kind for kind, stage in DOCUMENT_STAGE.items()}
+NOTES = "working_notes"   # the PM's own running notes (ROUND3_PLAN 4.2): editable in every stage, never approved
+KINDS = (*DOCUMENT_STAGE, NOTES)
+
+
+def editable(stage: str | None) -> set[str]:
+    """Document kinds a PM turn in `stage` may edit: that stage's document and the working notes."""
+    return {kind for kind in (STAGE_DOCUMENT.get(stage or ""), NOTES) if kind}
 
 
 def text_sha(text: str) -> str:
