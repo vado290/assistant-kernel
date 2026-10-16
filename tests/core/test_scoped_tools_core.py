@@ -17,13 +17,13 @@ from .sim import next_step
 TOOLS = ("get_authorized_workspace", "write_candidate_file", "vault_read_text", "list_recent_history")
 
 
-def private_config(settings, run, task_id, snapshot, directory):
+def private_config(settings, run, task_id, snapshot, directory, tools=TOOLS, stage="build"):
     """What harness/mcp_config.py writes for one invocation."""
     scope = {"KERNEL_SCOPE_PROJECT_ID": "p1", "KERNEL_SCOPE_RUN_ID": str(run["run_id"]),
              "KERNEL_SCOPE_TASK_ID": str(task_id), "KERNEL_SCOPE_CLAIM_TOKEN": str(run["claim_token"]),
-             "KERNEL_SCOPE_ALLOWED_TOOLS": ",".join(TOOLS), "KERNEL_SCOPE_STAGE": "build",
+             "KERNEL_SCOPE_ALLOWED_TOOLS": ",".join(tools), "KERNEL_SCOPE_STAGE": stage,
              "KERNEL_SCOPE_SNAPSHOT_URI": snapshot[0], "KERNEL_SCOPE_SNAPSHOT_SHA256": snapshot[1]}
-    payload = {"invocation_id": "inv-test", "scope_context": scope, "scoped_tools": list(TOOLS),
+    payload = {"invocation_id": "inv-test", "scope_context": scope, "scoped_tools": list(tools),
                "control_environment": {"ASSISTANT_DATA_ROOT": str(settings.data_root),
                                        "POSTGRES_DB": settings.postgres_database},
                "receipt_path": str(directory / "mcp-runtime.json")}
@@ -73,3 +73,40 @@ async def test_core_tool_server_checks_leases_and_owns_candidates(kernel, sim, k
     receipt = json.loads(receipts[0].read_text("utf-8"))
     assert sorted(receipt["exposed"]) == sorted(TOOLS)
     assert [c["status"] for c in receipt["calls"]] == ["error", "succeeded", "succeeded", "succeeded", "error"]
+
+
+async def test_document_tools_edit_only_the_stage_draft(kernel, sim, kernel_settings, project_files, tmp_path):
+    task_id = (await kernel.receive("p1", role="pm", text="write the requirements"))["task_id"]
+    sim.script("supervisor:evaluate", next_step("requirements"))
+    await sim.drain()
+    await kernel.act("p1", (await sim.item("p1"))["item_id"], "execute")
+    run = await kernel.claim("w1")
+    snapshot = workspace_snapshot(kernel_settings, "p1", task_id, "probe", candidates=False)
+    tools = ("get_authorized_workspace", "read_task_document", "edit_task_document")
+    env = private_config(kernel_settings, run, task_id, snapshot, tmp_path, tools=tools, stage="requirements")
+    server = StdioServerParameters(command=sys.executable, args=["-m", "assistant_kernel.core.tools"], env=env)
+    async with stdio_client(server) as (read, write), ClientSession(read, write) as session:
+        await session.initialize()
+        await session.call_tool("get_authorized_workspace", {})
+        draft = payload(await session.call_tool("read_task_document", {"kind": "task_contract"}))
+        assert (draft["source"], draft["markdown"], draft["revision_sha256"]) == ("draft", "", None)
+
+        edit = lambda **args: session.call_tool("edit_task_document", {"kind": "task_contract", **args})  # noqa: E731
+        assert payload(await edit(content="# R\nA\nB\nA"))["changed"] is True
+        missing = payload(await edit(edits=[{"old": "C", "new": "D"}]))
+        assert missing["ok"] is False and "not found" in missing["message"]
+        repeated = payload(await edit(edits=[{"old": "A", "new": "D"}]))
+        assert repeated["ok"] is False and "occurs 2 times" in repeated["message"]
+        partial = payload(await edit(edits=[{"old": "B", "new": "B2"}, {"old": "nope", "new": "x"}]))
+        assert partial["ok"] is False          # all or nothing: the first edit is not kept either
+        other = payload(await session.call_tool("edit_task_document", {"kind": "solution_design", "content": "x"}))
+        assert other["ok"] is False and other["error_type"] == "PermissionError"
+        assert payload(await edit(edits=[{"old": "B", "new": "B2"}]))["edits_applied"] == 1
+        draft = payload(await session.call_tool("read_task_document", {"kind": "task_contract"}))
+        assert draft["markdown"] == "# R\nA\nB2\nA"
+        design = payload(await session.call_tool("read_task_document", {"kind": "solution_design"}))
+        assert design["source"] == "none"
+
+        await kernel.cancel_task(task_id)
+        stopped = payload(await edit(content="late"))
+        assert stopped["ok"] is False and stopped["error_type"] == "PermissionError"

@@ -20,12 +20,14 @@ from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 
 from assistant_kernel.config import KernelSettings
+from assistant_kernel.core import drafts
 from assistant_kernel.core.db import Database, one
 from assistant_kernel.storage import ProjectRuntimeManager
 
 LOGGER = logging.getLogger("assistant_kernel.core.tools")
 READ_ONLY = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
 SCOPED_WRITE = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False)
+DRAFT_WRITE = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False)
 MODEL_CALL = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True)
 HINTS = ((PermissionError, "权限或授权范围拒绝：只能访问本次执行授权的项目和目录。"),
          (FileNotFoundError, "目标文件、目录或记录不存在，或不在授权范围内。"),
@@ -284,6 +286,47 @@ def build_server(scope: Scope) -> MCPServer:
         document = TaskDocumentService(settings).read(project_id, normalized)
         return {"ref": normalized, "document_schema": document["schema_version"], "payload": document["payload"],
                 "file_sha256": normalized["sha256"], "size": path.stat().st_size}
+
+    async def task_documents() -> dict[str, Any]:
+        async with Database(settings).tx() as c:
+            row = await one(c, "SELECT documents FROM core.tasks WHERE task_id::text=%s AND project_id=%s",
+                            (scope.task_id, project_id))
+        if row is None:
+            raise FileNotFoundError("this invocation has no task documents")
+        return row["documents"] or {}
+
+    def document_kind(kind: str) -> str:
+        if kind not in drafts.DOCUMENT_STAGE:
+            raise ValueError(f"unknown document kind {kind!r}; one of " + ", ".join(drafts.DOCUMENT_STAGE))
+        return kind
+
+    @tool(READ_ONLY)
+    async def read_task_document(kind: str) -> dict:
+        """Read one of this task's documents: the current stage's working draft, else the current revision."""
+        document = (await task_documents()).get(document_kind(kind))
+        if kind == drafts.STAGE_DOCUMENT.get(scope.stage or ""):
+            draft = drafts.ensure(settings, project_id, scope.task_id, kind, document)
+            return {"kind": kind, "source": "draft", "markdown": draft["markdown"],
+                    "sha256": drafts.text_sha(draft["markdown"]), "revision_sha256": draft["base_sha256"]}
+        markdown = drafts.revision_markdown(settings, project_id, document)
+        return {"kind": kind, "source": "revision" if document else "none", "markdown": markdown,
+                "sha256": drafts.text_sha(markdown), "revision_sha256": (document or {}).get("sha256")}
+
+    @tool(DRAFT_WRITE)
+    async def edit_task_document(kind: str, edits: list[dict[str, str]] | None = None,
+                                 content: str | None = None) -> dict:
+        """Edit the current stage's document draft: exact-text edits [{old, new}] (each old must occur exactly
+        once), or the whole text as content. Kernel saves the draft as a new revision when the turn ends."""
+        expected = drafts.STAGE_DOCUMENT.get(scope.stage or "")
+        if document_kind(kind) != expected:
+            raise PermissionError(f"stage {scope.stage!r} can only edit {expected!r}, not {kind!r}")
+        if (edits is None) == (content is None):
+            raise ValueError("give either edits or content")
+        draft = drafts.ensure(settings, project_id, scope.task_id, kind, (await task_documents()).get(kind))
+        markdown = content if content is not None else drafts.apply_edits(draft["markdown"], edits or [])
+        drafts.save(settings, project_id, scope.task_id, kind, markdown, draft["base_sha256"])
+        return {"kind": kind, "sha256": drafts.text_sha(markdown), "size": len(markdown),
+                "changed": markdown != draft["markdown"], "edits_applied": len(edits or [])}
 
     @tool(READ_ONLY)
     async def list_recent_history(lookback_days: int = 365, limit: int = 50, cursor: str | None = None,

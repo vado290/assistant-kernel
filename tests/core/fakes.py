@@ -14,7 +14,8 @@ class FakeHarness:
 
     Scripts are keyed by an arbitrary string the executor puts into
     ``request.scope_context['script_key']`` (e.g. ``"pm:requirements"`` or
-    ``"supervisor:evaluate"``) and consumed in order. Every request is kept in
+    ``"supervisor:evaluate"``) and consumed in order; a callable output is called with the
+    request first and returns the output. Every request is kept in
     ``calls`` so tests can assert on what the model would have seen.
     """
 
@@ -43,6 +44,8 @@ class FakeHarness:
         if not self.scripts[key]:
             raise AssertionError(f"no scripted model output left for {key!r}")
         output = self.scripts[key].popleft()
+        if callable(output):   # a turn that does something (e.g. edits a draft) before it answers
+            output = output(request)
         if isinstance(output, BaseException):
             raise output
         text = output if isinstance(output, str) else json.dumps(output, ensure_ascii=False)

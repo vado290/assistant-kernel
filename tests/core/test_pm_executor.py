@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import pytest
 
+from assistant_kernel.core import drafts, rules
 from assistant_kernel.core.dispatch import Dispatcher
 from assistant_kernel.core.executors.common import read_document
 from assistant_kernel.core.executors.pm import execute_pm
@@ -57,6 +58,123 @@ async def test_pm_question_turn(kernel, sim, dispatcher, fake_harness):
     contract = task["documents"]["task_contract"]
     assert read_document(dispatcher.services["settings"], "p1", contract) == "# 日报需求\n给团队看"
     assert (await sim.item("p1", task_id))["content"]["approve"] == ["requirements"]
+
+
+def editing(settings, reply, *, content=None, edits=None, kind="task_contract"):
+    """A scripted PM turn that changes its stage draft first, the way edit_task_document does."""
+    def turn(request):
+        task_id = request.scope_context["KERNEL_SCOPE_TASK_ID"]
+        draft = drafts.load(settings, "p1", task_id, kind)
+        markdown = content if content is not None else drafts.apply_edits(draft["markdown"], edits)
+        drafts.save(settings, "p1", task_id, kind, markdown, draft["base_sha256"])
+        return reply
+    return turn
+
+
+async def ask_then_answer(kernel, sim, dispatcher, fake_harness, reply, between=None):
+    """A fresh question turn, then the answer turn in the same native session; returns both prompts."""
+    task_id = await start_requirements_turn(kernel, sim, dispatcher)
+    fake_harness.script("pm", {"outcome": "needs_input", "summary": "需要确认读者",
+                               "questions": [{"id": "q1", "text": "日报给谁看？"}], "document": None})
+    dispatcher.scripts.add("supervisor:evaluate", {"decision": "relay_pm_questions", "message": "请确认",
+                                                    "questions": [{"id": "c1", "text": "日报给谁看？", "covers": ["q1"]}]})
+    await settle(dispatcher)
+    first = fake_harness.calls[-1]
+    if between:
+        between()
+    await kernel.act("p1", (await sim.item("p1", task_id))["item_id"], "submit", {"answers": {"c1": "团队"}})
+    fake_harness.script("pm", reply)
+    dispatcher.scripts.add("supervisor:evaluate", next_step("requirements", "再补充一点"))
+    await settle(dispatcher)
+    second = fake_harness.calls[-1]
+    assert first.physical_session_id is None and second.physical_session_id is not None
+    return task_id, first.prompt, second.prompt
+
+
+async def test_resumed_turn_sends_only_what_changed(kernel, sim, dispatcher, fake_harness, kernel_settings):
+    reply = editing(kernel_settings, {"outcome": "completed", "summary": "需求已整理", "questions": [],
+                                      "document": {"kind": "task_contract"}}, content="# 日报需求\n给团队看")
+    task_id, fresh, resumed = await ask_then_answer(kernel, sim, dispatcher, fake_harness, reply)
+    assert "这是日报项目的 PM。" in fresh and "## 已生效文档" in fresh and "## 输出要求" in fresh
+    assert "同一会话的续轮" in resumed and "日报给谁看？：团队" in resumed
+    for unchanged in ("这是日报项目的 PM。", "工件约定", "## 输出要求", "## 已生效文档", "## 有更新的文档"):
+        assert unchanged not in resumed, unchanged
+    task = await sim.task(task_id)
+    assert task["pm_session"]["seen"]["task_contract"] == task["documents"]["task_contract"]["sha256"]
+
+    # The PM wrote the contract itself, so it is not sent back; a Kernel-written validation result is.
+    async with kernel.db.tx() as c:
+        await c.execute("""UPDATE core.tasks SET documents = documents || '{"validation": {"passed": false,
+                           "bundle_sha": "b1", "report": "2 个测试失败"}}'::jsonb WHERE task_id=%s""", (task_id,))
+    await kernel.act("p1", (await sim.item("p1", task_id))["item_id"], "execute")
+    fake_harness.script("pm", {"outcome": "completed", "summary": "已补充", "questions": [], "document": None})
+    dispatcher.scripts.add("supervisor:evaluate", next_step("design"))
+    await settle(dispatcher)
+    third = fake_harness.calls[-1].prompt
+    assert "## 有更新的文档" in third and "2 个测试失败" in third and "给团队看" not in third
+
+
+async def test_config_change_resends_role_and_skills(kernel, sim, dispatcher, fake_harness, project_files):
+    role = project_files / "agents" / "pm" / "role.md"
+    reply = {"outcome": "completed", "summary": "完成", "questions": [], "document": None}
+    _, fresh, resumed = await ask_then_answer(kernel, sim, dispatcher, fake_harness, reply,
+                                              between=lambda: role.write_text("这是日报项目的 PM，注意保密。", "utf-8"))
+    assert "这是日报项目的 PM。" in fresh
+    assert "同一会话的续轮" in resumed and "这是日报项目的 PM，注意保密。" in resumed and "工件约定" in resumed
+    assert "## 输出要求" not in resumed and "## 已生效文档" not in resumed
+
+
+async def test_draft_snapshot_creates_a_revision_and_invalidates_the_approval(kernel, sim, dispatcher,
+                                                                             fake_harness, kernel_settings):
+    task_id = await start_requirements_turn(kernel, sim, dispatcher)
+    fake_harness.script("pm", editing(kernel_settings, {"outcome": "completed", "summary": "需求已整理",
+                                                        "questions": [], "document": {"kind": "task_contract"}},
+                                      content="# 日报需求\n给团队看"))
+    dispatcher.scripts.add("supervisor:evaluate", next_step("design", "开始设计"))
+    await settle(dispatcher)
+    first = (await sim.task(task_id))["documents"]["task_contract"]
+    assert read_document(kernel_settings, "p1", first) == "# 日报需求\n给团队看"
+
+    # approve requirements → design; the design turn sends the task back to requirements
+    await kernel.act("p1", (await sim.item("p1", task_id))["item_id"], "execute")
+    assert rules.approval_valid(await sim.task(task_id), "requirements")
+    fake_harness.script("pm", {"outcome": "return_to_requirements", "summary": "读者要改", "questions": [],
+                               "document": None})
+    dispatcher.scripts.add("supervisor:evaluate", next_step("requirements", "读者加上老板"))
+    await settle(dispatcher)
+    await kernel.act("p1", (await sim.item("p1", task_id))["item_id"], "execute")
+
+    # a new session edits the draft (started from the approved revision) and names no document: still saved
+    fake_harness.script("pm", editing(kernel_settings, {"outcome": "completed", "summary": "已改", "questions": [],
+                                                        "document": None},
+                                      edits=[{"old": "给团队看", "new": "给团队和老板看"}]))
+    dispatcher.scripts.add("supervisor:evaluate", next_step("design"))
+    await settle(dispatcher)
+    task = await sim.task(task_id)
+    second = task["documents"]["task_contract"]
+    assert second["sha256"] != first["sha256"]
+    assert read_document(kernel_settings, "p1", second) == "# 日报需求\n给团队和老板看"
+    assert read_document(kernel_settings, "p1", first) == "# 日报需求\n给团队看"   # revisions are immutable
+    assert not rules.approval_valid(task, "requirements")
+    assert (await sim.item("p1", task_id))["content"]["approve"] == ["requirements"]
+
+
+async def test_named_document_with_an_empty_draft_is_invalid(kernel, sim, dispatcher, fake_harness):
+    await start_requirements_turn(kernel, sim, dispatcher)
+    empty = {"outcome": "completed", "summary": "x", "questions": [], "document": {"kind": "task_contract"}}
+    fake_harness.script("pm", empty, empty, empty)
+    await settle(dispatcher)
+    assert (await sim.item("p1"))["content"]["decision"] == "run_failed"
+
+
+def test_draft_edits_must_match_exactly_once():
+    assert drafts.apply_edits("a b c", [{"old": "b", "new": "B"}, {"old": "B c", "new": "x"}]) == "a x"
+    with pytest.raises(ValueError, match="not found"):
+        drafts.apply_edits("a b c", [{"old": "d", "new": "D"}])
+    with pytest.raises(ValueError, match="occurs 2 times"):
+        drafts.apply_edits("a b a", [{"old": "a", "new": "A"}])
+    with pytest.raises(ValueError, match="not found"):
+        drafts.apply_edits("a", [{"old": "", "new": "A"}])
 
 
 async def test_non_json_reply_is_fixed_in_the_same_session(kernel, sim, dispatcher, fake_harness):

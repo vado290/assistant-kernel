@@ -11,7 +11,7 @@ from typing import Any
 import yaml
 
 from assistant_kernel.harness.base import AgentTurnRequest, AgentTurnResult
-from assistant_kernel.core import skills as skill_rules
+from assistant_kernel.core import drafts, skills as skill_rules
 from assistant_kernel.core.agents import AgentConfig, AgentLoader
 from assistant_kernel.services.document_runtime import TaskDocumentService
 from assistant_kernel.storage import ProjectRuntimeManager
@@ -26,9 +26,13 @@ MVP_TOOLS = frozenset({
     "read_project_document", "list_recent_history", "list_project_changes", "read_change_diff",
     "vault_list", "vault_read_text",
     "volcengine_model_status", "volcengine_generate", "volcengine_ocr",
+    "read_task_document", "edit_task_document",
 })
 CANDIDATE_TOOLS = frozenset({"write_candidate_file", "delete_candidate_file"})
-READ_ONLY_TOOLS = MVP_TOOLS - CANDIDATE_TOOLS - {"refresh_project_map", "volcengine_generate", "volcengine_ocr"}
+# Kernel's own document protocol for PM turns: granted whenever offered, a project's tool list does not narrow it.
+DOCUMENT_TOOLS = frozenset({"read_task_document", "edit_task_document"})
+READ_ONLY_TOOLS = MVP_TOOLS - CANDIDATE_TOOLS - DOCUMENT_TOOLS - {"refresh_project_map", "volcengine_generate",
+                                                                  "volcengine_ocr"}
 
 
 def prompt_text(name: str) -> str:
@@ -79,11 +83,7 @@ def write_document(settings, project_id: str, task_id: str, run_id: str, kind: s
 
 def read_document(settings, project_id: str, document: dict[str, Any]) -> str:
     """Markdown body of a stored core document ('' when unreadable)."""
-    try:
-        payload = TaskDocumentService(settings).read(project_id, document["ref"])["payload"]
-    except (KeyError, OSError, ValueError, PermissionError):
-        return ""
-    return str(payload.get("markdown") or "")
+    return drafts.revision_markdown(settings, project_id, document)
 
 
 def charter(settings, project_id: str) -> str:
@@ -113,19 +113,28 @@ def project_catalog(settings, project_ids: list[str], *, exclude: str) -> str:
     return "\n\n".join(parts) or "（没有其他项目）"
 
 
-def render_documents(settings, task: dict[str, Any]) -> str:
-    titles = {"task_contract": "需求文档", "solution_design": "设计文档",
-              "implementation_report": "实施报告", "review_report": "Review 报告",
-              "improvement_proposal": "改进建议"}
-    parts = []
-    for kind, title in titles.items():
+DOCUMENT_TITLES = {"task_contract": "需求文档", "solution_design": "设计文档",
+                   "implementation_report": "实施报告", "review_report": "Review 报告",
+                   "improvement_proposal": "改进建议"}
+
+
+def document_sections(settings, task: dict[str, Any]) -> list[tuple[str, str, str]]:
+    """(kind, fingerprint, rendered text) for each current document; the fingerprint changes with the content."""
+    sections = []
+    for kind, title in DOCUMENT_TITLES.items():
         document = task["documents"].get(kind)
         if document:
-            parts.append(f"### {title}（sha {document['sha256'][:12]}）\n\n{read_document(settings, task['project_id'], document)}")
+            body = read_document(settings, task["project_id"], document)
+            sections.append((kind, document["sha256"], f"### {title}（sha {document['sha256'][:12]}）\n\n{body}"))
     validation = task["documents"].get("validation")
-    if validation:
-        parts.append(f"### Kernel 验证结果\n\n{'通过' if validation.get('passed') else '未通过'}\n\n{validation.get('report') or ''}")
-    return "\n\n".join(parts) or "（暂无已生效文档）"
+    if validation:   # written by Kernel, it has no revision sha of its own
+        text = f"### Kernel 验证结果\n\n{'通过' if validation.get('passed') else '未通过'}\n\n{validation.get('report') or ''}"
+        sections.append(("validation", drafts.text_sha(json.dumps(validation, sort_keys=True, default=str)), text))
+    return sections
+
+
+def render_documents(settings, task: dict[str, Any]) -> str:
+    return "\n\n".join(text for _, _, text in document_sections(settings, task)) or "（暂无已生效文档）"
 
 
 def workspace_snapshot(settings, project_id: str, task_id: str, variant: str, *,
@@ -151,7 +160,7 @@ async def call_model(ctx, run: dict[str, Any], config: AgentConfig, prompt: str,
     settings, harness = ctx.services["settings"], ctx.services["harness"]
     project_id = run["project_id"]
     invocation_id = f"{run['run_id']}-a{run['attempt']}-{uuid.uuid4().hex[:8]}"
-    allowed = tuple(sorted(tools & set(config.allowed_tools)))
+    allowed = tuple(sorted(tools & (set(config.allowed_tools) | DOCUMENT_TOOLS)))
     model, effort, window, compact = config.model, config.reasoning_effort, None, None
     if hasattr(harness, "resolve_model_profile"):
         profile = await harness.resolve_model_profile(

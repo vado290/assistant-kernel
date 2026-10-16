@@ -222,7 +222,9 @@ async def _pm_result(c, task, run, result) -> None:
                 or not report.get("sha256"):
             raise InvalidResult("report needs a known kind and sha256")
         docs[report["kind"]] = report
-    session = {"stage": run["input"]["stage"], "native_session_id": result.get("session_id")}
+    # `seen`: fingerprints of what this session was given, so a resumed turn sends only what changed.
+    session = {"stage": run["input"]["stage"], "native_session_id": result.get("session_id"),
+               "config_sha256": result.get("config_sha256"), "seen": result.get("seen")}
     task = await _update(c, task, documents=docs, pm_session=session, turn_count=task["turn_count"] + 1)
     summary = result.get("summary", "")
     if summary:
