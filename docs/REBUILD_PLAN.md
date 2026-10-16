@@ -649,6 +649,7 @@ IngressService.receive(event):
 | 10-15 | 阶段 4 删除旧模块时保留飞书凭据和底层客户端（`feishu.py` 的非对话部分） | `feishu.py` 整个删除（在 git 历史中可找回），凭据文件不动 | 新核心和保留的服务都不引用它；以后做 webhook 时按需新写 |
 | 10-15 | 旧表 `project_grants`、`project_file_changes` 留在 `assistant` schema，其余移入 `archive_core5` | 这两张表移入 `core` schema；`assistant` 只剩迁移账本 `schema_migrations` | 新核心拥有它仍在使用的全部表；测试库由同一迁移建表 |
 | 10-15 | 阶段 0.2：旧脚本在阶段 4 移入 `scripts/archive` | 照此执行；另外 `prompts/v12`、`prompts/roles` 直接删除（git 历史可找回） | 新核心和新项目模板都不使用它们 |
+| 10-16 | PM 各阶段都以 `danger-full-access` 运行，非 build 阶段只去掉候选工具 | 只有 build 保持 `danger-full-access`；requirements、design、review、operate（含周度复盘）改用 Codex `read-only` 沙箱（与 Supervisor 相同，`exec resume` 用 `-c sandbox_mode=` 传递）。模型 shell 的环境变量过滤（`POSTGRES_*`、`ASSISTANT_*`、`KERNEL_SCOPE_*`、`RAG_ENV_FILE`，`inherit="core"`）改为对所有沙箱生效 | "非 build 阶段只产出文档、项目文件只能经候选→验证→批准→发布修改"此前只靠提示词约束；read-only 下若不过滤，PM 的 shell 能看到数据库等环境变量 |
 
 ## 11. 用户确认记录
 | 日期 | 事项 | 结论 |
