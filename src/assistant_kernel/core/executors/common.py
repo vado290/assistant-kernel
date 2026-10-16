@@ -8,16 +8,13 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from assistant_kernel.harness.base import AgentTurnRequest, AgentTurnResult
+from assistant_kernel.core import skills as skill_rules
 from assistant_kernel.core.agents import AgentConfig, AgentLoader
 from assistant_kernel.services.document_runtime import TaskDocumentService
 from assistant_kernel.storage import ProjectRuntimeManager
 
 PROMPTS = Path(__file__).parents[2] / "prompts" / "core"
-PROFILE_FOR_STAGE = {"requirements": "requirements", "design": "design", "build": "build",
-                     "review": "audit", "operate": "operate"}
 
 # Tools available in the MVP (plan D3); a project's own tool list can only narrow this.
 MVP_TOOLS = frozenset({
@@ -36,17 +33,24 @@ def prompt_text(name: str) -> str:
     return (PROMPTS / f"{name}.md").read_text(encoding="utf-8").strip()
 
 
-def load_agent(settings, project_id: str, role: str, stage: str | None = None) -> AgentConfig:
-    """Load the project's live agent files (plan D2: no pinned package versions)."""
+def load_agent(settings, project_id: str, role: str, *, stage: str | None = None, purpose: str | None = None,
+               task_kind: str | None = None) -> AgentConfig:
+    """The project's live agent files plus the skills and shared context its load rules select for this run."""
     loader = AgentLoader(settings)
     agent = "manager" if role == "pm" else "supervisor"
-    config = loader.load(project_id, f"project:{project_id}:{agent}")
-    profile_name = PROFILE_FOR_STAGE.get(stage or "")
-    if role == "pm" and profile_name:
-        path = loader.runtime.ensure(project_id).vault_root / "agents" / "pm" / "profiles" / f"{profile_name}.yaml"
-        if path.is_file():
-            config = loader.apply_phase_profile(project_id, config, yaml.safe_load(path.read_text(encoding="utf-8")) or {})
-    return config
+    config, files = loader.load(project_id, f"project:{project_id}:{agent}")
+    vault = loader.runtime.ensure(project_id).vault_root
+    capabilities = skill_rules.project_config(vault)["capabilities"]
+    selection = skill_rules.select(vault, settings.data_root, role=role, stage=stage, purpose=purpose,
+                                   capabilities=capabilities, task_kind=task_kind)
+    return AgentConfig(**{**config.__dict__, "skills_text": selection.render(vault),
+                          "skill_labels": tuple(selection.labels),
+                          "config_sha256": skill_rules.digest(files + selection.files)})
+
+
+def capabilities(settings, project_id: str) -> frozenset[str]:
+    vault = ProjectRuntimeManager(settings.data_root).ensure(project_id).vault_root
+    return skill_rules.project_config(vault)["capabilities"]
 
 
 def parse_json_object(text: str) -> dict[str, Any] | None:
@@ -80,10 +84,10 @@ def read_document(settings, project_id: str, document: dict[str, Any]) -> str:
     return str(payload.get("markdown") or "")
 
 
-def business_profile(settings, project_id: str) -> str:
-    """The project's business background (written at creation); empty when the project has none."""
-    path = ProjectRuntimeManager(settings.data_root).ensure(project_id).vault_root / "knowledge" / "business-profile.md"
-    return path.read_text("utf-8") if path.is_file() else ""
+def charter(settings, project_id: str) -> str:
+    """The project charter (knowledge/charter.md); empty when the project has none."""
+    path = ProjectRuntimeManager(settings.data_root).ensure(project_id).vault_root / "knowledge" / "charter.md"
+    return path.read_text("utf-8").strip() if path.is_file() else ""
 
 
 def render_documents(settings, task: dict[str, Any]) -> str:
@@ -118,7 +122,8 @@ def workspace_snapshot(settings, project_id: str, task_id: str, variant: str, *,
 
 async def call_model(ctx, run: dict[str, Any], config: AgentConfig, prompt: str, *,
                      task_id: str | None, stage: str | None, session_id: str | None,
-                     tools: frozenset[str], sandbox: str, candidates: bool = False) -> AgentTurnResult:
+                     tools: frozenset[str], sandbox: str, candidates: bool = False,
+                     subagents: int = 0) -> AgentTurnResult:
     """One Codex invocation with the project's model settings and the scoped Kernel tools."""
     settings, harness = ctx.services["settings"], ctx.services["harness"]
     project_id = run["project_id"]
@@ -156,7 +161,8 @@ async def call_model(ctx, run: dict[str, Any], config: AgentConfig, prompt: str,
             physical_session_id=session_id, provider=config.provider, model=model, reasoning_effort=effort,
             context_policy=config.context_policy, model_context_window_tokens=window,
             model_auto_compact_token_limit=compact, sandbox=sandbox, timeout_seconds=config.timeout_seconds,
-            invocation_id=invocation_id, cancel_event=ctx.cancel, scoped_tools=allowed, scope_context=scope_context))
+            invocation_id=invocation_id, cancel_event=ctx.cancel, scoped_tools=allowed, scope_context=scope_context,
+            multi_agent_enabled=subagents > 0, max_concurrent_subagents=subagents))
     finally:
         await asyncio.to_thread(sync, settings, project_id, direction="out")
 

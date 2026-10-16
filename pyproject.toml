@@ -49,7 +49,7 @@ assistant_kernel = [
   "core/project_template/*.yaml",
   "core/project_template/agents/*/*.md",
   "core/project_template/agents/*/*.yaml",
-  "core/project_template/agents/pm/profiles/*.yaml",
+  "core/shared_template/*.md",
   "core/project_template/knowledge/*.md",
   "prompts/skills/*/SKILL.md",
   "prompts/skills/*/references/*.md",

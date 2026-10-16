@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
 from assistant_kernel.core.kernel import CONTROL_RUNS, Kernel, LeaseLost
+from assistant_kernel.core.vault_sync import sync_vaults
 
 log = logging.getLogger(__name__)
 MODEL_RUNS = ("pm_turn", "supervisor")
@@ -120,6 +121,8 @@ class Dispatcher:
                     await self.kernel.recover_expired()
                     if self.weekly_evolution:
                         await self.kernel.schedule_evolution()
+                    if "settings" in self.services:
+                        await sync_vaults(self.kernel, self.services["settings"])
                     next_recovery = loop.time() + self.recover_every_seconds
                 started = await self.claim_and_start()
             except Exception:

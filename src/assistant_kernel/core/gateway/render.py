@@ -15,7 +15,7 @@ ACTION_STYLES = {"execute": "success", "approve": "success", "retry": "primary",
 DECISION_TITLES = {"release": "申请发布", "complete": "建议结束任务", "cancel": "建议取消任务",
                    "new_task": "建议新建任务", "run_failed": "执行失败", "turn_budget": "回合数已达上限",
                    "reconcile": "发布结果需要核对", "create_project": "创建新项目",
-                   "followups": "建议排队的新任务"}
+                   "followups": "建议排队的新任务", "shared_update": "修改公共背景"}
 DONE_REPLIES = {"execute": "已确认，PM 将开始执行。", "approve": "已批准。", "reject": "已记录：不同意。",
                 "stop": "任务已停止。", "retry": "已安排重试。", "continue": "已继续。",
                 "published": "已记录：发布成功。", "failed": "已记录：发布失败。", "submit": "答案已提交。",
@@ -81,10 +81,15 @@ def render_item(item: dict[str, Any]) -> dict[str, Any]:
         title = DECISION_TITLES.get(content["decision"], content["decision"])
         buttons = [button(item_id, a) for a in content.get("actions", [])]
         body = f"**⚑ {title}**\n{message}"
-        followups = (content.get("data") or {}).get("tasks")
+        data = content.get("data") or {}
+        followups = data.get("tasks")
         if followups:
-            body += "\n\n" + "\n".join(f"{n}. {goal}" for n, goal in enumerate(followups, 1))
+            body += "\n\n" + "\n".join(_followup_line(n, f) for n, f in enumerate(followups, 1))
             body += "\n\n批准后这些任务依次排队执行，本任务结束。"
+        if content["decision"] == "shared_update":
+            body += (f"\n\n文件：`{data['file']}` · 小节：{data['section']}\n原因：{data['reason'] or '（未说明）'}"
+                     f"\n\n**现在的内容**\n{data.get('before') or '（这一节还不存在，将新增）'}"
+                     f"\n\n**修改后的内容**\n{data['content']}\n\n批准后 Kernel 写入，所有项目从下一轮起使用新内容。")
         spec = (content.get("data") or {}).get("spec")
         if spec:
             profile = spec["business_profile"]
@@ -93,6 +98,13 @@ def render_item(item: dict[str, Any]) -> dict[str, Any]:
                      f"说明：{profile['notes']}\n\n批准后将创建项目目录、PM/Supervisor 配置和 Discord 频道。")
         text, attachment = _fit(body)
     return {"text": text, "buttons": buttons, "attachment": attachment}
+
+
+def _followup_line(number: int, followup) -> str:
+    if isinstance(followup, dict):
+        reason = f"（原因：{followup['reason']}）" if followup.get("reason") else ""
+        return f"{number}. {followup['goal']}{reason}"
+    return f"{number}. {followup}"
 
 
 def closed_text(item: dict[str, Any]) -> str:

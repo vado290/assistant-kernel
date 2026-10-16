@@ -46,7 +46,9 @@ async def dispatcher(kernel, kernel_settings, management):
 
 async def test_project_is_created_after_approval(kernel, sim, dispatcher, kernel_settings, management):
     task_id = (await kernel.receive("kernel", role="pm", text="帮我建一个销售日报项目"))["task_id"]
-    dispatcher.scripts.add("supervisor:evaluate", {"decision": "propose_project", "message": "建议这样创建", "spec": SPEC})
+    # the Supervisor executor adds the project's capabilities after the model reply
+    dispatcher.scripts.add("supervisor:evaluate", {"decision": "propose_project", "message": "建议这样创建", "spec": SPEC,
+                                                    "_capabilities": ["project_management"]})
     await settle(dispatcher)
     item = await sim.item("kernel", task_id)
     assert item["content"]["decision"] == "create_project" and item["content"]["data"]["spec"]["project_id"] == "sales-report"
@@ -55,7 +57,10 @@ async def test_project_is_created_after_approval(kernel, sim, dispatcher, kernel
     await settle(dispatcher)
     assert (await sim.task(task_id))["state"] == "completed"
     vault = kernel_settings.data_root / "vaults" / "sales-report"
-    assert "零售" in (vault / "knowledge" / "business-profile.md").read_text("utf-8")
+    assert "零售" in (vault / "knowledge" / "charter.md").read_text("utf-8")
+    copied = (vault / ".agents" / "skills" / "assistant-requirements" / "SKILL.md").read_text("utf-8")
+    assert "template: {name: assistant-requirements" in copied           # the project owns a copy of the template
+    assert not (vault / ".agents" / "skills" / "assistant-shared-context").exists()   # needs a capability it lacks
     routing = yaml.safe_load(management.read_text("utf-8"))["projects"]["sales-report"]
     assert routing == {"pm_channel_id": "pm1", "supervisor_channel_id": "sup1"}
     notices = [m["body"]["text"] for m in await sim.outbound("kernel")]
@@ -64,9 +69,11 @@ async def test_project_is_created_after_approval(kernel, sim, dispatcher, kernel
         assert await (await c.execute("SELECT 1 FROM core.projects WHERE project_id='sales-report'")).fetchone()
 
     # the created project's agent files load in every stage
-    for stage in ("requirements", "design", "build", "review", "operate"):
-        assert load_agent(kernel_settings, "sales-report", "pm", stage).agent_key == "project:sales-report:manager"
-    assert "销售日报" in load_agent(kernel_settings, "sales-report", "supervisor").role_text
+    for stage in ("requirements", "design", "build", "review", "operate", "evolution"):
+        config = load_agent(kernel_settings, "sales-report", "pm", stage=stage)
+        assert config.agent_key == "project:sales-report:manager" and "assistant-project-agent@2.0.0" in config.skill_labels
+    supervisor = load_agent(kernel_settings, "sales-report", "supervisor", purpose="evaluate")
+    assert "销售日报" in supervisor.role_text and "assistant-goal-supervisor@6.0.0" in supervisor.skill_labels
 
 
 async def test_only_the_management_project_can_propose_projects(kernel, sim, dispatcher):

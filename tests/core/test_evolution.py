@@ -7,6 +7,7 @@ from assistant_kernel.core.dispatch import Dispatcher
 from assistant_kernel.core.executors.common import read_document
 from assistant_kernel.core.executors.pm import execute_pm
 from assistant_kernel.core.gateway import render
+from assistant_kernel.core.vault_sync import sync_vaults
 
 from .sim import next_step
 from .test_dispatch import Scripts, settle
@@ -15,7 +16,8 @@ from .test_dispatch import Scripts, settle
 @pytest.fixture
 def dispatcher(kernel, kernel_settings, fake_harness, project_files):
     (project_files / "knowledge").mkdir()
-    (project_files / "knowledge" / "business-profile.md").write_text("- 行业：零售", "utf-8")
+    (project_files / "knowledge" / "charter.md").write_text("# 日报 · 项目章程\n\n## 4 组织与行业背景\n- 行业：零售\n",
+                                                             "utf-8")
     scripts = Scripts()
     d = Dispatcher(kernel, {**scripts.executors(), "pm_turn": execute_pm},
                    services={"settings": kernel_settings, "harness": fake_harness})
@@ -38,24 +40,38 @@ async def test_evolution_review_to_followups(kernel, sim, dispatcher, fake_harne
     fake_harness.script("pm", {"outcome": "completed", "summary": "建议默认周报", "questions": [],
                                "document": {"kind": "improvement_proposal", "markdown": "# 改进建议\n1. 默认周报"}})
     dispatcher.scripts.add("supervisor:evaluate", {"decision": "propose_followups", "message": "建议排队",
-                                                    "tasks": ["日报工具默认生成周报", "需求阶段先问报告周期"]})
+                                                    "tasks": [{"goal": "日报工具默认生成周报", "reason": "P1 用户把日报改成了周报"},
+                                                              "需求阶段先问报告周期"]})
     await settle(dispatcher)
     prompt = fake_harness.calls[-1].prompt
-    assert "周度复盘" in prompt and "改成周报" in prompt and "行业：零售" in prompt and "运营阶段" in prompt
+    assert "PM 回合（周度复盘）" in prompt and "改成周报" in prompt and "行业：零售" in prompt
+    assert "技能 assistant-evolution-review" in prompt and "技能 assistant-requirements" not in prompt
+    assert fake_harness.calls[-1].multi_agent_enabled
     task = await sim.task(evolution["task_id"])
     assert read_document(kernel_settings, "p1", task["documents"]["improvement_proposal"]).startswith("# 改进建议")
 
     item = await sim.item("p1", evolution["task_id"])
     shown = render.render_item(item)["text"]
-    assert "1. 日报工具默认生成周报" in shown and "2. 需求阶段先问报告周期" in shown
+    assert "1. 日报工具默认生成周报（原因：P1 用户把日报改成了周报）" in shown and "2. 需求阶段先问报告周期" in shown
     await kernel.act("p1", item["item_id"], "approve")
     assert (await sim.task(evolution["task_id"]))["close_reason"] == "followups_queued"
     async with kernel.db.tx() as c:
         rows = list(await (await c.execute(
-            "SELECT goal, origin, state FROM core.tasks WHERE parent_task_id=%s ORDER BY created_at",
+            "SELECT goal, origin, state, reason FROM core.tasks WHERE parent_task_id=%s ORDER BY created_at",
             (evolution["task_id"],))).fetchall())
     assert [(r["goal"], r["origin"]) for r in rows] == [("日报工具默认生成周报", "evolution"), ("需求阶段先问报告周期", "evolution")]
     assert [r["state"] for r in rows] == ["supervising", "queued"]
+    assert [r["reason"] for r in rows] == ["P1 用户把日报改成了周报", None]
+
+    # every finished task gets one line in the iteration log, once
+    assert (await sync_vaults(kernel, kernel_settings))["logged"] == 2      # the cancelled task and the review
+    assert (await sync_vaults(kernel, kernel_settings))["logged"] == 0
+    log = (project_files_root(kernel_settings) / "changes" / "iterations.md").read_text("utf-8")
+    assert "取消（cancelled_by_user）" in log and "完成（followups_queued）" in log and log.count("task:") == 2
+
+
+def project_files_root(settings):
+    return settings.data_root / "vaults" / "p1"
 
 
 async def test_rejected_followups_go_back_to_the_supervisor(kernel, sim):

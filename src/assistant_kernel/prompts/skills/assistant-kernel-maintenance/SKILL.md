@@ -3,7 +3,7 @@ name: assistant-kernel-maintenance
 description: kernel 项目改造自身时的额外规则：运行中的 kernel 与被修改的代码严格分开，改动要守住核心原则并有测试保障，部署由用户执行。
 metadata:
   version: "0.1.0"
-  load: {roles: [pm, supervisor], stages: [design, build, review, evolution], purposes: [evaluate], capabilities: [kernel_maintenance]}
+  load: {disabled: true, roles: [pm, supervisor], stages: [design, build, review, evolution], purposes: [evaluate], capabilities: [kernel_maintenance]}
   changelog:
     - "0.1.0 2026-10-16 草稿：随 R4b（kernel 自我维护）启用"
 ---

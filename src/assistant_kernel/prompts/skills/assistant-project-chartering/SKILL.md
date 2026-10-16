@@ -3,7 +3,7 @@ name: assistant-project-chartering
 description: 新建项目时，与用户商量并写出项目章程（用途、目标、背景、范围、路由信息）和初始的角色要点、技能和能力建议，用户批准后由 Kernel 创建项目。
 metadata:
   version: "0.1.0"
-  load: {roles: [pm, supervisor], task_kinds: [bootstrap], capabilities: [project_management]}
+  load: {disabled: true, roles: [pm, supervisor], task_kinds: [bootstrap], capabilities: [project_management]}
   changelog:
     - "0.1.0 2026-10-16 草稿：随 R3（以任务方式创建项目）启用"
 ---

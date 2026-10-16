@@ -60,11 +60,12 @@ def test_validation_runner_accepts_skill_and_python_candidate(tmp_path: Path) ->
     skill = """---
 name: demo-skill
 description: Complete one demo task.
+metadata:
+  version: "1.0.0"
+  load: {roles: [pm], stages: [build]}
 ---
 
 # Demo
-
-## 任务目标
 
 Produce a deterministic result.
 """
@@ -103,7 +104,7 @@ def test_validation_runner_reports_invalid_skill_python_and_hash(tmp_path: Path)
     codes = {item["code"] for item in report["issues"]}
 
     assert artifact["status"] == "failed"
-    assert {"candidate_hash", "skill_description", "skill_task_goal", "python_syntax"} <= codes
+    assert {"candidate_hash", "skill_description", "skill_load", "skill_version", "python_syntax"} <= codes
 
 
 def test_validation_runner_fails_when_no_candidate_exists(tmp_path: Path) -> None:

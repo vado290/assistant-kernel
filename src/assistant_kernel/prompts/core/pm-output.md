@@ -13,3 +13,4 @@
 - questions 只在 outcome 为 needs_input 时填写，否则为 []；options 和 recommended 可省略。
 - document 只在本阶段要提交文档时填写，否则为 null；verdict 只用于 review_report。
 - failed 只用于确实无法继续的情况，并在 summary 中说明原因。
+- task_contract（需求文档）必须包含一个标题为"背景信息存档"的章节：用户批准后，Kernel 会把这一节原样追加到项目章程。没有新信息时写"无"。

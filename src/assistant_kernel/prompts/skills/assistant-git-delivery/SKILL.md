@@ -3,7 +3,7 @@ name: assistant-git-delivery
 description: 代码交付方式下的实施与 Review：在本任务专属的 git 工作区里修改代码、写测试、提交；Kernel 用这次提交运行测试并在批准后合并。
 metadata:
   version: "0.1.0"
-  load: {roles: [pm], stages: [build, review], capabilities: [git_delivery]}
+  load: {disabled: true, roles: [pm], stages: [build, review], capabilities: [git_delivery]}
   changelog:
     - "0.1.0 2026-10-16 草稿：随 R4a（代码交付）启用"
 ---

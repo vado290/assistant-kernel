@@ -34,7 +34,7 @@ class FakeHarness:
             return request.scope_context["script_key"]
         if request.physical_session_id in self.session_keys:   # a resumed session keeps its role
             return self.session_keys[request.physical_session_id]
-        return "pm" if request.prompt.startswith("# 项目 PM") else "supervisor"
+        return "pm" if "· PM 回合" in request.prompt.splitlines()[0] else "supervisor"
 
     async def run_turn(self, request: AgentTurnRequest) -> AgentTurnResult:
         self.calls.append(request)

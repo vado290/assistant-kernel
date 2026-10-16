@@ -6,13 +6,15 @@ import json
 from typing import Any
 
 from assistant_kernel.core import rules
+from assistant_kernel.core import skills as skill_rules
 from assistant_kernel.core.executors.common import (
-    READ_ONLY_TOOLS, business_profile, call_for_json, load_agent, prompt_text, render_documents,
+    READ_ONLY_TOOLS, call_for_json, capabilities, charter, load_agent, prompt_text, render_documents,
 )
 
 STAGE_ORDER = ["requirements", "design", "build", "review", "release", "operate"]
 PURPOSE_PROMPT = {"evaluate": "supervisor-evaluate", "review_input": "supervisor-review-input",
                   "consult": "supervisor-consult"}
+PURPOSE_NAMES = {"evaluate": "评估并安排下一步", "review_input": "卡片待处理时用户的新消息", "consult": "回答用户的咨询"}
 REASONS = {
     "start": "新任务刚开始，安排第一步",
     "pm_questions": "PM 提出了问题，需要整理给用户",
@@ -78,16 +80,22 @@ async def execute_supervisor(run: dict[str, Any], ctx) -> dict[str, Any]:
     purpose, run_input = run["purpose"], run["input"]
     task_id = run["task_id"] or run_input.get("context_task_id")
     task = await kernel.get_task(task_id) if task_id else None
-    config = await asyncio.to_thread(load_agent, settings, run["project_id"], "supervisor")
-    card = await kernel.card(run["project_id"])
-    sections = [prompt_text("supervisor"), "## 项目说明\n\n" + config.role_text]
-    profile = await asyncio.to_thread(business_profile, settings, run["project_id"])
-    if profile:
-        sections.append("## 业务背景\n\n" + profile)
-    if config.skill_texts:
-        sections.append("## 已加载技能\n\n" + "\n\n".join(config.skill_texts))
+    project_id = run["project_id"]
+    caps = await asyncio.to_thread(capabilities, settings, project_id)
+    config = await asyncio.to_thread(load_agent, settings, project_id, "supervisor", purpose=purpose,
+                                     task_kind=task["kind"] if task else None)
+    card = await kernel.card(project_id)
+    sections = [f"# 项目 {project_id} · Supervisor（{PURPOSE_NAMES[purpose]}）"]
+    project_charter = await asyncio.to_thread(charter, settings, project_id)
+    if project_charter:
+        sections.append("## 项目章程\n\n" + project_charter)
+    sections.append("## 本项目对你的角色要求\n\n" + config.role_text)
+    if config.skills_text:
+        sections.append(config.skills_text)
     if task:
-        sections.append(f"## 当前任务\n\n- 目标：{task['goal']}\n- 类型：{KIND_NAMES.get(task['kind'], task['kind'])}\n- 阶段：{task['stage']}\n- 状态：{task['state']}\n"
+        sections.append(f"## 当前任务\n\n- 目标：{task['goal']}\n- 类型：{KIND_NAMES.get(task['kind'], task['kind'])}\n"
+                        + (f"- 发起原因：{task['reason']}\n" if task.get("reason") else "")
+                        + f"- 阶段：{task['stage']}\n- 状态：{task['state']}\n"
                         f"- 已执行 PM 回合：{task['turn_count']}\n\n### 可去的阶段（Kernel 计算）\n\n{allowed_moves(task)}")
         sections.append("## 已生效文档\n\n" + render_documents(settings, task))
     else:
@@ -103,11 +111,20 @@ async def execute_supervisor(run: dict[str, Any], ctx) -> dict[str, Any]:
         message = await kernel.get_message(run_input["message_id"])
         sections.append(f"## 用户在 Supervisor 频道的发言\n\n{message['body'].get('text', '')}")
     sections.append(prompt_text(PURPOSE_PROMPT[purpose]))
-    if run["project_id"] == rules.MANAGEMENT_PROJECT and purpose == "evaluate":
+    if "project_management" in caps and purpose == "evaluate":
         sections.append(prompt_text("supervisor-kernel"))
+    if "shared_context" in caps and purpose == "consult":
+        sections.append(prompt_text("supervisor-shared"))
     parsed, model_result = await call_for_json(
         ctx, run, config, "\n\n".join(sections), task_id=str(task_id) if task_id else None, stage=None,
         session_id=None, tools=READ_ONLY_TOOLS, sandbox="read-only")
     if parsed is None:
         return {"decision": "invalid_output", "raw": model_result.final_text[:2000]}
-    return {**parsed, "config_sha256": config.config_sha256, "usage": model_result.usage.model_dump()}
+    update = parsed.get("propose_shared_update")
+    if isinstance(update, dict) and "shared_context" in caps:
+        # Show the user what the section says now next to the proposal.
+        update["before"] = await asyncio.to_thread(skill_rules.shared_section, settings.data_root,
+                                                   str(update.get("file", "")), str(update.get("section", "")))
+    # Kernel facts go last so a model reply can never set them.
+    return {**parsed, "config_sha256": config.config_sha256, "skills": list(config.skill_labels),
+            "usage": model_result.usage.model_dump(), "_capabilities": sorted(caps)}

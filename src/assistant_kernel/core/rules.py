@@ -19,7 +19,6 @@ CURSOR_RUN = {
     "bootstrapping": ("bootstrap", "default"),
 }
 
-MANAGEMENT_PROJECT = "kernel"   # the project whose Supervisor may propose creating new projects
 PROJECT_ID = re.compile(r"[a-z][a-z0-9-]{2,39}")
 
 

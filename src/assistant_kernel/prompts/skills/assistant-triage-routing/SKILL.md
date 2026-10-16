@@ -3,7 +3,7 @@ name: assistant-triage-routing
 description: 分诊：判断用户的一条消息是闲聊、本项目的工作、属于另一个已有项目，还是需要新建项目，并据此回复、建任务、路由或提议建项目。
 metadata:
   version: "0.1.0"
-  load: {roles: [pm, supervisor], purposes: [triage, consult]}
+  load: {disabled: true, roles: [pm, supervisor], purposes: [triage, consult]}
   changelog:
     - "0.1.0 2026-10-16 草稿，接替 assistant-butler-intake：随 R2（分诊与路由）启用"
 ---

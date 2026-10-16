@@ -5,20 +5,29 @@ import asyncio
 from typing import Any
 
 from assistant_kernel.core.executors.common import (
-    CANDIDATE_TOOLS, MVP_TOOLS, business_profile, call_for_json, load_agent, prompt_text, render_documents,
-    write_document,
+    CANDIDATE_TOOLS, MVP_TOOLS, call_for_json, charter, load_agent, prompt_text, render_documents, write_document,
 )
 from assistant_kernel.core.executors.digest import render_digest
 
-STAGE_PROMPT = {"requirements": "pm-requirements", "design": "pm-design", "build": "pm-build",
-                "review": "pm-review", "operate": "pm-operate"}
+STAGE_NAMES = {"requirements": "需求分析", "design": "方案设计", "build": "实施与自测", "review": "独立 Review",
+               "operate": "运营", "evolution": "周度复盘"}
+SUBAGENT_STAGES = {"requirements", "design", "build", "review", "evolution"}
+MAX_SUBAGENTS = 3
 DOCUMENT_STAGE = {"task_contract": "requirements", "solution_design": "design",
                   "implementation_report": "build", "review_report": "review",
                   "improvement_proposal": "operate"}
 
 
+def skill_stage(task: dict[str, Any], stage: str) -> str:
+    """The stage name skills are matched against; the weekly review is its own one."""
+    return "evolution" if task["kind"] == "evolution" else stage
+
+
 def render_turn(task: dict[str, Any], run_input: dict[str, Any], inputs: list[dict[str, Any]]) -> str:
-    lines = [f"- 任务目标：{task['goal']}", f"- 当前阶段：{run_input['stage']}"]
+    stage = skill_stage(task, run_input["stage"])
+    lines = [f"- 任务目标：{task['goal']}", f"- 当前阶段：{STAGE_NAMES.get(stage, stage)}（{stage}）"]
+    if task.get("reason"):
+        lines.append(f"- 发起原因：{task['reason']}")
     if run_input.get("kind") == "instruction":
         lines.append(f"\n### 本轮指令（用户已确认）\n\n{run_input['instruction']}")
     elif run_input.get("kind") == "answers":
@@ -41,18 +50,18 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
     task = await kernel.get_task(run["task_id"])
     run_input = run["input"]
     stage = run_input["stage"]
-    config = await asyncio.to_thread(load_agent, settings, run["project_id"], "pm", stage)
+    matched = skill_stage(task, stage)
+    config = await asyncio.to_thread(load_agent, settings, run["project_id"], "pm", stage=matched,
+                                     task_kind=task["kind"])
     inputs = await kernel.turn_inputs(run)
-    profile = await asyncio.to_thread(business_profile, settings, run["project_id"])
-    evolution = task["kind"] == "evolution"
-    digest = render_digest(await kernel.project_digest(run["project_id"])) if evolution else ""
+    project_charter = await asyncio.to_thread(charter, settings, run["project_id"])
+    digest = render_digest(await kernel.project_digest(run["project_id"])) if task["kind"] == "evolution" else ""
     prompt = "\n\n".join([
-        prompt_text("pm-common"),
-        "## 项目说明\n\n" + config.role_text,
-        *(["## 业务背景\n\n" + profile] if profile else []),
-        prompt_text("pm-evolution" if evolution else STAGE_PROMPT[stage]),
+        f"# 项目 {run['project_id']} · PM 回合（{STAGE_NAMES.get(matched, matched)}）",
+        *(["## 项目章程\n\n" + project_charter] if project_charter else []),
+        "## 本项目对你的角色要求\n\n" + config.role_text,
+        *([config.skills_text] if config.skills_text else []),
         *([digest] if digest else []),
-        *(["## 已加载技能\n\n" + "\n\n".join(config.skill_texts)] if config.skill_texts else []),
         "## 已生效文档\n\n" + render_documents(settings, task),
         "## 本轮上下文\n\n" + render_turn(task, run_input, inputs),
         prompt_text("pm-output"),
@@ -62,12 +71,14 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
     parsed, model_result = await call_for_json(
         ctx, run, config, prompt, task_id=str(task["task_id"]), stage=stage,
         session_id=None if fresh else task["pm_session"].get("native_session_id"),
-        tools=tools, sandbox="danger-full-access", candidates=stage == "build")
+        tools=tools, sandbox="danger-full-access", candidates=stage == "build",
+        subagents=MAX_SUBAGENTS if matched in SUBAGENT_STAGES else 0)
     if parsed is None:
         return {"outcome": "invalid_output", "raw": model_result.final_text[:2000]}
     result = {"outcome": parsed.get("outcome"), "summary": str(parsed.get("summary") or ""),
               "questions": parsed.get("questions") or [], "session_id": model_result.physical_session_id,
-              "config_sha256": config.config_sha256, "usage": model_result.usage.model_dump()}
+              "config_sha256": config.config_sha256, "skills": list(config.skill_labels),
+              "usage": model_result.usage.model_dump()}
     document = parsed.get("document")
     if isinstance(document, dict) and document.get("markdown"):
         kind = document.get("kind")

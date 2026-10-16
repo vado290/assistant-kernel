@@ -14,9 +14,6 @@ harness:
   context_policy: max
   timeout_seconds: 90
   sandbox: project-scope
-skills:
-- name: assistant-goal-supervisor
-  source: kernel
 mcp_servers: {}
 entrypoints:
   pm_handoff: false

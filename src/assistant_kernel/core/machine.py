@@ -12,6 +12,7 @@ from psycopg.types.json import Jsonb
 
 from assistant_kernel.core import cards, rules
 from assistant_kernel.core.db import all_rows, event, one
+from assistant_kernel.core.skills import SHARED_FILES
 
 MUTEX = {"pm_turn": "pm", "supervisor": "supervisor", "validation": "validation", "publish": "publish",
          "bootstrap": "bootstrap"}
@@ -30,7 +31,9 @@ DECISION_ACTIONS = {
     "reconcile": ("published", "failed"),
     "create_project": ("approve", "reject"),
     "followups": ("approve", "reject"),
+    "shared_update": ("approve", "reject"),
 }
+MAX_SHARED_UPDATE = 4000
 MAX_FOLLOWUPS = 5
 EVOLUTION_INSTRUCTION = ("做本项目的周度复盘：依据下面 Kernel 提供的运行记录和项目现有文件，找出最值得改进的地方，"
                          "提交 improvement_proposal 文档。")
@@ -168,13 +171,13 @@ async def activate_next(c, project_id: str) -> dict[str, Any] | None:
 
 async def create_task(c, project_id: str, *, goal: str, origin: str, kind: str = "delivery",
                       source_message_id=None, priority: str = "normal", parent_task_id=None,
-                      idempotency_key: str | None = None) -> dict[str, Any]:
+                      idempotency_key: str | None = None, reason: str | None = None) -> dict[str, Any]:
     task = await one(
         c, """INSERT INTO core.tasks(project_id, kind, origin, priority, goal, source_message_id,
-                                     parent_task_id, idempotency_key, created_at)
-              VALUES (%s, %s, %s, %s, %s, %s, %s, %s, clock_timestamp())
+                                     parent_task_id, idempotency_key, reason, created_at)
+              VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, clock_timestamp())
               ON CONFLICT (idempotency_key) DO NOTHING RETURNING *""",
-        (project_id, kind, origin, priority, goal, source_message_id, parent_task_id, idempotency_key))
+        (project_id, kind, origin, priority, goal, source_message_id, parent_task_id, idempotency_key, reason))
     if task is None:
         return await one(c, "SELECT * FROM core.tasks WHERE idempotency_key=%s", (idempotency_key,))
     await event(c, project_id, "task_created", task_id=task["task_id"], origin=origin, kind=kind)
@@ -293,19 +296,29 @@ def _supervisor_item(task, run_input: dict[str, Any], result: dict[str, Any]) ->
     if decision in ("propose_complete", "propose_cancel"):
         return _decision(task, decision.removeprefix("propose_"), message)
     if decision == "propose_followups":
-        goals = [str(g).strip() for g in result.get("tasks") or [] if str(g).strip()]
-        if not goals or len(goals) > MAX_FOLLOWUPS:
+        followups = _followups(result.get("tasks"))
+        if not followups or len(followups) > MAX_FOLLOWUPS:
             raise InvalidResult(f"propose_followups needs 1–{MAX_FOLLOWUPS} task goals")
-        return _decision(task, "followups", message or "是否把以下改进作为新任务排队？", tasks=goals)
+        return _decision(task, "followups", message or "是否把以下改进作为新任务排队？", tasks=followups)
     if decision == "propose_project":
-        if task["project_id"] != rules.MANAGEMENT_PROJECT:
-            raise InvalidResult("only the management project can create projects")
+        if "project_management" not in (result.get("_capabilities") or ()):
+            raise InvalidResult("only a project with the project_management capability can create projects")
         try:
             spec = rules.project_spec(result.get("spec"))
         except ValueError as exc:
             raise InvalidResult(str(exc)) from exc
         return _decision(task, "create_project", message or f"是否创建项目 {spec['project_id']}？", spec=spec)
     raise InvalidResult(f"unsupported Supervisor decision {decision!r}")
+
+
+def _followups(items) -> list[dict[str, str]]:
+    """Follow-up tasks as {goal, reason}; a plain string is a goal without a stated reason."""
+    followups = []
+    for item in items or []:
+        goal, reason = (item.get("goal"), item.get("reason")) if isinstance(item, dict) else (item, "")
+        if str(goal or "").strip():
+            followups.append({"goal": str(goal).strip(), "reason": str(reason or "").strip()})
+    return followups
 
 
 def _covers(pm_questions: list[dict], result: dict[str, Any]) -> bool:
@@ -404,6 +417,12 @@ async def _consult_result(c, run, result) -> None:
             content={"decision": "new_task", "message": new_task.get("message") or "是否创建新任务？",
                      "actions": list(DECISION_ACTIONS["new_task"]),
                      "data": {"goal": new_task["goal"], "source_message_id": str(message["message_id"])}}))
+    shared = result.get("propose_shared_update")
+    if isinstance(shared, dict) and "shared_context" in (result.get("_capabilities") or ()):
+        await cards.add_item(c, run["project_id"], cards.new_item(
+            target_kind="consultation", target_id=str(run["run_id"]), kind="decision", origin="supervisor",
+            content={"decision": "shared_update", "message": "是否这样修改公共背景？",
+                     "actions": list(DECISION_ACTIONS["shared_update"]), "data": _shared_update(shared)}))
     upgrade = result.get("upgrade")
     context_task = run["input"].get("context_task_id")
     if upgrade and context_task:
@@ -530,10 +549,10 @@ async def _decision_action(c, task, item, action, values, source_message_id):
     if decision == "followups":
         if action == "reject":
             return await to_supervising(c, task, "followups_rejected", text=note)
-        for number, goal in enumerate(data["tasks"]):
-            await create_task(c, task["project_id"], goal=goal, origin="evolution" if task["kind"] == "evolution"
-                              else "supervisor", parent_task_id=task["task_id"],
-                              idempotency_key=f"followup:{item['item_id']}:{number}")
+        for number, followup in enumerate(_followups(data["tasks"])):
+            await create_task(c, task["project_id"], goal=followup["goal"], reason=followup["reason"] or None,
+                              origin="evolution" if task["kind"] == "evolution" else "supervisor",
+                              parent_task_id=task["task_id"], idempotency_key=f"followup:{item['item_id']}:{number}")
         return await close(c, task, "completed", "followups_queued")
     if decision == "create_project":
         if action == "reject":
@@ -560,10 +579,23 @@ async def _decision_action(c, task, item, action, values, source_message_id):
     raise ValueError(f"unknown decision {decision}")
 
 
+def _shared_update(proposal: dict[str, Any]) -> dict[str, str]:
+    data = {key: str(proposal.get(key) or "").strip() for key in ("file", "section", "content", "reason", "before")}
+    if data["file"] not in SHARED_FILES or not data["section"] or not data["content"]:
+        raise InvalidResult(f"propose_shared_update needs file ({', '.join(SHARED_FILES)}), section and content")
+    if len(data["content"]) > MAX_SHARED_UPDATE:
+        raise InvalidResult("a shared context section must stay short")
+    return data
+
+
 async def _consultation_action(c, project_id, item, action, source_message_id):
     data = item["content"]["data"]
-    if item["content"]["decision"] != "new_task" or action not in ("approve", "reject"):
+    if item["content"]["decision"] not in ("new_task", "shared_update") or action not in ("approve", "reject"):
         raise ValueError("consultation items accept approve or reject")
+    if item["content"]["decision"] == "shared_update":
+        if action == "approve":   # written to the file by vault_sync, outside this transaction
+            await event(c, project_id, "shared_update_approved", item_id=item["item_id"], **data)
+        return {}
     if action == "approve":
         return await create_task(c, project_id, goal=data["goal"], origin="supervisor",
                                  source_message_id=data["source_message_id"],

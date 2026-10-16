@@ -17,49 +17,6 @@ mcp_servers: {}
 role: role.md
 schema_version: agent-config.v2
 scope_profile: current-project
-skills:
-  available:
-  - name: assistant-task-continuity
-    source: auto
-  - name: assistant-project-agent
-    source: auto
-  - name: assistant-source-scope
-    source: auto
-  - name: assistant-requirements
-    source: auto
-  - name: assistant-history-retrieval
-    source: auto
-  - name: assistant-subagent-orchestration
-    source: auto
-  - name: assistant-project-credentials
-    source: auto
-  - name: assistant-agent-design
-    source: auto
-  - name: assistant-mcp-design
-    source: auto
-  - name: assistant-workflow-design
-    source: auto
-  - name: assistant-schedule-design
-    source: auto
-  - name: assistant-capability-maintenance
-    source: auto
-  - name: assistant-volcengine-models
-    source: auto
-  - name: assistant-solution-design
-    source: auto
-  - name: assistant-implementation
-    source: auto
-  - name: assistant-release-audit
-    source: auto
-  - name: assistant-operation
-    source: auto
-  required:
-  - name: assistant-task-continuity
-    source: auto
-  - name: assistant-project-agent
-    source: auto
-  - name: assistant-source-scope
-    source: auto
 status: active
 tools:
 - get_authorized_workspace

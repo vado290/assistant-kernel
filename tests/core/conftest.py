@@ -67,6 +67,8 @@ def project_files(kernel_settings):
             "status: active\nrole: role.md\nharness:\n  provider: openai\n  model: test-model\n"
             "  timeout_seconds: 60\ntools: []\n", "utf-8")
         (vault / "agents" / folder / "role.md").write_text(role, "utf-8")
+    from assistant_kernel.core import skills
+    skills.install_templates(vault, frozenset())    # like a project created by Kernel
     return vault
 
 

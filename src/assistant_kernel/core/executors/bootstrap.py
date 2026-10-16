@@ -14,6 +14,7 @@ from typing import Any
 import httpx
 import yaml
 
+from assistant_kernel.core import skills
 from assistant_kernel.storage import ProjectRuntimeManager
 
 TEMPLATE = Path(__file__).parents[1] / "project_template"
@@ -46,6 +47,8 @@ def write_project_files(settings, spec: dict[str, Any]) -> list[str]:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(fill(source.read_text("utf-8"), values), "utf-8")
         written.append(target.relative_to(vault).as_posix())
+    capabilities = skills.project_config(vault)["capabilities"]
+    written += [f".agents/skills/{name}" for name in skills.install_templates(vault, capabilities)]
     return written
 
 

@@ -9,3 +9,6 @@ validation_policy:
   - structure
 multi_agent:
   enabled: true
+capabilities: []          # routing / project_management / shared_context / kernel_maintenance / git_delivery
+delivery: vault-files     # vault-files or git-repo
+share_with_kernel: improvements   # metrics / improvements / full

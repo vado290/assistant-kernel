@@ -225,8 +225,12 @@ class ValidationRunner:
             self._issue(issues, "skill_name", relative, "Skill name is required")
         if not str(metadata.get("description") or "").strip():
             self._issue(issues, "skill_description", relative, "Skill description is required")
-        if not re.search(r"^##\s+任务目标\s*$", text, re.MULTILINE):
-            self._issue(issues, "skill_task_goal", relative, "Skill must contain '## 任务目标'")
+        # Kernel loads a skill by metadata.load (core/skills.py); without it a skill would load everywhere.
+        meta = metadata.get("metadata") if isinstance(metadata.get("metadata"), dict) else {}
+        if not isinstance(meta.get("load"), dict) or not meta["load"]:
+            self._issue(issues, "skill_load", relative, "Skill needs metadata.load saying when Kernel loads it")
+        if not str(meta.get("version") or "").strip():
+            self._issue(issues, "skill_version", relative, "Skill needs metadata.version")
 
     def _validate_agent_config(
         self, path: Path, relative: str, issues: list[dict[str, str]]

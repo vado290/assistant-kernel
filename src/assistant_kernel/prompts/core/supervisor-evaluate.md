@@ -6,7 +6,8 @@
 - propose_next：安排下一轮 PM 工作。instruction 写给 PM 的完整指令；target_stage 填目标阶段（必须在"可去的阶段"里且门槛满足）。target_stage 为 release 时表示申请发布，不需要 instruction。
 - propose_complete：任务目标已经达成，建议结束。
 - propose_cancel：任务已无继续的意义，建议取消。
-- propose_followups：把值得做的工作排成新任务（tasks 列出 1–5 个新任务的目标，每个一句话，能独立执行）。用户批准后这些任务
+- propose_followups：把值得做的工作排成新任务（tasks 列出 1–5 个新任务，每个写 goal：一句话、能独立执行的目标；
+  reason：为什么做，例如引用改进建议的编号和现象；原因会记入迭代记录）。用户批准后这些任务
   依次排队，当前任务随之结束。复盘任务（PM 提交了改进建议）结束时用它：只挑你认同、值得做的建议；都不值得做就用
   propose_complete。普通任务完成时如果发现明确的后续工作，也可以用它代替 propose_complete。
 
@@ -20,7 +21,7 @@
   "suggested": {"q2": {"answer": "建议答案", "basis": "依据"}},
   "instruction": "给 PM 的完整指令",
   "target_stage": "requirements | design | build | review | release",
-  "tasks": ["新任务目标"]
+  "tasks": [{"goal": "新任务目标", "reason": "为什么做"}]
 }
 
 不用的字段可以省略。
