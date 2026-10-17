@@ -17,10 +17,6 @@ class ProjectRuntime:
     runtime_root: Path
     codex_home: Path
 
-    def codex_environment(self) -> dict[str, str]:
-        return {"CODEX_HOME": str(self.codex_home)}
-
-
 # Historical Butler projects are never executable again.
 RETIRED_PROJECTS = frozenset({"system", "butler-maintenance"})
 

@@ -21,16 +21,6 @@ def test_parse_codex_jsonl() -> None:
     assert result.usage.input_tokens == 51
 
 
-def test_codex_harness_reports_chatgpt_subscription_auth(tmp_path) -> None:
-    runtime = ProjectRuntimeManager(tmp_path)
-    home = runtime.ensure("p").codex_home
-    (home / "auth.json").write_text(
-        '{"auth_mode":"chatgpt","tokens":{"access_token":"not-a-real-token"}}',
-        encoding="utf-8",
-    )
-    assert CodexCliHarness(runtime).authentication_mode("p") == "chatgpt_subscription"
-
-
 @pytest.mark.parametrize('end',['', '{"type":"turn.failed"}', '{"type":"error"}'])
 def test_partial_or_failed_cli_is_not_a_completed_stage(end):
     with pytest.raises(ValueError):

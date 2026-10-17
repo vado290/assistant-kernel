@@ -37,29 +37,6 @@ def process_start_ticks(pid: int) -> int | None:
         return None
 
 
-async def terminate_recorded_process_group(
-    pid: int | None, expected_start_ticks: int | None, grace_seconds: float = 5
-) -> bool:
-    if not pid or expected_start_ticks is None:
-        return False
-    if process_start_ticks(pid) != expected_start_ticks:
-        return False
-    try:
-        os.killpg(pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return False
-    deadline = asyncio.get_running_loop().time() + grace_seconds
-    while asyncio.get_running_loop().time() < deadline:
-        if process_start_ticks(pid) != expected_start_ticks:
-            return True
-        await asyncio.sleep(0.1)
-    try:
-        os.killpg(pid, signal.SIGKILL)
-    except ProcessLookupError:
-        return True
-    return True
-
-
 async def run_managed_process(
     *command: str,
     cwd: str,

@@ -22,7 +22,7 @@ def test_resource_ref_requires_integrity_for_documents() -> None:
     assert validate_resource_ref(message) == message
 
 
-def test_immutable_revision_and_rebuildable_current_pointer(tmp_path: Path) -> None:
+def test_immutable_revision(tmp_path: Path) -> None:
     service = TaskDocumentService(settings_for(tmp_path))
     ref = service.write_revision(
         project_id="demo", task_id="task-1", document_kind="turn-record",
@@ -42,20 +42,6 @@ def test_immutable_revision_and_rebuildable_current_pointer(tmp_path: Path) -> N
     )
     assert same == ref
     assert service.read("demo", ref)["payload"]["turn_number"] == 1
-
-    projection = service.update_current(
-        project_id="demo", task_id="task-1", document_kind="turn-record",
-        ref=ref, commit_id="commit-1", state_revision=1,
-    )
-    assert projection["ref"] == ref
-    assert service.current("demo", "task-1", "turn-record")["state_revision"] == 1
-
-    with pytest.raises((ValueError, RuntimeError)):
-        service.update_current(
-            project_id="demo", task_id="task-1", document_kind="turn-record",
-            ref={**ref, "revision_id": "rev-other"},
-            commit_id="commit-2", state_revision=1,
-        )
 
 
 def test_document_hash_mismatch_is_rejected(tmp_path: Path) -> None:

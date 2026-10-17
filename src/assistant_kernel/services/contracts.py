@@ -109,55 +109,6 @@ class ContractRegistry:
         except KeyError:
             raise ContractError("document Schema has no active writer") from None
 
-    def definition_closure(self,*roots):
-        """Provide the exact server definitions to configured model producers."""
-        selected={};pending=list(roots)
-        def visit(value):
-            if isinstance(value,dict):
-                if '$ref' in value:pending.append(value['$ref'].split('/')[-1])
-                for child in value.values():visit(child)
-            elif isinstance(value,list):
-                for child in value:visit(child)
-        while pending:
-            name=pending.pop()
-            if name in selected:continue
-            if name not in self.library['$defs']:raise ContractError('Producer definition has no installed schema')
-            selected[name]=self.library['$defs'][name];visit(selected[name])
-        return {'$defs':selected}
-
-    def agent_result_schema(self, phase: str) -> dict[str, Any]:
-        """Model-facing projection of the installed envelope and bound role only."""
-        from copy import deepcopy
-        if phase not in {'supervisor', 'requirements', 'design', 'build', 'audit', 'operate'}:
-            raise ContractError('Producer phase is not registered')
-        schema = deepcopy(self.library['$defs']['V12_AgentResult'])
-        if phase == 'supervisor':
-            schema['properties']['payload'] = {'$ref': '#/$defs/Active_SupervisorPayload'}
-            # Match the existing decoder: concrete Prompt/document confirmation
-            # is prepared by Kernel, not a second model-written approval route.
-            schema['properties']['approval_requests']['maxItems'] = 0
-        else:
-            # Only the bound phase's report belongs in this invocation. Keep
-            # shared payload rules and its active refinements, not five copies.
-            payload = deepcopy(self.library['$defs']['V12_PMPayload'])
-            refinements = deepcopy(self.library['$defs']['V12_Active_PMPayload']['allOf'][1:])
-            branches = payload['allOf'] + refinements
-            payload['allOf'] = [item for item in branches if 'if' not in item or
-                item['if']['properties']['stage']['const'] == phase]
-            payload['properties']['stage'] = {'const': phase}
-            schema['properties']['payload'] = payload
-        schema['required'].append('protocol_revision')
-        roots = set()
-        def visit(value):
-            if isinstance(value, dict):
-                if '$ref' in value: roots.add(value['$ref'].split('/')[-1])
-                for child in value.values(): visit(child)
-            elif isinstance(value, list):
-                for child in value: visit(child)
-        visit(schema)
-        schema.update(self.definition_closure(*roots))
-        return schema
-
     def validate_document(self, document: dict[str, Any]) -> None:
         expected = self.document_definition(document.get("schema_version", ""))
         if document.get("payload_definition") != expected:
@@ -169,11 +120,6 @@ class ContractRegistry:
         actual = hashlib.sha256(canonical_json(document["payload"])).hexdigest()
         if actual != document["content_sha256"]:
             raise ContractError("document payload hash differs")
-
-    def validate_agent_result(self, value: dict[str, Any], *, expected_phase: str) -> None:
-        self.validate(self.registry["write_selectors"]["AgentResult"], value)
-        if value["payload"]["stage"] != expected_phase:
-            raise ContractError("output phase differs from the Kernel-bound phase")
 
     def preserve(self, data_root: Path) -> Path:
         """Keep the exact reader bundle before publishing a document using it.

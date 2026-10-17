@@ -68,33 +68,6 @@ class CodexModelCatalog:
         self._cache[key] = (now, models)
         return models
 
-    @staticmethod
-    def public_projection(item: dict[str, Any]) -> dict[str, Any]:
-        default_window = int(item.get("context_window") or 0)
-        maximum_window = int(item.get("max_context_window") or default_window)
-        effective_percent = int(item.get("effective_context_window_percent") or 100)
-        return {
-            "model": str(item["slug"]),
-            "display_name": str(item.get("display_name") or item["slug"]),
-            "priority": int(item.get("priority") or 9999),
-            "catalog_context_window_tokens": default_window,
-            "catalog_max_context_window_tokens": maximum_window,
-            "effective_default_context_window_tokens": (
-                default_window * effective_percent // 100
-            ),
-            "effective_max_context_window_tokens": (
-                maximum_window * effective_percent // 100
-            ),
-            "effective_context_window_percent": effective_percent,
-            "default_reasoning_effort": item.get("default_reasoning_level"),
-            "supported_reasoning_efforts": [
-                str(level.get("effort"))
-                for level in item.get("supported_reasoning_levels") or []
-                if isinstance(level, dict) and level.get("effort")
-            ],
-            "supported_in_api": bool(item.get("supported_in_api", True)),
-        }
-
     async def resolve(
         self,
         *,

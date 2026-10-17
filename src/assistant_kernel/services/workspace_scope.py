@@ -63,50 +63,6 @@ class WorkspaceScopeService:
         self.path = settings.data_root / "config" / "project-scopes.yaml"
         self.grants = ProjectGrantService(settings)
 
-    def configuration_hash(self, project_id: str) -> str:
-        data = yaml.safe_load(self.path.read_text(encoding="utf-8")) if self.path.is_file() else {}
-        projects = (data or {}).get("projects") or {}
-        selected = projects.get(project_id) or projects.get("default") or {}
-        base_roots = [
-            ({**item, "access": "write"} if str(item.get("key") or "") == "project" else item)
-            for item in (selected.get("roots") or [])
-            if not item.get("source_binding") and (
-                project_id == "system" or item.get("key") == "project"
-                or str(item.get("access") or "read") == "read"
-            )
-        ]
-        if project_id != "system" and not any(
-            str(item.get("key") or "") == "project" for item in base_roots
-        ):
-            base_roots.insert(0, {
-                "key": "project", "path": "{project_root}",
-                "description": "当前项目 Vault", "access": "write",
-            })
-        source_map = self._source_map(project_id)
-        payload = json.dumps(
-            {
-                "base_roots": base_roots,
-                "grants": self.grants.active_file_roots(project_id),
-                "source_map": source_map,
-            },
-            ensure_ascii=False, sort_keys=True, separators=(",", ":"),
-        ).encode("utf-8")
-        return hashlib.sha256(payload).hexdigest()
-
-    def _source_map(self, project_id: str) -> dict[str, Any]:
-        if project_id == "system":
-            return {"schema_version": "project-source-map.v1", "roots": {}}
-        path = self.runtime.ensure(project_id).vault_root / "source-map.yaml"
-        if not path.is_file():
-            return {"schema_version": "project-source-map.v1", "roots": {}}
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        if not isinstance(data, dict) or data.get("schema_version") != "project-source-map.v1":
-            raise ValueError("source-map.yaml must use project-source-map.v1")
-        roots = data.get("roots") or {}
-        if not isinstance(roots, dict):
-            raise ValueError("source-map.yaml roots must be an object")
-        return {"schema_version": "project-source-map.v1", "roots": roots}
-
     @staticmethod
     def _safe_context_path(value: str) -> str:
         normalized = value.replace("\\", "/").strip("/")
@@ -114,70 +70,6 @@ class WorkspaceScopeService:
         if path.is_absolute() or ".." in path.parts:
             raise ValueError("context path must stay below its authorized root")
         return path.as_posix() if normalized else ""
-
-    def context_view(
-        self, project_id: str, roots: list[AuthorizedRoot], *, request: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Resolve a compact per-Run view without changing the Project authorization ceiling."""
-        source_map = self._source_map(project_id)
-        configured = source_map.get("roots") or {}
-        explicit: dict[str, list[str]] = {}
-        for raw in (request or {}).get("context_paths") or []:
-            value = str(raw)
-            if not value.startswith("workspace://"):
-                raise ValueError("context_paths entries must be workspace URIs")
-            remainder = value[len("workspace://"):]
-            key, separator, relative = remainder.partition("/")
-            if not separator or not key:
-                raise ValueError("context_paths entry is incomplete")
-            explicit.setdefault(key, []).append(self._safe_context_path(relative))
-
-        unknown_keys = sorted(set(explicit) - {root.key for root in roots})
-        if unknown_keys:
-            raise PermissionError(
-                "context_paths reference unauthorized roots: " + ", ".join(unknown_keys)
-            )
-
-        views: list[dict[str, Any]] = []
-        for root in roots:
-            raw = configured.get(root.key) or {}
-            if not isinstance(raw, dict):
-                raise ValueError(f"source-map root must be an object: {root.key}")
-            internal = root.key in {"project", "run_work", "candidate"}
-            mode = str(raw.get("mode") or ("live" if internal else "discovery"))
-            if mode not in {"live", "discovery", "lazy_snapshot", "indexed"}:
-                raise ValueError(f"unsupported source-map mode for {root.key}")
-            if not isinstance(raw.get("entrypoints") or [], list):
-                raise ValueError(f"source-map entrypoints must be a list: {root.key}")
-            if not isinstance(raw.get("soft_excludes") or [], list):
-                raise ValueError(f"source-map soft_excludes must be a list: {root.key}")
-            entrypoints = [
-                self._safe_context_path(str(item))
-                for item in (raw.get("entrypoints") or [])
-                if str(item).strip()
-            ]
-            entrypoints.extend(explicit.get(root.key) or [])
-            if internal and "" not in entrypoints:
-                entrypoints.insert(0, "")
-            entrypoints = list(dict.fromkeys(entrypoints))
-            soft_excludes = [
-                str(item).replace("\\", "/").strip()
-                for item in (raw.get("soft_excludes") or DEFAULT_CONTEXT_SOFT_EXCLUDES)
-                if str(item).strip()
-            ]
-            views.append({
-                "key": root.key,
-                "mode": mode,
-                "initial_paths": entrypoints,
-                "soft_excludes": soft_excludes,
-            })
-        return {
-            "schema_version": "context-view.v1",
-            "source_map_uri": (
-                None if project_id == "system" else f"vault://{project_id}/source-map.yaml"
-            ),
-            "roots": views,
-        }
 
     def resolve(
         self, project_id: str, run_id: str, stage: str | None,
@@ -559,10 +451,6 @@ class WorkspaceScopeService:
             "layout_version": int(project.get("layout_version") or 1),
             "resources": [
                 {"path": "project.yaml", "purpose": "Project identity and active layout"},
-                {
-                    "path": "source-map.yaml",
-                    "purpose": "Soft Context View entrypoints and ignores; never authorization",
-                },
                 {
                     "path": "agents/<agent-id>/",
                     "purpose": "Published Agent",

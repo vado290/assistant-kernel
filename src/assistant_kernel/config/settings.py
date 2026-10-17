@@ -153,10 +153,3 @@ class KernelSettings(BaseModel):
             role_hard_limit_tokens=int(os.getenv("ASSISTANT_ROLE_HARD_LIMIT_TOKENS", "20000")),
         )
 
-    def load_provider_secrets(self) -> ProviderSecrets:
-        secrets = ProviderSecrets.load(self.provider_secrets_path)
-        dashscope = secrets.providers.get("dashscope")
-        env_key = os.getenv("DASHSCOPE_API_KEY", "").strip()
-        if dashscope and not dashscope.api_key.get_secret_value() and env_key:
-            dashscope.api_key = SecretStr(env_key)
-        return secrets

@@ -61,5 +61,5 @@ Database: schema `core` (tasks, runs, cards, messages, events, projects, directo
 ledger). The retired control core's tables are kept read-only in `archive_core5`; nothing reads them.
 
 Tests: `tests/core/` (each test gets a temporary database) and a few library tests in `tests/`.
-`scripts/core_smoke.py` runs one real-model task on a temporary database. Old one-off scripts are kept in
-`scripts/archive/` for reference; they target the retired code and are not runnable.
+`scripts/core_smoke.py` runs one real-model task on a temporary database. Retired scripts and the old
+generation's documents are in git history; `docs/archive/` keeps the design records of earlier rounds.

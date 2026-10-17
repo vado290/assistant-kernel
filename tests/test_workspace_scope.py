@@ -72,70 +72,6 @@ def test_scope_tree_hides_runtime_traces_and_build_caches_but_keeps_direct_reads
     assert resolved_trace.read_text(encoding="utf-8") == "trace"
 
 
-def test_context_view_keeps_external_roots_compact_and_browses_one_path(tmp_path: Path) -> None:
-    settings = scope_settings(tmp_path)
-    external = tmp_path / "external"
-    (external / "src").mkdir(parents=True)
-    (external / "docs").mkdir()
-    (external / "logs").mkdir()
-    (external / "src" / "main.py").write_text("print('ok')\n", encoding="utf-8")
-    (external / "docs" / "notes.md").write_text("notes", encoding="utf-8")
-    (external / "logs" / "debug.log").write_text("noise", encoding="utf-8")
-    root = AuthorizedRoot(
-        key="external", path=external, access="write", description="external",
-    )
-    service = WorkspaceScopeService(settings)
-
-    compact, _ = service.tree([root], selected_paths={})
-    assert compact == [{
-        "uri": "workspace://external/", "type": "directory", "access": "write",
-    }]
-
-    selected, _ = service.tree(
-        [root], max_depth=2, limit=20,
-        selected_paths={"external": ("src",)},
-        soft_excludes={"external": ("logs", "logs/**")},
-    )
-    uris = {item["uri"] for item in selected}
-    assert "workspace://external/src/main.py" in uris
-    assert all("docs/notes.md" not in uri for uri in uris)
-    assert all("debug.log" not in uri for uri in uris)
-
-
-def test_source_map_changes_context_view_and_scope_compatibility_hash(tmp_path: Path) -> None:
-    settings = scope_settings(tmp_path)
-    runtime = ProjectRuntimeManager(settings.data_root)
-    project = runtime.ensure("project-a").vault_root
-    external = tmp_path / "external"
-    (external / "src").mkdir(parents=True)
-    config = settings.data_root / "config" / "project-scopes.yaml"
-    config.parent.mkdir(parents=True, exist_ok=True)
-    config.write_text(yaml.safe_dump({
-        "projects": {"default": {"roots": [{
-            "key": "project", "path": "{project_root}", "description": "current",
-        }]}}
-    }), encoding="utf-8")
-    service = WorkspaceScopeService(settings)
-    roots = [
-        *service.resolve("project-a", "run-1", None),
-        AuthorizedRoot(key="external", path=external, access="write", description="external"),
-    ]
-    before = service.configuration_hash("project-a")
-    (project / "source-map.yaml").write_text(yaml.safe_dump({
-        "schema_version": "project-source-map.v1",
-        "roots": {"external": {
-            "mode": "live", "entrypoints": ["src"], "soft_excludes": ["logs/**"],
-        }},
-    }, sort_keys=False), encoding="utf-8")
-    view = service.context_view("project-a", roots)
-    after = service.configuration_hash("project-a")
-
-    by_key = {item["key"]: item for item in view["roots"]}
-    assert by_key["project"]["initial_paths"] == [""]
-    assert by_key["external"]["initial_paths"] == ["src"]
-    assert before != after
-
-
 def test_project_root_include_exclude_rules_limit_tree_and_direct_reads(tmp_path: Path) -> None:
     settings = scope_settings(tmp_path)
     runtime = ProjectRuntimeManager(settings.data_root)
@@ -249,5 +185,4 @@ def test_resource_guide_explains_v2_resource_placement(tmp_path: Path) -> None:
     ]
     assert "list_iterations" in resources["knowledge/map.md"]["purpose"]   # ROUND4: Markdown map, reasons in the stream
     assert "knowledge/map/" not in resources
-    assert "source-map.yaml" in resources
     assert "runs/ and runtime/" in resources

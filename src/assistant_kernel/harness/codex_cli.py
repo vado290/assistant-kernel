@@ -4,7 +4,6 @@ import json
 import hashlib
 import os
 import re
-import sys
 import uuid
 import asyncio
 from datetime import datetime, timezone
@@ -13,7 +12,7 @@ from pathlib import Path
 
 from assistant_kernel.harness.base import AgentTurnRequest, AgentTurnResult
 from assistant_kernel.harness.codex_models import CodexModelCatalog, ResolvedCodexModel
-from assistant_kernel.harness.context_budget import ContextBudgetDecision, ContextBudgetManager, TurnUsage
+from assistant_kernel.harness.context_budget import TurnUsage
 from assistant_kernel.storage import ProjectRuntimeManager
 from assistant_kernel.harness.process_control import run_managed_process
 
@@ -47,26 +46,6 @@ class CodexCliHarness:
         self.timeout_seconds = timeout_seconds
         self.model_catalog = CodexModelCatalog(codex_binary)
 
-    def authentication_mode(self, project_id: str) -> str:
-        """Return the billing/authentication route without exposing credentials."""
-        auth_path = self.runtime_manager.ensure(project_id).codex_home / "auth.json"
-        try:
-            mode = str(
-                json.loads(auth_path.read_text(encoding="utf-8")).get("auth_mode") or ""
-            )
-        except (OSError, ValueError, json.JSONDecodeError):
-            return "unknown"
-        return {
-            "chatgpt": "chatgpt_subscription",
-            "apikey": "api_key",
-            "api_key": "api_key",
-        }.get(mode.lower(), mode.lower() or "unknown")
-
-    async def list_model_catalog(self, project_id: str) -> list[dict]:
-        runtime = self.runtime_manager.ensure(project_id)
-        models = await self.model_catalog.list_models(runtime.codex_home)
-        return [self.model_catalog.public_projection(item) for item in models]
-
     async def resolve_model_profile(
         self,
         *,
@@ -87,14 +66,6 @@ class CodexCliHarness:
             context_policy=context_policy,
             custom_context_window_tokens=custom_context_window_tokens,
             custom_auto_compact_token_limit=custom_auto_compact_token_limit,
-        )
-
-    async def run_fresh_turn(self, project_id: str, prompt: str, cwd: Path) -> CodexTurnResult:
-        result = await self.run_turn(
-            AgentTurnRequest(project_id=project_id, prompt=prompt, cwd=cwd)
-        )
-        return CodexTurnResult(
-            result.physical_session_id, result.usage, result.events, result.final_text
         )
 
     async def run_turn(self, request: AgentTurnRequest) -> AgentTurnResult:
@@ -393,11 +364,6 @@ class CodexCliHarness:
             reasoning_output_tokens=int(last.get("reasoning_output_tokens") or 0),
         )
         return usage, window, dict(last_info.get("total_token_usage") or {})
-
-    @staticmethod
-    def rotation_decision(result: CodexTurnResult, context_window_tokens: int) -> ContextBudgetDecision:
-        return ContextBudgetManager().evaluate(result.usage, context_window_tokens)
-
 
 def _last_error(stdout: bytes) -> str:
     """The last error Codex reported in its JSON event stream (e.g. "Selected model is at capacity")."""

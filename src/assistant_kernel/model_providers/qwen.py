@@ -27,11 +27,6 @@ class QwenProvider:
     def configured(self) -> bool:
         return self.config.enabled and bool(self.config.api_key.get_secret_value())
 
-    def rerank_configured(self) -> bool:
-        return self.configured() and bool(
-            self.config.workspace_id or self.config.rerank_base_url
-        )
-
     def _headers(self) -> dict[str, str]:
         key = self.config.api_key.get_secret_value()
         if not self.config.enabled or not key:
