@@ -14,6 +14,7 @@ from assistant_kernel.core.kernel import Kernel
 log = logging.getLogger(__name__)
 STALE_REPLY = "这张卡片已更新或已处理，请看 Supervisor 频道里最新的卡片。"
 REMINDERS = (timedelta(hours=1), timedelta(hours=24))
+UNDELIVERABLE_AFTER = timedelta(minutes=30)
 
 
 class Transport(Protocol):
@@ -170,8 +171,14 @@ class GatewayService:
     async def deliver_outbox(self) -> int:
         delivered = 0
         for message in await self.kernel.pending_outbound():
+            # Undeliverable for long: give up on it, so it cannot keep every other project's messages waiting.
+            expired = datetime.now(timezone.utc) - message["created_at"] > UNDELIVERABLE_AFTER
             channels = self.config.projects.get(message["project_id"])
-            if channels is None:
+            if channels is None:   # no routing (yet: a new project's routing is picked up within seconds)
+                if expired:
+                    log.warning("message %s has no channel for project %s; marked failed",
+                                message["message_id"], message["project_id"])
+                    await self.kernel.mark_delivered(message["message_id"], external_id=None, ok=False)
                 continue
             channel_id = (message["chat_id"] if message["channel"] == "discord" and message["chat_id"]
                           else channels.supervisor_channel_id if message["role"] == "supervisor"
@@ -182,7 +189,10 @@ class GatewayService:
             try:
                 external = await self.transport.send(channel_id, text)
             except Exception:
-                log.exception("delivery of message %s failed; will retry", message["message_id"])
+                log.exception("delivery of message %s failed; %s", message["message_id"],
+                              "marked failed" if expired else "will retry")
+                if expired:
+                    await self.kernel.mark_delivered(message["message_id"], external_id=None, ok=False)
                 continue
             await self.kernel.mark_delivered(message["message_id"], external_id=f"out:{external}")
             delivered += 1
@@ -292,6 +302,8 @@ class GatewayService:
         task = await self.kernel.active_task(route[0])
         if task is None:
             return "当前没有进行中的任务。"
+        if task["state"] in ("publishing", "bootstrapping"):   # its effects are being applied right now
+            return "任务正在发布（或创建项目），这一步无法中途取消；完成后会通知你，届时再决定是否需要撤回。"
         await self.kernel.cancel_task(task["task_id"])
         await self.sync_cards(route[0])
         return f"已取消任务：{task['goal'][:100]}"

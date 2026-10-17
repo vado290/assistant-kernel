@@ -7,6 +7,7 @@ programs. Kernel only ever touches its own `proj-*` programs; it never reloads o
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import shlex
@@ -18,7 +19,7 @@ import yaml
 
 from assistant_kernel.services import schedule_time
 
-MANIFEST = "jobs.yaml"   # vault top level (the vault's runtime/ folder holds Kernel internals: codex home, credentials)
+MANIFEST = "jobs.yaml"   # vault top level (vault runtime/ holds Kernel internals); code delivery: repository root
 SCHEMA = "runtime-manifest.v1"
 DEFAULT_TZ = "Asia/Shanghai"
 JOB_TYPES = ("script", "agent", "service_restart")
@@ -138,6 +139,10 @@ def parse_manifest(text: str, exists: Callable[[str], bool]) -> dict[str, list[d
     return {"jobs": jobs, "services": services}
 
 
+def manifest_sha(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 def script_argv(job: dict[str, Any]) -> list[str]:
     entry = job["entry"]
     if entry.endswith(".py"):
@@ -153,7 +158,8 @@ def program_name(project_id: str, service_id: str) -> str:
     return f"{PROGRAM_PREFIX}{project_id}-{service_id}"
 
 
-def program_conf(project_id: str, service: dict[str, Any], vault: Path) -> str:
+def program_conf(project_id: str, service: dict[str, Any], vault: Path, home: Path | None = None) -> str:
+    """`home` is where the service runs (the repository for code delivery); its logs always go to the vault."""
     logs = vault / "runs" / "services"
     command = " ".join(shlex.quote(part) for part in service["command"])
     return (f"[program:{program_name(project_id, service['id'])}]\n"
@@ -178,14 +184,15 @@ class SupervisorControl:
         done = subprocess.run(["supervisorctl", "-c", self.conf, *args], capture_output=True, text=True, timeout=120)
         return (done.stdout + done.stderr).strip()
 
-    def apply(self, project_id: str, vault: Path, services: list[dict[str, Any]], removed: list[str]) -> list[str]:
+    def apply(self, project_id: str, vault: Path, services: list[dict[str, Any]], removed: list[str],
+              home: Path | None = None) -> list[str]:
         """Write the program files for `services`, delete those for `removed`, and update just those groups."""
         self.programs_dir.mkdir(parents=True, exist_ok=True)
         (vault / "runs" / "services").mkdir(parents=True, exist_ok=True)
         names = []
         for service in services:
             name = program_name(project_id, service["id"])
-            (self.programs_dir / f"{name}.conf").write_text(program_conf(project_id, service, vault), "utf-8")
+            (self.programs_dir / f"{name}.conf").write_text(program_conf(project_id, service, vault, home), "utf-8")
             names.append(name)
         for service_id in removed:
             name = program_name(project_id, service_id)

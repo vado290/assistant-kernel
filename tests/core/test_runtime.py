@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from assistant_kernel.core import jobs, runtime
+from assistant_kernel.core.db import event
 from assistant_kernel.core.dispatch import Dispatcher
 from assistant_kernel.core.executors.delivery import check_runtime_manifest
 from assistant_kernel.core.executors.digest import render_digest
@@ -33,7 +34,7 @@ class FakeControl:
     def __init__(self):
         self.applied, self.restarted, self.states = [], [], {}
 
-    def apply(self, project_id, vault, services, removed):
+    def apply(self, project_id, vault, services, removed, home=None):
         self.applied.append((project_id, [s["id"] for s in services], list(removed)))
         return []
 
@@ -62,6 +63,13 @@ def vault(kernel_settings):
     return root
 
 
+async def release(kernel, vault, text: str, project_id: str = "p1") -> None:
+    """Publish a jobs.yaml as a release would: the file plus the release record Kernel registers from."""
+    (vault / runtime.MANIFEST).write_text(text, "utf-8")
+    async with kernel.db.tx() as c:
+        await event(c, project_id, "runtime_manifest_published", manifest_sha=runtime.manifest_sha(text))
+
+
 def exists_in(root):
     return lambda path: (root / path).exists()
 
@@ -86,7 +94,7 @@ def test_manifest_validation(vault):
 
 
 async def test_sync_registers_updates_and_retires(kernel, sim, kernel_settings, vault, control):
-    (vault / runtime.MANIFEST).write_text(MANIFEST, "utf-8")
+    await release(kernel, vault, MANIFEST)
     assert await jobs.sync_runtime(kernel, kernel_settings) == 1
     assert await jobs.sync_runtime(kernel, kernel_settings) == 0          # unchanged manifest: nothing to do
     rows = {r["job_id"]: r for r in await jobs.list_jobs(kernel, "p1")}
@@ -94,12 +102,12 @@ async def test_sync_registers_updates_and_retires(kernel, sim, kernel_settings, 
     assert control.applied == [("p1", ["listener"], [])]
     assert any("运行时已按发布" in m["body"]["text"] for m in await sim.outbound("p1"))
 
-    (vault / runtime.MANIFEST).write_text(MANIFEST.split("services:")[0], "utf-8")   # the service is removed
+    await release(kernel, vault, MANIFEST.split("services:")[0])   # the service is removed
     await jobs.sync_runtime(kernel, kernel_settings)
     assert {r["job_id"] for r in await jobs.list_jobs(kernel, "p1")} == {"daily-report"}
     assert control.applied[-1] == ("p1", [], ["listener"])
 
-    (vault / runtime.MANIFEST).write_text("schema_version: runtime-manifest.v1\njobs:\n  - id: x\n", "utf-8")
+    await release(kernel, vault, "schema_version: runtime-manifest.v1\njobs:\n  - id: x\n")
     await jobs.sync_runtime(kernel, kernel_settings)
     await jobs.sync_runtime(kernel, kernel_settings)
     alerts = [m for m in await sim.outbound("p1") if "有误" in m["body"]["text"]]
@@ -108,7 +116,7 @@ async def test_sync_registers_updates_and_retires(kernel, sim, kernel_settings, 
 
 
 async def test_due_jobs_run_once_and_failures_alert(kernel, sim, kernel_settings, vault, control):
-    (vault / runtime.MANIFEST).write_text(MANIFEST, "utf-8")
+    await release(kernel, vault, MANIFEST)
     await jobs.sync_runtime(kernel, kernel_settings)
     async with kernel.db.tx() as c:
         await c.execute("UPDATE core.jobs SET next_at = now() - interval '3 days' WHERE job_id='daily-report'")
@@ -140,7 +148,7 @@ async def test_due_jobs_run_once_and_failures_alert(kernel, sim, kernel_settings
 
 
 async def test_a_job_still_running_is_skipped(kernel, kernel_settings, vault, control):
-    (vault / runtime.MANIFEST).write_text(MANIFEST, "utf-8")
+    await release(kernel, vault, MANIFEST)
     await jobs.sync_runtime(kernel, kernel_settings)
     await jobs.run_now(kernel, "p1", "daily-report")                       # queued, not yet run
     async with kernel.db.tx() as c:
@@ -161,7 +169,7 @@ async def test_script_timeout(kernel_settings, vault):
 
 
 async def test_jobs_command_and_service_health(kernel, sim, kernel_settings, vault, control, gateway):  # noqa: F811
-    (vault / runtime.MANIFEST).write_text(MANIFEST, "utf-8")
+    await release(kernel, vault, MANIFEST)
     await jobs.sync_runtime(kernel, kernel_settings)
     listing = await gateway.jobs_command("p1", [])
     assert "daily-report" in listing and "服务 `listener`" in listing
@@ -194,7 +202,7 @@ def test_validation_checks_a_published_manifest(kernel_settings, vault):
 
 
 async def test_digest_counts_job_runs(kernel, kernel_settings, vault, control):
-    (vault / runtime.MANIFEST).write_text(MANIFEST, "utf-8")
+    await release(kernel, vault, MANIFEST)
     await jobs.sync_runtime(kernel, kernel_settings)
     await jobs.run_now(kernel, "p1", "daily-report")
     await settle(Dispatcher(kernel, {"job": execute_job}, services={"settings": kernel_settings}))

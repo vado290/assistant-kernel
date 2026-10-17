@@ -92,6 +92,8 @@ class Dispatcher:
             await self.kernel.complete(run, result)
         except LeaseLost:
             log.warning("run %s finished after losing its lease; result dropped", run["run_id"])
+        except Exception:   # e.g. the database was unreachable: the lease expires and recovery takes over
+            log.exception("reporting the result of run %s failed", run["run_id"])
 
     async def _report_failure(self, run, error, *, retryable: bool) -> None:
         try:
@@ -118,18 +120,10 @@ class Dispatcher:
         loop = asyncio.get_running_loop()
         next_recovery = 0.0
         while not stop.is_set():
+            if loop.time() >= next_recovery:   # a failing step is logged and retried next period, never blocks claiming
+                next_recovery = loop.time() + self.recover_every_seconds
+                await self.maintain()
             try:
-                if loop.time() >= next_recovery:
-                    await self.kernel.recover_expired()
-                    if self.weekly_evolution:
-                        await self.kernel.schedule_evolution()
-                    if "settings" in self.services:
-                        await sync_vaults(self.kernel, self.services["settings"])
-                    if self.run_jobs:
-                        await jobs.sync_runtime(self.kernel, self.services["settings"])
-                        await jobs.schedule_jobs(self.kernel)
-                        await jobs.check_services(self.kernel)
-                    next_recovery = loop.time() + self.recover_every_seconds
                 started = await self.claim_and_start()
             except Exception:
                 log.exception("dispatcher loop error")
@@ -140,6 +134,24 @@ class Dispatcher:
                 except asyncio.TimeoutError:
                     pass
         await self.drain()
+
+    async def maintain(self) -> None:
+        """Periodic upkeep; each step on its own, so one broken step cannot stop the others or the claiming."""
+        settings = self.services.get("settings")
+        steps = [("recover", self.kernel.recover_expired)]
+        if self.weekly_evolution:
+            steps.append(("evolution", self.kernel.schedule_evolution))
+        if settings is not None:
+            steps.append(("vaults", lambda: sync_vaults(self.kernel, settings)))
+        if self.run_jobs:
+            steps += [("runtime", lambda: jobs.sync_runtime(self.kernel, settings)),
+                      ("jobs", lambda: jobs.schedule_jobs(self.kernel)),
+                      ("services", lambda: jobs.check_services(self.kernel))]
+        for name, step in steps:
+            try:
+                await step()
+            except Exception:
+                log.exception("dispatcher maintenance step %s failed", name)
 
     async def drain(self, timeout: float | None = None) -> None:
         """Wait for in-flight runs; whatever is still running after `timeout` is left to lease recovery."""

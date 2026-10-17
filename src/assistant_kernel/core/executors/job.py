@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from assistant_kernel.core import runtime, skills as skill_rules
+from assistant_kernel.core import gitdelivery, runtime, skills as skill_rules
 from assistant_kernel.core.agents import AgentConfig, AgentLoader
 from assistant_kernel.core.executors.common import READ_ONLY_TOOLS, call_model, charter
 from assistant_kernel.storage import ProjectRuntimeManager
@@ -38,13 +38,15 @@ def _log_path(vault: Path, job_id: str, planned: str) -> Path:
     return path
 
 
-async def run_script(vault: Path, job: dict[str, Any], env_extra: dict[str, str], log: Path) -> dict[str, Any]:
+async def run_script(vault: Path, job: dict[str, Any], env_extra: dict[str, str], log: Path,
+                     home: Path | None = None) -> dict[str, Any]:
+    """Run in `home` (the repository for code delivery, else the vault); the log stays in the vault."""
     env = {key: os.environ[key] for key in PASSED_ENV if key in os.environ}
     env.update({"TZ": job["timezone"], **env_extra})
     started = time.monotonic()
     with log.open("wb") as out:
         process = await asyncio.create_subprocess_exec(
-            *runtime.script_argv(job), cwd=str(vault), env=env, stdout=out, stderr=asyncio.subprocess.STDOUT,
+            *runtime.script_argv(job), cwd=str(home or vault), env=env, stdout=out, stderr=asyncio.subprocess.STDOUT,
             start_new_session=True)
         try:
             code = await asyncio.wait_for(process.wait(), timeout=job["timeout_seconds"])
@@ -102,7 +104,8 @@ async def execute_job(run: dict[str, Any], ctx) -> dict[str, Any]:
         env = {"PROJECT_ID": project_id, "JOB_ID": job["id"], "PLANNED_AT": planned, "RUN_ID": str(run["run_id"]),
                "MANUAL_RUN": "1" if run["input"].get("manual") else "0",
                "STARTED_AT": datetime.now(timezone.utc).isoformat()}
-        return await run_script(vault, job, env, log)
+        code = gitdelivery.config(settings, project_id)   # code delivery: scripts live in the repository
+        return await run_script(vault, job, env, log, code["repo"] if code else None)
     if job["type"] == "agent":
         return await run_agent(run, ctx, vault, job, log)
     output = await asyncio.to_thread(runtime.CONTROL.restart, project_id, job["entry"])

@@ -38,13 +38,13 @@ A project-creation task (`bootstrap`) only drafts its charter; approval creates 
 | `machine.py` | the state machine: every transition, card item and run enqueue |
 | `rules.py` | stage moves, approvals, creation parameters — pure functions |
 | `cards.py` | the per-project card |
-| `dispatch.py` / `dispatch_main.py` | claims runs and executes them; maintenance tick (lease recovery, evolution schedule, vault sync, job runtime) |
+| `dispatch.py` / `dispatch_main.py` | claims runs and executes them; maintenance tick (lease recovery, evolution schedule, vault sync, job runtime), each step isolated so a failing one never stops claiming |
 | `executors/` | `pm` (PM turns), `supervisor`, `triage`, `delivery` (validation, publish), `bootstrap`, `job`, plus helpers (`common`, `state` ledger, `digest`) |
 | `tools.py` | the MCP tool server for model turns; every call checks the run's lease |
 | `drafts.py` | task documents as drafts edited through tools, saved as immutable revisions at turn end |
 | `skills.py` / `agents.py` | skill loading by `metadata.load` rules; agent config loading |
 | `gitdelivery.py` | code delivery: worktrees, Kernel commits, tests on the commit, fast-forward publish |
-| `runtime.py` / `jobs.py` | `jobs.yaml` → scheduled jobs and supervisord services of projects |
+| `runtime.py` / `jobs.py` | released `jobs.yaml` (vault top level; code delivery: repository root on main) → scheduled jobs and supervisord services of projects |
 | `vault_sync.py` | Kernel's idempotent file writes that follow from state |
 | `gateway/` | Discord gateway: messages, cards, buttons, text commands (`/status /pending /cancel /evolve /jobs`) |
 | `sql/` | migrations, applied in order, never edited after applying |

@@ -140,6 +140,9 @@ async def to_bootstrapping(c, task, spec: dict[str, Any]) -> dict[str, Any]:
     return task
 
 
+RELEASED = ("published", "published_after_reconcile")   # close reasons where the approved release took effect
+
+
 async def close(c, task, state: str, reason: str, published_files: list[str] | None = None) -> dict[str, Any]:
     """Finish a task, withdraw its runs and card item, then start the next queued task."""
     task = await _update(c, task, state=state, close_reason=reason, closed_at=_now())
@@ -153,6 +156,13 @@ async def close(c, task, state: str, reason: str, published_files: list[str] | N
     await notify(c, task["project_id"], "pm",
                  (f"✅ 任务完成：{task['goal'][:100]}" + (f"\n已发布：{files}" if files else ""))
                  if state == "completed" else f"⏹ 任务已停止：{task['goal'][:100]}", task_id=task["task_id"])
+    if state == "completed":   # PM-channel input that arrived after the last PM turn (validating, publishing, ...)
+        unread = [m for m in await pending_inputs(c, task["task_id"])
+                  if m["role"] == "pm" and m["message_id"] != task.get("source_message_id") and m["body"].get("text")]
+        if unread:
+            await notify(c, task["project_id"], "pm", "📝 任务结束前你补充的这些内容还没有处理：\n"
+                         + "\n".join(f"- {m['body']['text'][:200]}" for m in unread[:5])
+                         + "\n需要的话请重新发送，会作为新的请求处理。", task_id=task["task_id"])
     if state == "completed" and rules.approval_valid(task, "release"):
         docs = task["documents"]
         await c.execute(
@@ -191,9 +201,12 @@ async def insert_iteration(c, project_id: str, task_id, *, kind: str, title: str
 async def grant_directory(c, project_id: str, directory: dict[str, str], *, reason: str, source: str = "user",
                           approval_message_id=None) -> None:
     """Give a project a checked directory (grants.check_directory) from its next run on; replaces a grant of the same
-    key, keeping the old row (revoked) as history. Recorded in the change stream."""
+    directory, keeping the old row (revoked) as history. Recorded in the change stream."""
     import uuid
     from assistant_kernel.core import grants
+    active = await one(c, """SELECT policy_json FROM core.project_grants WHERE project_id=%s AND resource_key=%s
+                             AND grant_kind='file' AND status='active'""", (project_id, directory["key"]))
+    directory = grants.distinct_key(directory, str(active["policy_json"].get("path")) if active else None)
     body, sha = grants.policy(directory)
     await c.execute("""UPDATE core.project_grants SET status='revoked', revoked_at=now()
                        WHERE project_id=%s AND resource_key=%s AND grant_kind='file' AND status='active'""",
@@ -237,14 +250,14 @@ async def record_task(c, task, state: str, reason: str, published_files: list[st
     if kind == "review":
         await _record_review(c, task, common)
         return
-    record = (docs.get("implementation_report") or {}).get("iteration") if reason == "published" else None
+    record = (docs.get("implementation_report") or {}).get("iteration") if reason in RELEASED else None
     if record:
         await insert_iteration(c, task["project_id"], task["task_id"], kind=kind, **common,
                                **{k: record[k] for k in ("title", "reason", "changes", "significance", "verification",
                                                          "expected_effect", "measure", "followups")})
         return
     await insert_iteration(c, task["project_id"], task["task_id"], kind=kind, **common, title=task["goal"][:200],
-                           reason=task.get("reason") or task["goal"], complete=reason != "published",
+                           reason=task.get("reason") or task["goal"], complete=reason not in RELEASED,
                            changes=[{"type": "file", "target": f.split("://", 1)[-1], "action": "modify", "note": ""}
                                     for f in files[:30]])
 
@@ -513,6 +526,9 @@ async def _validation_result(c, task, run, result) -> None:
 async def _publish_result(c, task, run, result) -> None:
     outcome = result.get("outcome")
     if outcome == "published":
+        if "manifest_sha" in result:   # only a released jobs.yaml is registered (jobs.sync_runtime)
+            await event(c, task["project_id"], "runtime_manifest_published", task_id=task["task_id"],
+                        manifest_sha=result["manifest_sha"])
         await close(c, task, "completed", "published", published_files=result.get("files"))
         if result.get("note"):   # the project's own release note, e.g. kernel: "ready to deploy"
             await notify(c, task["project_id"], "pm", str(result["note"])[:1000], task_id=task["task_id"])
@@ -639,6 +655,14 @@ async def _triage_result(c, run, result) -> None:
         kind = "bootstrap" if result.get("task_kind") == "bootstrap" else "delivery"
         if kind == "bootstrap" and "project_management" not in (result.get("_capabilities") or ()):
             raise InvalidResult("only a project with the project_management capability can create projects")
+        active = await one(c, "SELECT kind FROM core.tasks WHERE project_id=%s AND state = ANY(%s)",
+                           (project_id, list(rules.ACTIVE_STATES)))
+        if kind == "delivery" and active and active["kind"] == "delivery":
+            # Another message started a task while this one was being triaged: it is a supplement to that task.
+            await user_input(c, project_id, message)
+            await notify(c, project_id, "pm", "当前已有进行中的任务，这条消息已作为它的补充交给 PM。", chat=chat)
+            await event(c, project_id, "triaged", decision="attached", message_id=message["message_id"])
+            return
         task = await _task_from_message(c, project_id, message, goal=goal, kind=kind,
                                         reason=str(result.get("reason") or "").strip() or None)
         await notify(c, project_id, "pm", reply or f"好的，开始处理：{goal[:100]}", chat=chat, task_id=task["task_id"])

@@ -6,7 +6,7 @@ from typing import Any
 
 import yaml
 
-from assistant_kernel.core import gitdelivery
+from assistant_kernel.core import gitdelivery, runtime
 from assistant_kernel.services.candidate_bundle import CandidateBundleService
 from assistant_kernel.storage import ProjectRuntimeManager
 
@@ -39,7 +39,10 @@ async def execute_validation(run: dict[str, Any], ctx) -> dict[str, Any]:
         code = gitdelivery.config(settings, project_id)
         passed, report = await asyncio.to_thread(gitdelivery.validate, code, task_id,
                                                  bundle_sha[len(gitdelivery.PREFIX):])
-        return {"passed": passed, "report": report}
+        manifest_problem = await asyncio.to_thread(check_repo_manifest, settings, project_id, code, task_id)
+        if manifest_problem:
+            report += f"\n- runtime_manifest: {manifest_problem}"
+        return {"passed": passed and not manifest_problem, "report": report}
     bundle, problem = await asyncio.to_thread(_reseal, settings, project_id, task_id, bundle_sha)
     if problem:
         return {"passed": False, "report": problem}
@@ -58,7 +61,7 @@ async def execute_validation(run: dict[str, Any], ctx) -> dict[str, Any]:
 def check_runtime_manifest(settings, project_id: str, task_id: str) -> str | None:
     """A jobs.yaml about to be published must be valid against the files the project will have."""
     import json
-    from assistant_kernel.core import runtime
+
     from assistant_kernel.storage import ProjectRuntimeManager
     vault = ProjectRuntimeManager(settings.data_root).ensure(project_id).vault_root
     candidate = vault / "runs" / task_id / "candidate"
@@ -77,6 +80,22 @@ def check_runtime_manifest(settings, project_id: str, task_id: str) -> str | Non
 
     try:
         runtime.parse_manifest((candidate / "project" / runtime.MANIFEST).read_text("utf-8"), exists)
+    except runtime.ManifestError as exc:
+        return str(exc)
+    return None
+
+
+def check_repo_manifest(settings, project_id: str, code: dict[str, Any], task_id: str) -> str | None:
+    """Code delivery: the repository's jobs.yaml (at its root, released with the fast-forward) must be valid."""
+
+    worktree = gitdelivery.worktree_path(code, task_id)
+    path = worktree / runtime.MANIFEST
+    if not path.is_file():
+        return None
+    vault = ProjectRuntimeManager(settings.data_root).ensure(project_id).vault_root
+    try:
+        runtime.parse_manifest(path.read_text("utf-8"), lambda p: ((vault if p.startswith("agents/") else worktree) / p)
+                               .exists())
     except runtime.ManifestError as exc:
         return str(exc)
     return None
@@ -107,5 +126,10 @@ async def execute_publish(run: dict[str, Any], ctx) -> dict[str, Any]:
     result, _ = await asyncio.to_thread(
         CapabilityBundleService(settings).publish, project_id=project_id,
         publish_run_id=str(run["run_id"]), request=request, cancel_event=None)
-    return {"outcome": "published", "files": [f["target_uri"] for f in result.get("files", [])],
-            "publication_uri": result.get("publication_uri"), "diff_uri": result.get("diff_uri")}
+    files = [f["target_uri"] for f in result.get("files", [])]
+    published = {"outcome": "published", "files": files,
+                 "publication_uri": result.get("publication_uri"), "diff_uri": result.get("diff_uri")}
+    if f"workspace://project/{runtime.MANIFEST}" in files:   # the released jobs.yaml, the only one Kernel registers
+        manifest = ProjectRuntimeManager(settings.data_root).ensure(project_id).vault_root / runtime.MANIFEST
+        published["manifest_sha"] = runtime.manifest_sha(manifest.read_text("utf-8")) if manifest.is_file() else None
+    return published

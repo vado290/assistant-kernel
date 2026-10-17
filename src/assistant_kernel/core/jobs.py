@@ -11,14 +11,14 @@ touches supervisord.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 from datetime import datetime, timezone
-from typing import Any
+from pathlib import Path
+from typing import Any, Callable
 
 from psycopg.types.json import Jsonb
 
-from assistant_kernel.core import runtime
+from assistant_kernel.core import gitdelivery, runtime
 from assistant_kernel.core.db import all_rows, event, lock_project, one
 from assistant_kernel.core.machine import enqueue_job, notify
 from assistant_kernel.services import schedule_time
@@ -63,7 +63,7 @@ async def apply_manifest(kernel, project_id: str, sha: str | None, parsed: dict[
                 changes["added"].append(job_id)
                 if kind == "service":
                     changes["services"].append(job_id)
-            elif row["spec"] != spec or row["kind"] != kind:
+            elif row["spec"] != spec or row["kind"] != kind or (kind == "service" and not row["manifest_sha"]):
                 keep = row["next_at"] if kind == "job" and row["spec"].get("schedule") == spec.get("schedule") else due
                 await c.execute("""UPDATE core.jobs SET kind=%s, spec=%s, next_at=%s, manifest_sha=%s, updated_at=now()
                                    WHERE project_id=%s AND job_id=%s""", (kind, Jsonb(spec), keep, sha, project_id, job_id))
@@ -96,21 +96,54 @@ async def sync_runtime(kernel, settings) -> int:
     return synced
 
 
+def released_manifest(settings, project_id: str) -> tuple[str | None, Callable[[str], bool], Path | None]:
+    """(jobs.yaml text, path check, home) of what the project released. File delivery: the vault's jobs.yaml (gated on
+    the release record by the caller). Code delivery: jobs.yaml at the repository root on the main branch, which only
+    moves by approved fast-forwards; jobs and services then run in the repository (home), agents stay in the vault."""
+    vault = _vault(settings, project_id)
+    code = gitdelivery.config(settings, project_id)
+    if code is None:
+        path = vault / runtime.MANIFEST
+        return (path.read_text("utf-8") if path.is_file() else None), lambda p: (vault / p).exists(), None
+
+    def on_main(p: str) -> bool:
+        if p.startswith("agents/"):
+            return (vault / p).exists()
+        try:
+            gitdelivery.git("cat-file", "-e", f"{code['main']}:{p}", cwd=code["repo"])
+            return True
+        except gitdelivery.GitError:
+            return False
+
+    try:
+        text = gitdelivery.git("show", f"{code['main']}:{runtime.MANIFEST}", cwd=code["repo"])
+    except gitdelivery.GitError:
+        text = None
+    return text, on_main, code["repo"]
+
+
 async def _sync_project(kernel, settings, project_id: str) -> int:
     vault = _vault(settings, project_id)
-    path = vault / runtime.MANIFEST
-    text = path.read_text("utf-8") if path.is_file() else None
-    sha = hashlib.sha256(text.encode("utf-8")).hexdigest() if text is not None else None
+    text, exists, home = await asyncio.to_thread(released_manifest, settings, project_id)
+    sha = runtime.manifest_sha(text) if text is not None else None
     async with kernel.db.tx() as c:
-        stored = await one(c, """SELECT max(manifest_sha) AS sha, count(*) AS n FROM core.jobs
-                                 WHERE project_id=%s AND status <> 'retired'""", (project_id,))
-        rejected = await one(c, """SELECT 1 FROM core.task_events WHERE project_id=%s AND kind='runtime_manifest_invalid'
-                                   AND payload->>'manifest_sha' = %s""", (project_id, sha)) if sha else None
-    if rejected or (sha is None and not stored["n"]) or (sha is not None and stored["sha"] == sha):
+        stored = await one(c, """SELECT count(*) AS n, count(*) FILTER (WHERE manifest_sha IS DISTINCT FROM %s) AS stale
+                                 FROM core.jobs WHERE project_id=%s AND status <> 'retired'""", (sha, project_id))
+        seen = {r["kind"] for r in await all_rows(c, """SELECT DISTINCT kind FROM core.task_events WHERE project_id=%s
+                    AND kind LIKE 'runtime_manifest_%%' AND payload->>'manifest_sha' = %s""", (project_id, sha))}             if sha else set()
+    released = home is not None or sha is None or "runtime_manifest_published" in seen
+    if "runtime_manifest_invalid" in seen or (sha is None and not stored["n"])             or (sha is not None and stored["n"] and not stored["stale"]):
+        return 0
+    if not released:   # written outside a release (e.g. straight from a build turn's shell): never registered
+        if "runtime_manifest_unreleased" in seen:   # already said
+            return 0
+        async with kernel.db.tx() as c:
+            await event(c, project_id, "runtime_manifest_unreleased", manifest_sha=sha)
+            await notify(c, project_id, "supervisor", f"⚠ {runtime.MANIFEST} 被直接修改过，与发布的版本不同，Kernel 没有登记"
+                         "这些变化。作业和服务的改动请通过任务发布（批准发布即登记）。")
         return 0
     try:
-        parsed = runtime.parse_manifest(text, lambda p: (vault / p).exists()) if text is not None \
-            else {"jobs": [], "services": []}
+        parsed = runtime.parse_manifest(text, exists) if text is not None else {"jobs": [], "services": []}
     except runtime.ManifestError as exc:   # published but broken (validation should have caught it): say so once
         async with kernel.db.tx() as c:
             await event(c, project_id, "runtime_manifest_invalid", manifest_sha=sha, error=str(exc)[:1000])
@@ -119,7 +152,13 @@ async def _sync_project(kernel, settings, project_id: str) -> int:
     changes = await apply_manifest(kernel, project_id, sha, parsed)
     if changes["services"] or changes["services_removed"]:
         services = [s for s in parsed["services"] if s["id"] in changes["services"]]
-        await asyncio.to_thread(runtime.CONTROL.apply, project_id, vault, services, changes["services_removed"])
+        try:
+            await asyncio.to_thread(runtime.CONTROL.apply, project_id, vault, services, changes["services_removed"], home)
+        except Exception:   # forget the registration of these services, so the next sync tries again
+            async with kernel.db.tx() as c:
+                await c.execute("UPDATE core.jobs SET manifest_sha='' WHERE project_id=%s AND job_id = ANY(%s)",
+                                (project_id, changes["services"]))
+            raise
     shown = [f"{label}：{'、'.join(changes[key])}" for key, label in (("added", "新增"), ("updated", "修改"),
                                                                     ("retired", "退役")) if changes[key]]
     if shown:

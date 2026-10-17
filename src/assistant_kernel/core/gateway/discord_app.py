@@ -20,6 +20,7 @@ log = logging.getLogger(__name__)
 STYLES = {"success": discord.ButtonStyle.success, "danger": discord.ButtonStyle.danger,
           "primary": discord.ButtonStyle.primary, "secondary": discord.ButtonStyle.secondary}
 MODAL_ACTIONS = ("answer:", "revise")
+ERROR_REPLY = "处理时出错了，请看 Supervisor 频道里最新的卡片确认是否已生效；没有生效就再点一次。"
 
 
 class CoreButton(discord.ui.DynamicItem[discord.ui.Button],
@@ -53,10 +54,14 @@ class CoreModal(discord.ui.Modal):
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(ephemeral=True, thinking=True)
-        reply = await self.client_ref.service.on_modal(
-            channel_id=str(interaction.channel_id), user_id=str(interaction.user.id),
-            interaction_id=str(interaction.id), custom_id=self.custom_id,
-            values={key: str(item.value or "") for key, item in self.inputs.items()})
+        try:
+            reply = await self.client_ref.service.on_modal(
+                channel_id=str(interaction.channel_id), user_id=str(interaction.user.id),
+                interaction_id=str(interaction.id), custom_id=self.custom_id,
+                values={key: str(item.value or "") for key, item in self.inputs.items()})
+        except Exception:
+            log.exception("modal %s failed", self.custom_id)
+            reply = Reply(ERROR_REPLY)
         await interaction.followup.send(reply.text or "已记录。", ephemeral=True)
 
 
@@ -187,8 +192,13 @@ class CoreDiscordClient(discord.Client):
                 await interaction.response.send_message(reply.text or "已记录。", ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
-        reply = await self.service.on_button(channel_id=str(interaction.channel_id), user_id=str(interaction.user.id),
-                                             interaction_id=str(interaction.id), custom_id=custom_id)
+        try:
+            reply = await self.service.on_button(channel_id=str(interaction.channel_id),
+                                                 user_id=str(interaction.user.id),
+                                                 interaction_id=str(interaction.id), custom_id=custom_id)
+        except Exception:
+            log.exception("button %s failed", custom_id)
+            reply = Reply(ERROR_REPLY)
         await interaction.followup.send(reply.text or "已记录。", ephemeral=True)
 
 

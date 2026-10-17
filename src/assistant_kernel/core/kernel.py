@@ -1,6 +1,7 @@
 """Public entry points of the rebuilt core. Each method is one transaction."""
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -16,6 +17,7 @@ from assistant_kernel.core.db import Database, all_rows, event, lock_project, on
 EVOLUTION_GOAL = "周度复盘：根据最近的运行记录提出改进建议"
 EVOLUTION_TZ = ZoneInfo("Asia/Shanghai")
 
+log = logging.getLogger(__name__)
 CONTROL_RUNS = ("pm_turn", "supervisor", "validation", "publish", "bootstrap", "triage", "job")
 
 
@@ -319,6 +321,10 @@ class Kernel:
                     await machine.on_result(c, held, result)
             except machine.InvalidResult as exc:
                 await self._fail(c, held, {"type": "invalid_result", "message": str(exc)}, retryable=True)
+            except Exception as exc:   # a Kernel bug: running the model again cannot fix it, so tell the user now
+                log.exception("handling the result of run %s failed", run["run_id"])
+                await self._fail(c, held, {"type": "kernel_error", "message": f"{type(exc).__name__}: {exc}"[:2000]},
+                                 retryable=False)
 
     async def fail(self, run: dict[str, Any], error: dict[str, Any], *, retryable: bool = True) -> None:
         async with self.db.tx() as c:
@@ -338,14 +344,17 @@ class Kernel:
             expired = list(await (await c.execute(
                 "SELECT run_id, project_id FROM core.runs WHERE status='running' AND lease_until < now()")).fetchall())
         for row in expired:
-            async with self.db.tx() as c:
-                await lock_project(c, row["project_id"])
-                run = await one(c, "SELECT * FROM core.runs WHERE run_id=%s AND status='running' FOR UPDATE",
-                                (row["run_id"],))
-                if run and run["lease_until"] is not None:
-                    # A publish may have partly applied: never retry it blindly.
-                    await self._fail(c, run, {"type": "lease_expired", "message": "worker stopped"},
-                                     retryable=run["run_type"] != "publish")
+            try:   # one run that cannot be failed must not keep the others stuck
+                async with self.db.tx() as c:
+                    await lock_project(c, row["project_id"])
+                    run = await one(c, "SELECT * FROM core.runs WHERE run_id=%s AND status='running' FOR UPDATE",
+                                    (row["run_id"],))
+                    if run and run["lease_until"] is not None:
+                        # A publish may have partly applied: never retry it blindly.
+                        await self._fail(c, run, {"type": "lease_expired", "message": "worker stopped"},
+                                         retryable=run["run_type"] != "publish")
+            except Exception:
+                log.exception("recovering expired run %s failed", row["run_id"])
         return len(expired)
 
     async def _held(self, c, run) -> dict[str, Any]:

@@ -7,6 +7,7 @@ Known limit: build turns run with full shell access, so write limits on the shel
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 from pathlib import Path, PureWindowsPath
@@ -15,6 +16,15 @@ from typing import Any
 from assistant_kernel.services.project_grants import policy_sha256
 
 ACCESS = ("read", "write")
+RESERVED_KEYS = {"project", "candidate", "run-work"}
+
+
+def distinct_key(directory: dict[str, str], active_path: str | None) -> dict[str, str]:
+    """The directory with a key no other active grant uses: a different path under the same name gets a path hash."""
+    if active_path is None or active_path == directory["path"]:
+        return directory
+    digest = hashlib.sha256(directory["path"].encode("utf-8")).hexdigest()[:6]
+    return {**directory, "key": f"{directory['key'][:33]}-{digest}"}
 
 
 def visible_root() -> Path:
@@ -57,6 +67,8 @@ def check_directory(raw: Any, project_id: str, data_root: Path) -> dict[str, str
     if resolved == data or resolved == vaults or (vaults in resolved.parents and resolved.relative_to(vaults).parts[0] != project_id):
         raise ValueError(f"{path} 属于其他项目的 vault，不能授权")
     key = re.sub(r"[^a-z0-9-]+", "-", resolved.name.lower()).strip("-")[:40] or "dir"
+    if key in RESERVED_KEYS:   # the workspace's own roots
+        key = f"dir-{key}"
     return {"path": str(resolved), "access": access, "purpose": purpose[:300], "key": key}
 
 
