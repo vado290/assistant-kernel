@@ -17,6 +17,7 @@ from assistant_kernel.services.document_runtime import TaskDocumentService
 from assistant_kernel.storage import ProjectRuntimeManager
 
 PROMPTS = Path(__file__).parents[2] / "prompts" / "core"
+AUTH_SYNC_SECONDS = 20   # how soon a login refreshed during a model call reaches the other projects
 
 # Tools available in the MVP (plan D3); a project's own tool list can only narrow this.
 MVP_TOOLS = frozenset({
@@ -222,6 +223,17 @@ async def call_model(ctx, run: dict[str, Any], config: AgentConfig, prompt: str,
         }
     from assistant_kernel.core.executors.auth_sync import sync
     await asyncio.to_thread(sync, settings, project_id, direction="in")
+
+    async def share_refreshed_login() -> None:
+        """A login Codex refreshes mid-turn invalidates every other copy: hand it on soon, not when the turn ends."""
+        while True:
+            await asyncio.sleep(AUTH_SYNC_SECONDS)
+            try:
+                await asyncio.to_thread(sync, settings, project_id, direction="out")
+            except OSError:
+                pass
+
+    sharing = asyncio.create_task(share_refreshed_login())
     try:
         return await harness.run_turn(AgentTurnRequest(
             project_id=project_id, prompt=prompt,
@@ -232,6 +244,7 @@ async def call_model(ctx, run: dict[str, Any], config: AgentConfig, prompt: str,
             invocation_id=invocation_id, cancel_event=ctx.cancel, scoped_tools=allowed, scope_context=scope_context,
             multi_agent_enabled=subagents > 0, max_concurrent_subagents=subagents))
     finally:
+        sharing.cancel()
         await asyncio.to_thread(sync, settings, project_id, direction="out")
 
 

@@ -373,5 +373,8 @@ class Kernel:
         status = "cancelled" if run["cancel_requested"] else "failed"
         failed = await one(c, """UPDATE core.runs SET status=%s, error=%s, ended_at=now(), lease_until=NULL
                                  WHERE run_id=%s RETURNING *""", (status, Jsonb(error), run["run_id"]))
+        if run["run_type"] == "pm_turn":   # its input never reached a finished turn: the next PM turn reads it
+            await c.execute("UPDATE core.messages SET consumed_by_run_id=NULL WHERE consumed_by_run_id=%s",
+                            (run["run_id"],))
         if status == "failed":
             await machine.on_exhausted(c, failed)

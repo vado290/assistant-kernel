@@ -178,9 +178,14 @@ async def _remove_worktrees(kernel, settings) -> int:
                               AND e.kind = 'worktree_released')""")
     removed = 0
     for row in rows:
-        code = await asyncio.to_thread(gitdelivery.config, settings, row["project_id"])
-        gone = bool(code) and await asyncio.to_thread(gitdelivery.remove_worktree, code, str(row["task_id"]))
+        error = None
+        try:   # a worktree that cannot be removed is recorded once and left alone; it never blocks the others
+            code = await asyncio.to_thread(gitdelivery.config, settings, row["project_id"])
+            gone = bool(code) and await asyncio.to_thread(gitdelivery.remove_worktree, code, str(row["task_id"]))
+        except Exception as exc:
+            log.warning("removing the worktree of task %s failed: %s", row["task_id"], exc)
+            gone, error = False, str(exc)[:500]
         async with kernel.db.tx() as c:
-            await event(c, row["project_id"], "worktree_released", task_id=row["task_id"], removed=gone)
+            await event(c, row["project_id"], "worktree_released", task_id=row["task_id"], removed=gone, error=error)
         removed += gone
     return removed

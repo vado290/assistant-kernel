@@ -3,12 +3,13 @@
 All projects use the same ChatGPT login, whose refresh tokens work only once: when one project's copy
 refreshes, the other copies become invalid. So the newest auth.json always wins:
   before a model call  master → project  (if the master is newer)
-  after a model call   project → master  (if Codex refreshed the project's copy)
+  during and after it  project → master  (if Codex refreshed the project's copy; every 20 s while it runs)
 Copies keep the file's mtime (copy2), so equal files are never copied back and forth.
 """
 from __future__ import annotations
 
 import fcntl
+import json
 import os
 import shutil
 from contextlib import contextmanager
@@ -34,11 +35,19 @@ def _locked(settings):
 
 
 def _newer(source: Path, target: Path) -> bool:
-    if not source.is_file():
+    if not source.is_file() or not _complete(source):
         return False
     if not target.is_file():
         return True
     return source.stat().st_mtime > target.stat().st_mtime and source.read_bytes() != target.read_bytes()
+
+
+def _complete(path: Path) -> bool:
+    """A login file Codex is still writing is never copied (calls also sync while Codex runs)."""
+    try:
+        return isinstance(json.loads(path.read_text("utf-8")), dict)
+    except (OSError, ValueError):
+        return False
 
 
 def _copy(source: Path, target: Path) -> None:

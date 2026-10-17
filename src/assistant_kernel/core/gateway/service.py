@@ -142,7 +142,10 @@ class GatewayService:
             if channels is None:
                 continue
             for card in await self.kernel.displayed_cards(pid):
-                await self._sync_card(channels, card)
+                try:   # one broken card must not keep every other card from showing
+                    await self._sync_card(channels, card)
+                except Exception:
+                    log.exception("syncing card %s of %s failed", card["interaction_id"], pid)
 
     async def _sync_card(self, channels, card: dict) -> None:
         display = {"messages": {}, "reminded": {}, **(card["display"] or {})}
@@ -150,7 +153,10 @@ class GatewayService:
         changed = False
         for item_id, shown in list(display["messages"].items()):
             if item_id not in current:
-                await self.transport.edit(shown["channel_id"], shown["message_id"], render.closed_text(shown["item"]))
+                try:
+                    await self.transport.edit(shown["channel_id"], shown["message_id"], render.closed_text(shown["item"]))
+                except Exception:   # e.g. the user deleted the message: nothing left to retire
+                    log.warning("could not retire card message %s; dropped", shown["message_id"], exc_info=True)
                 del display["messages"][item_id]
                 changed = True
         for item_id, item in current.items():

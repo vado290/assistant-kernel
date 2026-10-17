@@ -156,9 +156,12 @@ async def close(c, task, state: str, reason: str, published_files: list[str] | N
     await notify(c, task["project_id"], "pm",
                  (f"✅ 任务完成：{task['goal'][:100]}" + (f"\n已发布：{files}" if files else ""))
                  if state == "completed" else f"⏹ 任务已停止：{task['goal'][:100]}", task_id=task["task_id"])
-    if state == "completed":   # PM-channel input that arrived after the last PM turn (validating, publishing, ...)
-        unread = [m for m in await pending_inputs(c, task["task_id"])
-                  if m["role"] == "pm" and m["message_id"] != task.get("source_message_id") and m["body"].get("text")]
+    if state == "completed":   # PM-channel input no agent has seen (it came during validating, publishing, ...)
+        seen = await one(c, """SELECT max(started_at) AS at FROM core.runs WHERE task_id=%s
+                               AND run_type='supervisor' AND status='succeeded'""", (task["task_id"],))
+        unread = [m for m in await pending_inputs(c, task["task_id"])   # Supervisor reads the recent conversation
+                  if m["role"] == "pm" and m["message_id"] != task.get("source_message_id") and m["body"].get("text")
+                  and (seen["at"] is None or m["created_at"] > seen["at"])]
         if unread:
             await notify(c, task["project_id"], "pm", "📝 任务结束前你补充的这些内容还没有处理：\n"
                          + "\n".join(f"- {m['body']['text'][:200]}" for m in unread[:5])

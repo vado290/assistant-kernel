@@ -176,3 +176,100 @@ async def test_l7_a_failed_service_registration_is_retried(kernel, kernel_settin
     assert await jobs.sync_runtime(kernel, kernel_settings) == 1
     assert calls == [["listener"], ["listener"]]
     assert await jobs.sync_runtime(kernel, kernel_settings) == 0
+
+
+# ------------------------------------------------------------------ second round (0.43.1)
+
+async def test_h2_a_deleted_card_message_does_not_stop_the_cards(gateway, kernel, sim):  # noqa: F811
+    first = await start_task(kernel, sim)
+    sim.script("supervisor:evaluate", next_step("requirements"))
+    await sim.drain()
+    await gateway.sync_cards()
+
+    async def deleted(*args, **kwargs):
+        raise RuntimeError("404 Unknown Message")
+    gateway.transport.edit = deleted                                   # the user deleted the card message
+    await kernel.cancel_task(first)
+    await gateway.sync_cards()                                         # retiring it fails quietly
+    assert await kernel.displayed_cards("p1") == []
+    await start_task(kernel, sim, text="做周报")
+    sim.script("supervisor:evaluate", next_step("requirements"))
+    await sim.drain()
+    sent = len(gateway.transport.order)
+    await gateway.sync_cards()
+    assert len(gateway.transport.order) > sent                         # the next card still shows
+
+
+async def test_m7_input_of_a_failed_pm_turn_reaches_the_retry(kernel, sim):
+    from .sim import Fail
+    task_id = await start_task(kernel, sim)
+    await execute_next(kernel, sim, task_id, "requirements")
+    await kernel.receive("p1", role="pm", text="预算控制在 500 以内")
+    sim.script("pm_turn", Fail(), Fail(), Fail())
+    await sim.drain()
+    await kernel.act("p1", (await sim.item("p1", task_id))["item_id"], "retry")
+    run = await kernel.claim("w1")
+    assert "预算控制在 500 以内" in [m["body"].get("text") for m in await kernel.turn_inputs(run)]
+
+
+async def test_m6_a_login_refreshed_mid_call_is_shared_before_the_call_ends(kernel_settings, monkeypatch):
+    from types import SimpleNamespace
+
+    from assistant_kernel.core.executors import common
+    from assistant_kernel.core.executors.auth_sync import master_path
+    from assistant_kernel.storage import ProjectRuntimeManager
+    monkeypatch.setattr(common, "AUTH_SYNC_SECONDS", 0.05)
+    master = master_path(kernel_settings)
+    master.parent.mkdir(parents=True, exist_ok=True)
+    master.write_text('{"t": "old"}')
+    local = ProjectRuntimeManager(kernel_settings.data_root).ensure("p1").codex_home / "auth.json"
+    seen = {}
+
+    class Harness:
+        async def run_turn(self, request):
+            await asyncio.sleep(0.05)
+            local.write_text('{"t": "refreshed"}')                    # Codex refreshes at the start of the turn
+            await asyncio.sleep(0.3)
+            seen["master"] = master.read_text()                        # ... while the turn is still running
+            return SimpleNamespace(final_text="{}")
+
+    config = SimpleNamespace(allowed_tools=(), model=None, reasoning_effort=None, provider=None, context_policy=None,
+                             model_context_window_tokens=None, model_auto_compact_token_limit=None, timeout_seconds=60)
+    ctx = SimpleNamespace(services={"settings": kernel_settings, "harness": Harness()}, cancel=asyncio.Event())
+    run = {"project_id": "p1", "run_id": "r1", "attempt": 1}
+    await common.call_model(ctx, run, config, "x", task_id=None, stage=None, session_id=None, tools=frozenset(),
+                            sandbox="read-only")
+    assert seen["master"] == '{"t": "refreshed"}'
+
+
+async def test_l8_only_input_after_the_last_decision_is_reported(kernel, sim):
+    task_id = await start_task(kernel, sim)
+    await execute_next(kernel, sim, task_id, "requirements")
+    async with kernel.db.tx() as c:   # said before the user's decision: Supervisor and the user already saw it
+        await c.execute("""INSERT INTO core.messages(project_id, task_id, channel, direction, role, body, created_at)
+                           VALUES ('p1', %s, 'api', 'inbound', 'pm', %s, now() - interval '1 hour')""",
+                        (task_id, Jsonb({"text": "看起来不错"})))
+        task = await machine.load_task(c, task_id)
+        await machine.close(c, task, "completed", "published")
+    assert not any("还没有处理" in m["body"]["text"] for m in await sim.outbound("p1"))
+
+
+async def test_l9_one_stuck_worktree_does_not_block_the_others(kernel, kernel_settings, repo, monkeypatch):  # noqa: F811
+    from assistant_kernel.core import gitdelivery, vault_sync
+    ids = []
+    async with kernel.db.tx() as c:
+        for goal in ("a", "b"):
+            task = await machine.create_task(c, "p1", goal=goal, origin="user")
+            await c.execute("UPDATE core.tasks SET closed_at=now() WHERE task_id=%s", (task["task_id"],))
+            ids.append(str(task["task_id"]))
+    removed = []
+
+    def remove(code, task_id):
+        if task_id == ids[0]:
+            raise gitdelivery.GitError("worktree is locked")
+        removed.append(task_id)
+        return True
+    monkeypatch.setattr(gitdelivery, "remove_worktree", remove)
+    await vault_sync._remove_worktrees(kernel, kernel_settings)
+    await vault_sync._remove_worktrees(kernel, kernel_settings)        # nothing is tried twice
+    assert removed == [ids[1]]
