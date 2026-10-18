@@ -40,9 +40,20 @@ def prompt_text(name: str) -> str:
     return (PROMPTS / f"{name}.md").read_text(encoding="utf-8").strip()
 
 
+def agent_home(settings, project_id: str, agent: str) -> Path:
+    """An agent's own folder: its working directory, so Codex finds exactly its skills (ROUND5 D2)."""
+    return ProjectRuntimeManager(settings.data_root).ensure(project_id).vault_root / "agents" / agent
+
+
+def path_note(vault: Path, agent: str) -> str:
+    return (f"## 路径说明\n\n你的工作目录是 `agents/{agent}`（你的技能在其中，Codex 会列出）。项目根目录是 `{vault}`；"
+            "文中出现的相对路径（如 `runs/…`、`knowledge/…`）都相对项目根目录；读写项目文件优先用 Kernel 工具。")
+
+
 def load_agent(settings, project_id: str, role: str, *, stage: str | None = None, purpose: str | None = None,
-               task_kind: str | None = None) -> AgentConfig:
-    """The project's live agent files plus the skills and shared context its load rules select for this run."""
+               task_kind: str | None = None, native: bool = True) -> AgentConfig:
+    """The project's live agent files plus the skills and shared context its load rules select for this run.
+    `native`: the run works in the agent's own folder (False only for a code-delivery worktree)."""
     loader = AgentLoader(settings)
     agent = "manager" if role == "pm" else "supervisor"
     config, files = loader.load(project_id, f"project:{project_id}:{agent}")
@@ -50,7 +61,10 @@ def load_agent(settings, project_id: str, role: str, *, stage: str | None = None
     capabilities = skill_rules.project_config(vault)["capabilities"]
     selection = skill_rules.select(vault, settings.data_root, role=role, stage=stage, purpose=purpose,
                                    capabilities=capabilities, task_kind=task_kind)
-    return AgentConfig(**{**config.__dict__, "skills_text": selection.render(vault),
+    skills_text = selection.render(vault, native=native)
+    if native:
+        skills_text = "\n\n".join(part for part in (path_note(vault, config.agent_id), skills_text) if part)
+    return AgentConfig(**{**config.__dict__, "skills_text": skills_text,
                           "skill_labels": tuple(selection.labels),
                           "config_sha256": skill_rules.digest(files + selection.files)})
 
@@ -237,7 +251,7 @@ async def call_model(ctx, run: dict[str, Any], config: AgentConfig, prompt: str,
     try:
         return await harness.run_turn(AgentTurnRequest(
             project_id=project_id, prompt=prompt,
-            cwd=cwd or ProjectRuntimeManager(settings.data_root).ensure(project_id).vault_root,
+            cwd=cwd or agent_home(settings, project_id, config.agent_id),
             physical_session_id=session_id, provider=config.provider, model=model, reasoning_effort=effort,
             context_policy=config.context_policy, model_context_window_tokens=window,
             model_auto_compact_token_limit=compact, sandbox=sandbox, timeout_seconds=config.timeout_seconds,

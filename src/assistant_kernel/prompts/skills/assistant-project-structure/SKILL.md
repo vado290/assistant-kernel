@@ -2,9 +2,10 @@
 name: assistant-project-structure
 description: 在创建或迁移Project级Agent、Schema、Skill、脚本、MCP、Workflow或Service时，按当前layout放置资源并补齐必要配套文件；普通内容编辑不使用。
 metadata:
-  version: "1.1.0"
+  version: "1.1.1"
   load: {roles: [pm], stages: [design, build], on_demand: true}
   changelog:
+    - "1.1.1 2026-10-18 技能改为每个 agent 一个平级目录 agents/<agent>/.agents/skills/（ROUND5 R5.1）"
     - "2026-10-16 改为按需读取（只在提示中列出名称和用途）；内容尚未按核心 v6 重写，其中的旧流程用语和输出字段一律以 assistant-project-agent 和输出要求为准"
 ---
 
@@ -21,7 +22,7 @@ metadata:
 当前v2基本约定：
 
 - Agent：`agents/<agent-id>/config.yaml`与`role.md`；引用的Skill、Schema和MCP必须同时存在或包含在同一candidate。
-- Skill：`.agents/skills/<skill>/SKILL.md`；只在需要时添加`scripts/`、`references/`、`templates/`或`evals/`。
+- Skill：放在使用它的 agent 自己的目录 `agents/<agent>/.agents/skills/<skill>/SKILL.md`（多个 agent 用就各放一份）；项目根目录和 `agents/` 这一级不放 `.agents/skills`；只在需要时添加`scripts/`、`references/`、`templates/`或`evals/`。
 - Project共享脚本：`scripts/`；Skill专用脚本放对应Skill的`scripts/`。
 - JSON Schema：放Project的`schemas/`下，使用稳定的相对路径，并由Agent、Workflow或Tool配置显式引用。
 - MCP：`mcp/<server-id>/mcp-manifest.yaml`和实际入口；同步更新受影响Agent的enabled tools。

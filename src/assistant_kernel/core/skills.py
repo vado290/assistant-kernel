@@ -2,13 +2,15 @@
 
 A skill is ``<dir>/SKILL.md`` with YAML front matter; ``metadata.load`` says when Kernel loads it.
 The package ``prompts/skills`` is the template set: Kernel copies it into a project when the project is
-created, and from then on only the project's own copies (vault ``.agents/skills``) are loaded.
+created, and from then on only the project's own copies are loaded: each agent has its own flat folder
+``agents/<agent>/.agents/skills`` (ROUND5 D2), which is also where Codex finds them natively.
 Shared context lives in the kernel vault (``knowledge/shared/*.md``) and is injected read-only into
 every project by the same load rules.
 """
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import shutil
 from dataclasses import dataclass, field
@@ -78,8 +80,54 @@ def _docs(folder: Path, pattern: str) -> list[Skill]:
     return [parse(p) for p in sorted(folder.glob(pattern)) if p.is_file()] if folder.is_dir() else []
 
 
-def project_skills(vault: Path) -> list[Skill]:
-    return _docs(vault / ".agents" / "skills", "*/SKILL.md")
+MANAGING_AGENTS = ("pm", "supervisor")   # the project's own agents; each has its own skill folder (ROUND5 D2)
+
+
+def agent_skill_dir(vault: Path, agent: str) -> Path:
+    """An agent's flat skill folder. It is also the agent's working directory's `.agents/skills`, so Codex
+    finds exactly these skills on its own; no folder above an agent's may hold `.agents/skills`."""
+    return vault / "agents" / agent / ".agents" / "skills"
+
+
+def project_skills(vault: Path, agent: str | None = None) -> list[Skill]:
+    """One agent's skills, or every copy of every agent of the project (the same skill may appear once per agent)."""
+    if agent is not None:
+        return _docs(agent_skill_dir(vault, agent), "*/SKILL.md")
+    return _docs(vault / "agents", "*/.agents/skills/*/SKILL.md")
+
+
+SKILL_HOME = re.compile(r"^(product/)?agents/[^/]+/\.agents/skills/")
+LAYOUT_SKIP = {"archive", "runs", "runtime", "data", ".git"}
+
+
+def layout_problems(vault: Path, targets: list[str] = ()) -> list[str]:
+    """Breaks of the folder rule (ROUND5 §3): `.agents/skills` only inside an agent's own folder, no AGENTS.md
+    anywhere in the project. `targets` are project-relative paths a release is about to write."""
+    problems = []
+    for target in targets:
+        if "/.agents/skills/" in f"/{target}" and not SKILL_HOME.match(target):
+            problems.append(f"{target}：技能只能放在 agents/<agent>/.agents/skills/ 下")
+        if target.rsplit("/", 1)[-1] == "AGENTS.md":
+            problems.append(f"{target}：项目内不放 AGENTS.md（角色写在 role.md，规则写在技能里）")
+    for folder, dirs, files in os.walk(vault):
+        dirs[:] = [d for d in dirs if d not in LAYOUT_SKIP]
+        relative = Path(folder).relative_to(vault).as_posix()
+        relative = "" if relative == "." else relative + "/"
+        if ".agents" in dirs and (Path(folder) / ".agents" / "skills").is_dir() \
+                and not SKILL_HOME.match(f"{relative}.agents/skills/"):
+            problems.append(f"{relative}.agents/skills：这一级不能放技能")
+        if "AGENTS.md" in files:
+            problems.append(f"{relative}AGENTS.md：项目内不放 AGENTS.md")
+        dirs[:] = [d for d in dirs if d != ".agents"]
+    return problems
+
+
+def distinct(copies: list[Skill]) -> list[Skill]:
+    """One copy per skill name (the first), for checks that judge a skill rather than each agent's copy."""
+    seen: dict[str, Skill] = {}
+    for copy in copies:
+        seen.setdefault(copy.name, copy)
+    return list(seen.values())
 
 
 def template_skills() -> list[Skill]:
@@ -114,11 +162,13 @@ class Selection:
     def files(self) -> list[Path]:
         return [s.path for s in (*self.always, *self.on_demand, *self.shared)]
 
-    def render(self, vault: Path) -> str:
+    def render(self, vault: Path, *, native: bool = True) -> str:
+        """Core skills in full. With `native` (the agent runs in its own folder) Codex lists the agent's other
+        skills itself; otherwise (a code-delivery worktree) Kernel lists the on-demand ones with their paths."""
         parts = []
         if self.always:
             parts.append("## 技能\n\n" + "\n\n".join(f"### 技能 {s.name}（{s.version}）\n\n{s.body}" for s in self.always))
-        if self.on_demand:
+        if self.on_demand and not native:
             lines = [f"- {s.name}：{s.description}（全文：`{s.path.relative_to(vault).as_posix()}`）" for s in self.on_demand]
             parts.append("## 按需技能（需要时用 vault_read_text 读取全文）\n\n" + "\n".join(lines))
         if self.shared:
@@ -128,7 +178,8 @@ class Selection:
 
 
 def select(vault: Path, data_root: Path, **context: Any) -> Selection:
-    chosen = [s for s in project_skills(vault) if matches(s.load, **context)]
+    """The skills of the agent named by `role` (its own folder) that its load rules pick for this run."""
+    chosen = [s for s in project_skills(vault, context["role"]) if matches(s.load, **context)]
     shared = [s for s in shared_context(data_root) if matches(s.load, **context)]
     return Selection(always=tuple(s for s in chosen if not s.on_demand),
                      on_demand=tuple(s for s in chosen if s.on_demand), shared=tuple(shared))
@@ -156,17 +207,25 @@ def _install(skill: Skill, target: Path) -> None:
     (target / "SKILL.md").write_text(text, "utf-8", newline="\n")
 
 
+def template_agents(skill: Skill) -> list[str]:
+    """The project agents a template skill is for (its load.roles; no roles means both)."""
+    roles = skill.load.get("roles") or MANAGING_AGENTS
+    return [agent for agent in MANAGING_AGENTS if agent in roles]
+
+
 def install_templates(vault: Path, capabilities: frozenset[str]) -> list[str]:
-    """Copy the template skills a project can use into its vault, recording their origin. Existing copies stay."""
+    """Copy the template skills a project can use into each agent's own folder, recording their origin.
+    Existing copies stay. Returns "<agent>/<skill>" for each copy made."""
     installed = []
     for skill in template_skills():
         if not set(skill.load.get("capabilities") or ()) <= capabilities:
             continue
-        target = vault / ".agents" / "skills" / skill.name
-        if target.exists():
-            continue
-        _install(skill, target)
-        installed.append(skill.name)
+        for agent in template_agents(skill):
+            target = agent_skill_dir(vault, agent) / skill.name
+            if target.exists():
+                continue
+            _install(skill, target)
+            installed.append(f"{agent}/{skill.name}")
     return installed
 
 
@@ -178,7 +237,7 @@ PLATFORM_ARTIFACTS = {"digest", "change_stream", "state_ledger", "template_updat
 def collaboration_gaps(vault: Path) -> list[str]:
     """Broken links between the project's skills by their `io` metadata: an artifact some skill writes but none
     reads, or one some skill reads but none writes (ROUND4 R4.5). Skills without `io` are not judged."""
-    active = [s for s in project_skills(vault) if s.io and not s.load.get("disabled")]
+    active = [s for s in distinct(project_skills(vault)) if s.io and not s.load.get("disabled")]
     reads = {a: [s.name for s in active if a in s.io.get("reads", [])] for s in active for a in s.io.get("reads", [])}
     writes = {a: [s.name for s in active if a in s.io.get("writes", [])] for s in active for a in s.io.get("writes", [])}
     gaps = [f"{a}：由 {'、'.join(w)} 写出，但没有技能读取" for a, w in writes.items() if a not in reads]
@@ -191,10 +250,11 @@ def template_updates(vault: Path) -> list[dict[str, str]]:
     """Project skill copies whose template has a newer version (copies the project edited are never overwritten;
     the weekly review decides what to adopt)."""
     templates = {s.name: s for s in template_skills()}
-    updates = []
+    updates, seen = [], set()
     for copy in project_skills(vault):
         template = templates.get(copy.name)
-        if template and template.version != copy.version:
+        if template and template.version != copy.version and (copy.name, copy.version) not in seen:
+            seen.add((copy.name, copy.version))
             changelog = re.findall(r'^\s*-\s*"(.+?)"\s*$', template.path.read_text("utf-8"), re.M)[:2]
             updates.append({"name": copy.name, "copy": copy.version, "template": template.version,
                             "changes": "；".join(changelog) or "（无变更记录）"})

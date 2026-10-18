@@ -125,7 +125,7 @@ async def test_project_is_created_from_the_approved_charter(kernel, sim, dispatc
     assert "日报数字必须注明数据来源" in (vault / "agents" / "pm" / "role.md").read_text("utf-8")
     assert "便利店" in (vault / "knowledge" / "domain-brief.md").read_text("utf-8")
     assert "直接接受推荐" in (vault / "knowledge" / "user-profile.md").read_text("utf-8")
-    assert (vault / ".agents" / "skills" / "assistant-requirements" / "SKILL.md").is_file()
+    assert (vault / "agents" / "pm" / ".agents" / "skills" / "assistant-requirements" / "SKILL.md").is_file()
     assert yaml.safe_load(management.read_text("utf-8"))["projects"]["sales-report"]["pm_channel_id"] == "pm1"
     notices = [m["body"]["text"] for m in await sim.outbound("kernel")]
     assert any("🆕 项目 sales-report 已创建" in n and "/g1/pm1" in n for n in notices)

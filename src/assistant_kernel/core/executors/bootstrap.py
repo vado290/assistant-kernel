@@ -112,7 +112,8 @@ def write_project_files(settings, spec: dict[str, Any]) -> list[str]:
             write_brief(vault / "knowledge" / "domain-brief.md", f"brief:{brief['sha256'][:12]}",
                         f"{created} · 创建项目时的调研", research)
     capabilities = skills.project_config(vault)["capabilities"]
-    written += [f".agents/skills/{name}" for name in skills.install_templates(vault, capabilities)]
+    written += [f"agents/{copy.split('/')[0]}/.agents/skills/{copy.split('/')[1]}"
+                for copy in skills.install_templates(vault, capabilities)]
     return written
 
 

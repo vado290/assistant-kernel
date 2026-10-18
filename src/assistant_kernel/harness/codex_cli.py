@@ -17,6 +17,16 @@ from assistant_kernel.storage import ProjectRuntimeManager
 from assistant_kernel.harness.process_control import run_managed_process
 
 
+def bundled_skills_off(codex_home: Path) -> list[str]:
+    """Switch off the skills Codex ships in its home (`skills/.system`), read afresh on every run because a Codex
+    upgrade may add or remove some (ROUND5 D3); the agent then sees only its own folder's skills."""
+    system = sorted((codex_home / "skills" / ".system").glob("*/SKILL.md"))
+    if not system:
+        return []
+    entries = ",".join(f"{{path={json.dumps(str(path))},enabled=false}}" for path in system)
+    return ["-c", f"skills.config=[{entries}]"]
+
+
 @dataclass(frozen=True)
 class CodexTurnResult:
     physical_session_id: str
@@ -92,6 +102,7 @@ class CodexCliHarness:
             if request.permission_profile:
                 raise ValueError('shared Project agreement cannot use a per-Run directory permission profile')
             runtime_overrides.extend(['-c','approval_policy="never"'])
+        runtime_overrides.extend(bundled_skills_off(codex_home))
         # The model's shell never sees database or scope variables, whatever the sandbox.
         runtime_overrides.extend(['-c','shell_environment_policy.inherit="core"'])
         for name in ['POSTGRES_*','ASSISTANT_*','KERNEL_SCOPE_*','RAG_ENV_FILE']:

@@ -233,7 +233,7 @@ async def test_m6_a_login_refreshed_mid_call_is_shared_before_the_call_ends(kern
             seen["master"] = master.read_text()                        # ... while the turn is still running
             return SimpleNamespace(final_text="{}")
 
-    config = SimpleNamespace(allowed_tools=(), model=None, reasoning_effort=None, provider=None, context_policy=None,
+    config = SimpleNamespace(agent_id="pm", allowed_tools=(), model=None, reasoning_effort=None, provider=None, context_policy=None,
                              model_context_window_tokens=None, model_auto_compact_token_limit=None, timeout_seconds=60)
     ctx = SimpleNamespace(services={"settings": kernel_settings, "harness": Harness()}, cancel=asyncio.Event())
     run = {"project_id": "p1", "run_id": "r1", "attempt": 1}

@@ -16,6 +16,7 @@ from assistant_kernel.core.db import Database, all_rows, event, lock_project, on
 
 EVOLUTION_GOAL = "周度复盘：根据最近的运行记录提出改进建议"
 EVOLUTION_TZ = ZoneInfo("Asia/Shanghai")
+IDLE_DAYS = 7   # a task waiting this long for the user ends on its own
 
 log = logging.getLogger(__name__)
 CONTROL_RUNS = ("pm_turn", "supervisor", "validation", "publish", "bootstrap", "triage", "job")
@@ -163,6 +164,30 @@ class Kernel:
             await self.start_evolution(row["project_id"], origin="schedule",
                                        idempotency_key=f"evolution:{row['project_id']}:{week_key}")
         return [row["project_id"] for row in due]
+
+    async def expire_idle_tasks(self, days: int = IDLE_DAYS) -> list[str]:
+        """Tasks waiting for the user with no word or click from the user for `days` end on their own, so the
+        project's next task can start (ROUND5 D23). Returns their ids."""
+        async with self.db.tx() as c:
+            idle = await all_rows(c, """
+                SELECT t.task_id, t.project_id FROM core.tasks t
+                WHERE t.state = 'awaiting_user' AND t.updated_at < now() - make_interval(days => %s)
+                  AND NOT EXISTS (SELECT 1 FROM core.messages m WHERE m.project_id = t.project_id
+                                  AND m.direction = 'inbound' AND m.created_at > now() - make_interval(days => %s))""",
+                                  (days, days))
+        expired = []
+        for row in idle:
+            async with self.db.tx() as c:
+                await lock_project(c, row["project_id"])
+                task = await machine.load_task(c, row["task_id"])
+                if task["state"] != "awaiting_user":
+                    continue
+                await machine.close(c, task, "cancelled", "expired_no_response")
+                await machine.notify(c, task["project_id"], "supervisor",
+                                     f"⌛ 任务等待你超过 {days} 天没有回应，已自动结束：{task['goal'][:100]}。"
+                                     "已有的文档都保留着，需要时重新提出即可。", task_id=task["task_id"])
+                expired.append(str(task["task_id"]))
+        return expired
 
     async def grants(self, project_id: str) -> list[dict[str, Any]]:
         async with self.db.tx() as c:

@@ -138,7 +138,7 @@ class Dispatcher:
     async def maintain(self) -> None:
         """Periodic upkeep; each step on its own, so one broken step cannot stop the others or the claiming."""
         settings = self.services.get("settings")
-        steps = [("recover", self.kernel.recover_expired)]
+        steps = [("recover", self.kernel.recover_expired), ("idle_tasks", self.kernel.expire_idle_tasks)]
         if self.weekly_evolution:
             steps.append(("evolution", self.kernel.schedule_evolution))
         if settings is not None:

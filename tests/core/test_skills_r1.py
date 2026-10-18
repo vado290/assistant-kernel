@@ -54,7 +54,11 @@ def test_each_turn_loads_matching_skills_and_shared_context(kernel_settings, pro
     requirements = load_agent(kernel_settings, "p1", "pm", stage="requirements")
     assert "技能 assistant-requirements" in requirements.skills_text
     assert "技能 assistant-implementation" not in requirements.skills_text
-    assert "assistant-history-retrieval：" in requirements.skills_text          # on-demand: listed, not loaded
+    assert "assistant-history-retrieval" not in requirements.skills_text.split("## 公共背景")[0]   # Codex lists it
+    assert "你的工作目录是 `agents/pm`" in requirements.skills_text
+    in_worktree = load_agent(kernel_settings, "p1", "pm", stage="requirements", native=False)
+    assert "assistant-history-retrieval：" in in_worktree.skills_text          # no native discovery: Kernel lists it
+    assert "路径说明" not in in_worktree.skills_text
     assert "公共背景 · 组织与用户" in requirements.skills_text
     assert "公共背景 · 技术环境" not in requirements.skills_text               # environment is for design onwards
     build = load_agent(kernel_settings, "p1", "pm", stage="build")

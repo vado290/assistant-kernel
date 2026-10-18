@@ -99,7 +99,7 @@ async def test_review_material_lists_template_updates_and_other_projects(kernel,
     from assistant_kernel.core import skills
     from assistant_kernel.core.executors.digest import evolution_material
     skills.install_templates(project_files, frozenset())
-    copy = project_files / ".agents" / "skills" / "assistant-requirements" / "SKILL.md"
+    copy = project_files / "agents" / "pm" / ".agents" / "skills" / "assistant-requirements" / "SKILL.md"
     copy.write_text(copy.read_text("utf-8").replace('\n  version: "', '\n  version: "0.0.', 1), "utf-8")   # older copy
     text = await evolution_material(kernel, kernel_settings, "p1")
     assert "公共模板有更新" in text and "assistant-requirements" in text and "其他项目" not in text

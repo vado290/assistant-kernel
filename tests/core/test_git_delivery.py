@@ -153,7 +153,7 @@ def test_new_code_projects_get_a_repository(kernel_settings):
     vault = kernel_settings.data_root / "vaults" / "sales-report"
     cfg = gitdelivery.config(kernel_settings, "sales-report")
     assert cfg["repo"] == vault / "repo" and git(cfg["repo"], "rev-parse", "--abbrev-ref", "HEAD") == "main"
-    assert (vault / ".agents" / "skills" / "assistant-git-delivery").is_dir()
+    assert (vault / "agents" / "pm" / ".agents" / "skills" / "assistant-git-delivery").is_dir()
 
 
 def test_tests_get_only_the_allowed_environment(kernel_settings, repo, project_files, monkeypatch):

@@ -54,8 +54,31 @@ async def execute_validation(run: dict[str, Any], ctx) -> dict[str, Any]:
     manifest_problem = await asyncio.to_thread(check_runtime_manifest, settings, project_id, task_id)
     if manifest_problem:
         issues += f"\n- runtime_manifest: {manifest_problem}"
-    return {"passed": result.get("release_gate") == "pass" and not manifest_problem,
+    layout = await asyncio.to_thread(check_layout, settings, project_id, task_id)
+    issues += "".join(f"\n- layout: {problem}" for problem in layout)
+    return {"passed": result.get("release_gate") == "pass" and not manifest_problem and not layout,
             "report": (result.get("summary") or "") + (f"\n\n{issues.strip()}" if issues.strip() else "")}
+
+
+def candidate_targets(settings, project_id: str, task_id: str) -> dict[str, str]:
+    """{project-relative path: operation} of the task's candidate files."""
+    import json
+    vault = ProjectRuntimeManager(settings.data_root).ensure(project_id).vault_root
+    listing = vault / "runs" / task_id / "candidate" / "manifest.json"
+    if not listing.is_file():
+        return {}
+    prefix = "workspace://project/"
+    return {f["target_uri"][len(prefix):]: f["operation"]
+            for f in json.loads(listing.read_text("utf-8")).get("files") or [] if f["target_uri"].startswith(prefix)}
+
+
+def check_layout(settings, project_id: str, task_id: str) -> list[str]:
+    """The folder rule (ROUND5 §3) for what this release writes and for the project as it is."""
+    from assistant_kernel.core import skills
+    vault = ProjectRuntimeManager(settings.data_root).ensure(project_id).vault_root
+    written = [path for path, operation in candidate_targets(settings, project_id, task_id).items()
+               if operation != "delete"]
+    return skills.layout_problems(vault, written)
 
 
 def check_runtime_manifest(settings, project_id: str, task_id: str) -> str | None:

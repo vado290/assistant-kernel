@@ -2,9 +2,10 @@
 name: assistant-agent-design
 description: 设计产物内部的 agent（由 jobs.yaml 的 agent 作业运行）：目录结构、config.yaml、role.md 和专属技能怎么写；修改本项目 PM/Supervisor 的角色要点时也参考。
 metadata:
-  version: "2.0.1"
+  version: "2.0.2"
   load: {roles: [pm], stages: [design, build], on_demand: true}
   changelog:
+    - "2.0.2 2026-10-18 技能改为每个 agent 一个平级目录 agents/<agent>/.agents/skills/（ROUND5 R5.1）"
     - "2.0.1 2026-10-16 运行声明文件改为项目根目录的 jobs.yaml（vault 的 runtime/ 目录存放 Kernel 内部数据）"
     - "2.0.0 2026-10-16 按核心 v6 和通用运行时（ROUND3 S3）重写：产物内 agent 由 agent 作业定时运行，只读，结果发到频道"
 ---
@@ -19,7 +20,7 @@ metadata:
 ```
 agents/<名称>/config.yaml     # 模型设置
 agents/<名称>/role.md         # 角色：身份、职责、边界、完成标准（几段即可）
-.agents/skills/<技能>/SKILL.md # 专属技能：metadata.load.roles 写 [<名称>]，Kernel 才会给它加载
+agents/<名称>/.agents/skills/<技能>/SKILL.md   # 专属技能：放在该 agent 自己的目录里
 ```
 
 config.yaml 最小写法：

@@ -2,9 +2,10 @@
 name: assistant-subagent-orchestration
 description: 把独立、阅读量大或可并行的临时工作派给子 agent：何时派、怎样写子 agent 的任务说明、怎样处理子 agent 提出的问题、怎样核对和汇总结果。
 metadata:
-  version: "2.1.0"
+  version: "2.1.1"
   load: {roles: [pm], stages: [requirements, design, build, review, evolution]}
   changelog:
+    - "2.1.1 2026-10-18 技能改为每个 agent 一个平级目录 agents/<agent>/.agents/skills/（ROUND5 R5.1）"
     - "2.1.0 2026-10-16 增加事先固定的子 agent 定义（行业调研、现有系统盘点、反例审查、并行实施）；不设 fork_turns；在 delegations 中登记（ROUND3 S2）"
     - "2.0.0 2026-10-16 按核心 v6 就地重写（旧版使用已废弃的协议用语和输出字段）：子 agent 不能与用户交互，任务说明和问题回流必须由主 agent 负责"
 ---
@@ -27,7 +28,7 @@ metadata:
 
 ### 行业调研（industry-research）
 - **何时派**：需求阶段，assistant-domain-research 判断需要调研时**必须派**；其他阶段遇到不熟悉的业务领域时可以派。
-- **必读输入**：`.agents/skills/assistant-domain-research/SKILL.md`（方法）· `knowledge/charter.md` 第 4、9 节 ·
+- **必读输入**：`agents/pm/.agents/skills/assistant-domain-research/SKILL.md`（方法）· `knowledge/charter.md` 第 4、9 节 ·
   `knowledge/user-profile.md`（如有）· `knowledge/domain-brief.md`（如有，作为旧版参考）· `runs/<任务>/state.md`。
 - **能做**：联网搜索；读项目文件；用 edit_task_document 写 `domain_brief`。不得写其他文档，不得联系用户。
 - **交回**：domain_brief 已写入；回复中给出定位参数、最关键的 5 个候选问题和需要你决定的事项。

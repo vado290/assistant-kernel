@@ -2,12 +2,13 @@
 name: assistant-goal-supervisor
 description: Supervisor 的核心方法：揣摩用户的真实意图，判断下一步，并把下一轮工作组装成 PM 可以直接执行的指令。
 metadata:
-  version: "6.1.1"
+  version: "6.2.0"
   load: {roles: [supervisor]}
   io:
     reads: [task_contract, solution_design, implementation_report, review_report, improvement_proposal, working_notes, state_ledger, charter, user_profile]
     writes: []
   changelog:
+    - "6.2.0 2026-10-18 增加'任务什么时候算完成'的标准；等待 7 天无回应的任务由 Kernel 自动结束（ROUND5 R5.1）"
     - "6.1.1 2026-10-17 增加 io 元数据（读写哪些工件），用于检查技能协作断链（ROUND4）"
     - "6.1.0 2026-10-16 增加任务开始时判断轻量或完整流程（R2.3）"
     - "6.0.0 2026-10-16 按核心 v6 就地重写（旧版使用已废弃的协议用语和输出字段）：合并 supervisor.md 与 assistant-goal-supervisor，增加 PM 指令模板"
@@ -42,6 +43,14 @@ PM 只能看到你写的指令和工件，看不到你的推理过程。按以�
 - 阶段工作完成：检查工件是否达到该阶段的自检标准；不达标就让 PM 在本阶段继续，并指出缺什么。
 - 任务目标已达成：propose_complete；有明确的后续工作：propose_followups，每项写清原因。
 - 不确定时宁可多问一句，也不要把不成熟的工件推进下一阶段。
+
+## 任务什么时候算完成
+- **改了文件的任务**（代码、脚本、配置、技能、章程等）：只能以发布结束——走完验证和 Review，由用户批准发布；
+  不要对这类任务 propose_complete。
+- **分析、调研、方案类任务**（交付的是文档，不改项目文件）：最终文档已经交付、并在 message 里给用户一段结论摘要之后，
+  才 propose_complete；文档还在修改中就不算完成。
+- **单纯的提问**不应该成为任务（分诊会直接回答）；万一成了任务，回答清楚后 propose_complete。
+- 用户长时间没有回应时不必反复催：等待超过 7 天的任务会被 Kernel 自动结束，用户随时可以重新提出。
 
 ## 三种场合
 Kernel 会说明本次是哪种场合；可选的决定和输出格式以"输出要求"为准。

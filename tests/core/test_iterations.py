@@ -75,7 +75,7 @@ async def test_effect_reviews_are_written_back(kernel, sim):
 def test_collaboration_gaps(tmp_path):
     from assistant_kernel.core import skills
     def skill(name, reads, writes):
-        folder = tmp_path / ".agents" / "skills" / name
+        folder = tmp_path / "agents" / "pm" / ".agents" / "skills" / name
         folder.mkdir(parents=True)
         (folder / "SKILL.md").write_text(
             f"---\nname: {name}\ndescription: x\nmetadata:\n  version: \"1.0.0\"\n  load: {{roles: [pm]}}\n"

@@ -34,7 +34,8 @@ class ProjectRuntimeManager:
         runtime = self.describe(project_id)
         vault_root, codex_home = runtime.vault_root, runtime.codex_home
         codex_home.mkdir(parents=True, exist_ok=True)
-        for relative in ("sources", "reports", "runs", "knowledge", "capabilities", "artifacts", ".agents/skills"):
+        # No `.agents/skills` at the project root: skills live in each agent's own folder (ROUND5 D2).
+        for relative in ("runs", "knowledge"):
             self.resolve_below(vault_root, relative).mkdir(parents=True, exist_ok=True)
         self._seed_codex_home(codex_home)
         return runtime

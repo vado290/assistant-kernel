@@ -66,8 +66,10 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
     run_input = run["input"]
     stage = run_input["stage"]
     matched = skill_stage(task, stage)
+    code = await asyncio.to_thread(gitdelivery.config, settings, run["project_id"])   # None: file delivery
+    in_worktree = bool(code) and stage in ("build", "review")   # then Codex cannot find the PM's skills itself
     config = await asyncio.to_thread(load_agent, settings, run["project_id"], "pm", stage=matched,
-                                     task_kind=task["kind"])
+                                     task_kind=task["kind"], native=not in_worktree)
     inputs = await kernel.turn_inputs(run)
     project_charter = await asyncio.to_thread(charter, settings, run["project_id"])
     profile = await asyncio.to_thread(knowledge_text, settings, run["project_id"], USER_PROFILE)
@@ -84,9 +86,8 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
     state_text = render_state(task, await kernel.task_ledger(task["task_id"]), STAGE_NAMES)
     state_file = await asyncio.to_thread(write_state, settings, run["project_id"], task_id, state_text)
     build = stage == "build"
-    code = await asyncio.to_thread(gitdelivery.config, settings, run["project_id"])   # None: file delivery
     workspace = None
-    if code and stage in ("build", "review"):   # the task's own worktree, cut from main
+    if in_worktree:   # the task's own worktree, cut from main
         workspace = await asyncio.to_thread(gitdelivery.ensure_worktree, code, task_id)
     map_text = ""
     if matched in MAP_STAGES:   # the project map: where things are (ROUND4 R4.2)

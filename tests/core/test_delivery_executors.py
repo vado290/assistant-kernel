@@ -62,10 +62,10 @@ async def test_build_validate_review_publish_writes_the_real_file(kernel, sim, d
 
 async def test_a_project_can_publish_its_charter_role_and_skills(kernel, sim, dispatcher, kernel_settings, project_files):
     """Round 2 / I6: improvements to a project's own charter, roles and skills go through the normal publish."""
-    skill = (project_files / ".agents/skills/assistant-operation/SKILL.md").read_text("utf-8")
+    skill = (project_files / "agents/pm/.agents/skills/assistant-operation/SKILL.md").read_text("utf-8")
     files = {"knowledge/charter.md": "# 章程\n\n## 1 项目用途\n日报\n",
              "agents/pm/role.md": "# PM 角色\n\n涉及金额时二次确认。\n",
-             ".agents/skills/assistant-operation/SKILL.md": skill.replace("version: \"2.0.0\"", "version: \"2.1.0\"")}
+             "agents/pm/.agents/skills/assistant-operation/SKILL.md": skill + "\n本项目补充：每周一汇报。\n"}
     await _publish(kernel, sim, dispatcher, kernel_settings, files)
     for relative, text in files.items():
         assert (project_files / relative).read_text("utf-8") == text, relative

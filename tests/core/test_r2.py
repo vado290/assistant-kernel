@@ -127,10 +127,10 @@ def test_quick_track_rules():
 def test_refresh_replaces_only_unmodified_copies(tmp_path):
     vault = tmp_path / "vault"
     skills.install_templates(vault, frozenset())
-    edited = vault / ".agents/skills/assistant-operation/SKILL.md"
+    edited = vault / "agents/pm/.agents/skills/assistant-operation/SKILL.md"
     edited.write_text(edited.read_text("utf-8") + "\n本项目补充：每周一汇报。\n", "utf-8")
     for name in ("assistant-operation", "assistant-requirements"):   # pretend both are an older template version
-        path = vault / ".agents/skills" / name / "SKILL.md"
+        path = vault / "agents/pm/.agents/skills" / name / "SKILL.md"
         path.write_text(path.read_text("utf-8").replace('\n  version: "', '\n  version: "0.', 1), "utf-8")
     refreshed, kept = skills.refresh_unmodified(vault)
     assert refreshed == ["assistant-requirements"] and kept == ["assistant-operation"]

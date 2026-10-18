@@ -463,9 +463,10 @@ class WorkspaceScopeService:
                                "the change stream (list_iterations), not in the file",
                 },
                 {
-                    "path": ".agents/skills/<skill>/",
-                    "purpose": "Published Skill bundle",
-                    "required": ["SKILL.md", "skill-manifest.json"],
+                    "path": "agents/<agent-id>/.agents/skills/<skill>/",
+                    "purpose": "A skill of that agent, in the agent's own folder (one copy per agent that uses it; "
+                               "no .agents/skills at the project root or the agents/ level)",
+                    "required": ["SKILL.md"],
                     "optional": ["scripts/", "references/", "templates/", "evals/"],
                 },
                 {"path": "schemas/", "purpose": "Project-local input and output Schemas"},

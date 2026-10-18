@@ -21,6 +21,14 @@ The Kernel runs every project of the personal super assistant. A project has a v
 7. **Kernel writes what follows from state.** Files that mirror database state (charter archive, iteration log,
    shared context, worktree cleanup) are written by `vault_sync.py` on the dispatcher's maintenance tick, each
    step idempotent.
+8. **Each agent owns its skills and works in its own folder** (ROUND5). Skills live only in
+   `agents/<agent>/.agents/skills/` (one copy per agent that uses a skill); no `.agents/skills` above an agent's
+   folder and no `AGENTS.md` in a project (`skills.layout_problems`, checked at validation). A model call runs in
+   the agent's folder, so Codex lists exactly that agent's skills; Kernel injects only the core skills of the
+   current stage in full and switches off the skills Codex ships with. Code-delivery build / review run in the
+   task worktree and get Kernel's on-demand skill list instead.
+9. **A task waiting 7 days for the user ends on its own** (`Kernel.expire_idle_tasks`), so it never blocks the
+   project's next task.
 
 ## Flow of a task
 user message in #pm → triage (chat / start a task / route) → task `queued` → `supervising` (Supervisor proposes
