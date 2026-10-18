@@ -26,13 +26,14 @@ MVP_TOOLS = frozenset({
     "read_project_document", "list_recent_history",
     "vault_list", "vault_read_text",
     "volcengine_model_status", "volcengine_generate", "volcengine_ocr",
-    "read_task_document", "edit_task_document", "list_iterations",
+    "read_task_document", "edit_task_document", "list_iterations", "map_lookup", "list_credentials",
+    "get_credential",
 })
 CANDIDATE_TOOLS = frozenset({"write_candidate_file", "delete_candidate_file"})
 # Kernel's own document protocol for PM turns: granted whenever offered, a project's tool list does not narrow it.
 DOCUMENT_TOOLS = frozenset({"read_task_document", "edit_task_document"})
 # Platform tools every model turn gets whatever the project's own tool list says (ROUND4: the change stream).
-PLATFORM_TOOLS = DOCUMENT_TOOLS | {"list_iterations"}
+PLATFORM_TOOLS = DOCUMENT_TOOLS | {"list_iterations", "map_lookup", "list_credentials", "get_credential"}
 READ_ONLY_TOOLS = MVP_TOOLS - CANDIDATE_TOOLS - DOCUMENT_TOOLS - {"volcengine_generate", "volcengine_ocr"}
 
 
@@ -114,19 +115,14 @@ def knowledge_text(settings, project_id: str, name: str) -> str:
 
 
 def project_map(settings, project_id: str) -> tuple[str, str]:
-    """(where the project map lives, its text): knowledge/map.md for file delivery, the repository's map file
-    (project.yaml map_path, default docs/MAP.md) for code delivery. Text is '' when there is no map yet."""
-    from assistant_kernel.core import gitdelivery
-    code = gitdelivery.config(settings, project_id)
-    if code:
-        path, shown = code["repo"] / code["map_path"], f"代码仓库中的 `{code['map_path']}`"
-    else:
-        path = ProjectRuntimeManager(settings.data_root).ensure(project_id).vault_root / "knowledge" / "map.md"
-        shown = "`knowledge/map.md`（通过候选文件修改）"
-    return shown, (path.read_text("utf-8").strip()[:MAP_LIMIT] if path.is_file() else "")
-
-
-MAP_LIMIT = 8000   # the map is an index; past this the PM reads the file itself
+    """(where the project map lives, its entries as compact lines): `knowledge/map.yaml`, or the repository's map
+    for code delivery (ROUND5 D12). Text is '' when there is no map yet; an unreadable map is said so."""
+    from assistant_kernel.core import projectmap
+    _, path, shown = projectmap.location(settings, project_id)
+    try:
+        return shown, projectmap.render(projectmap.load(path))
+    except (ValueError, OSError) as exc:
+        return shown, f"（地图无法读取：{exc}；实施时按 assistant-task-continuity 的格式修正）"
 
 
 def charter(settings, project_id: str) -> str:

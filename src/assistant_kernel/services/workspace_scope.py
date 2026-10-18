@@ -454,13 +454,14 @@ class WorkspaceScopeService:
                 {
                     "path": "agents/<agent-id>/",
                     "purpose": "Published Agent",
-                    "required": ["config.yaml", "role.md", "MAP.md"],
+                    "required": ["config.yaml", "role.md"],
                 },
                 {
-                    "path": "knowledge/map.md",
-                    "purpose": "Project map: structure, components, data locations, where to start (code-delivery "
-                               "projects keep it in their repository, default docs/MAP.md); change reasons are in "
-                               "the change stream (list_iterations), not in the file",
+                    "path": "knowledge/map.yaml",
+                    "purpose": "The project map: one index entry per file or directory (path, name, kind, purpose, "
+                               "summary, related); every Python file of the product must be listed. Code-delivery "
+                               "projects keep it in their repository (default docs/map.yaml). Query with map_lookup; "
+                               "when a file changed comes from git, why from list_iterations",
                 },
                 {
                     "path": "agents/<agent-id>/.agents/skills/<skill>/",

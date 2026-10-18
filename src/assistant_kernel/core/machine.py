@@ -383,7 +383,13 @@ async def _pm_result(c, task, run, result) -> None:
                      task_id=task["task_id"])
     if outcome == "needs_input":
         questions = _checked_questions(result.get("questions"))
-        await to_supervising(c, task, "pm_questions", pm_questions=questions, summary=summary)
+        if any(isinstance(q.get("credential"), dict) for q in questions):
+            # A credential goes straight to the user (Kernel stores the answer, ROUND5 D8); no relay that could drop
+            # the marker.
+            await to_awaiting(c, task, _raw_pm_questions(task, questions, "PM 需要以下信息（凭据会保存到项目凭据库，"
+                                                                            "不会出现在对话记录里）"))
+        else:
+            await to_supervising(c, task, "pm_questions", pm_questions=questions, summary=summary)
     elif outcome == "ready_for_validation":
         if task["stage"] != "build" or not (docs.get("implementation_report") or {}).get("bundle_sha"):
             raise InvalidResult("validation needs the build stage and an implementation_report with bundle_sha")
@@ -498,10 +504,10 @@ def _covers(pm_questions: list[dict], result: dict[str, Any]) -> bool:
     return required <= covered | set(result.get("suggested") or {})
 
 
-def _raw_pm_questions(task, pm_questions) -> dict[str, Any]:
+def _raw_pm_questions(task, pm_questions, message: str = "PM 的原始问题") -> dict[str, Any]:
     return cards.new_item(target_kind="task", target_id=str(task["task_id"]), kind="questions",
                           origin="kernel", deliver_to="pm",
-                          content={"message": "PM 的原始问题", "questions": pm_questions, "pm_questions": pm_questions})
+                          content={"message": message, "questions": pm_questions, "pm_questions": pm_questions})
 
 
 def _checked_questions(questions) -> list[dict[str, Any]]:

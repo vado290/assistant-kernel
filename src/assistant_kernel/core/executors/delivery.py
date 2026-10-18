@@ -42,7 +42,9 @@ async def execute_validation(run: dict[str, Any], ctx) -> dict[str, Any]:
         manifest_problem = await asyncio.to_thread(check_repo_manifest, settings, project_id, code, task_id)
         if manifest_problem:
             report += f"\n- runtime_manifest: {manifest_problem}"
-        return {"passed": passed and not manifest_problem, "report": report}
+        map_problems = await asyncio.to_thread(check_repo_map, code, task_id)
+        report += "".join(f"\n- map: {problem}" for problem in map_problems)
+        return {"passed": passed and not manifest_problem and not map_problems, "report": report}
     bundle, problem = await asyncio.to_thread(_reseal, settings, project_id, task_id, bundle_sha)
     if problem:
         return {"passed": False, "report": problem}
@@ -56,7 +58,9 @@ async def execute_validation(run: dict[str, Any], ctx) -> dict[str, Any]:
         issues += f"\n- runtime_manifest: {manifest_problem}"
     layout = await asyncio.to_thread(check_layout, settings, project_id, task_id)
     issues += "".join(f"\n- layout: {problem}" for problem in layout)
-    return {"passed": result.get("release_gate") == "pass" and not manifest_problem and not layout,
+    map_problems = await asyncio.to_thread(check_map, settings, project_id, task_id)
+    issues += "".join(f"\n- map: {problem}" for problem in map_problems)
+    return {"passed": result.get("release_gate") == "pass" and not manifest_problem and not layout and not map_problems,
             "report": (result.get("summary") or "") + (f"\n\n{issues.strip()}" if issues.strip() else "")}
 
 
@@ -79,6 +83,46 @@ def check_layout(settings, project_id: str, task_id: str) -> list[str]:
     written = [path for path, operation in candidate_targets(settings, project_id, task_id).items()
                if operation != "delete"]
     return skills.layout_problems(vault, written)
+
+
+MAP_FILE = "knowledge/map.yaml"
+
+
+def check_map(settings, project_id: str, task_id: str) -> list[str]:
+    """The project map as it will be after this release (ROUND5 D12): readable, entries point at files that will
+    exist, and every Python file of the product has an entry."""
+    from assistant_kernel.core import projectmap
+    vault = ProjectRuntimeManager(settings.data_root).ensure(project_id).vault_root
+    targets = candidate_targets(settings, project_id, task_id)
+    written = {path for path, operation in targets.items() if operation in ("create", "update")}
+    deleted = {path for path, operation in targets.items() if operation == "delete"}
+    source = (vault / "runs" / task_id / "candidate" / "project" / MAP_FILE) if MAP_FILE in written else vault / MAP_FILE
+    try:
+        entries = projectmap.load(source)
+    except ValueError as exc:
+        return [str(exc)]
+
+    def exists(path: str) -> bool:
+        return path in written or any(w.startswith(path + "/") for w in written) or \
+            (path not in deleted and (vault / path).exists())
+
+    required = set(projectmap.covered_files(vault, vault / "product")) - deleted
+    required |= {path for path in written if path.startswith("product/") and path.endswith(".py")
+                 and not path.endswith("__init__.py")
+                 and not set(path.split("/")[1:-1]) & projectmap.SKIP_DIRS}
+    return projectmap.problems(entries, exists, sorted(required)) if entries or required else []
+
+
+def check_repo_map(code: dict[str, Any], task_id: str) -> list[str]:
+    """Code delivery: the repository's map at the bound commit (the task worktree)."""
+    from assistant_kernel.core import projectmap
+    worktree = gitdelivery.worktree_path(code, task_id)
+    try:
+        entries = projectmap.load(worktree / code["map_path"])
+    except ValueError as exc:
+        return [str(exc)]
+    required = projectmap.covered_files(worktree, worktree)
+    return projectmap.problems(entries, lambda p: (worktree / p).exists(), required) if entries or required else []
 
 
 def check_runtime_manifest(settings, project_id: str, task_id: str) -> str | None:
@@ -125,6 +169,25 @@ def check_repo_manifest(settings, project_id: str, code: dict[str, Any], task_id
 
 
 async def execute_publish(run: dict[str, Any], ctx) -> dict[str, Any]:
+    """Publish, between two commits of the project folder and its writable external folders (ROUND5 D13): a
+    snapshot first (keeps edits made outside a release), then the release itself. Git never blocks a release."""
+    from assistant_kernel.core import projectgit
+    settings, project_id, task_id = ctx.services["settings"], run["project_id"], str(run["task_id"])
+    vault = ProjectRuntimeManager(settings.data_root).ensure(project_id).vault_root
+    task, grants = await ctx.kernel.get_task(run["task_id"]), await ctx.kernel.grants(project_id)
+    problems = await asyncio.to_thread(projectgit.commit_release, vault, project_id, grants,
+                                       f"发布前快照（任务 {task_id[:8]}）")
+    result = await _publish(run, ctx)
+    if result.get("outcome") == "published":
+        problems += await asyncio.to_thread(projectgit.commit_release, vault, project_id, grants,
+                                            f"发布：{(task or {}).get('goal', '')[:72]}\n\n任务 {task_id}")
+    if problems:
+        warning = "⚠ 发布已完成，但 git 提交有问题（不影响发布）：" + "；".join(problems)[:600]
+        result["note"] = "\n".join(part for part in (result.get("note"), warning) if part)
+    return result
+
+
+async def _publish(run: dict[str, Any], ctx) -> dict[str, Any]:
     settings = ctx.services["settings"]
     project_id, task_id, bundle_sha = run["project_id"], str(run["task_id"]), run["input"]["bundle_sha"]
     if bundle_sha.startswith(NO_FILES):

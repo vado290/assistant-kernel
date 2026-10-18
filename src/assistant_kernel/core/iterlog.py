@@ -80,7 +80,7 @@ def artifact_of(path: str) -> str:
     match = re.search(r"\.agents/skills/([^/]+)/", path)
     if match:
         return f"skill:{match.group(1)}"
-    if path.endswith(("knowledge/map.md", "docs/MAP.md", "docs/ARCHITECTURE.md")):
+    if path.endswith(("knowledge/map.yaml", "docs/map.yaml")):
         return "map"
     if path.endswith("knowledge/charter.md"):
         return "charter"

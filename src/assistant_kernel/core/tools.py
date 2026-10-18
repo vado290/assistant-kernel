@@ -270,6 +270,33 @@ def build_server(scope: Scope) -> MCPServer:
         return {"count": len(rows), "text": iterlog.render(rows)}
 
     @tool(READ_ONLY)
+    def map_lookup(query: str = "", limit: int = 20) -> dict:
+        """Look up the project map (the index of the project's files: path, name, purpose, summary). query matches
+        words in those fields (empty: the first entries); each match also says when the file last changed (git)."""
+        from assistant_kernel.core import projectmap
+        root, path, shown = projectmap.location(settings, project_id)
+        entries = projectmap.load(path)
+        matches = projectmap.lookup(root, entries, query, limit=min(max(limit, 1), 50))
+        return {"map": shown, "total_entries": len(entries), "count": len(matches), "entries": matches}
+
+    @tool(READ_ONLY)
+    def list_credentials() -> dict:
+        """The project's saved credentials WITHOUT values: key, service, purpose, who uses it, when updated.
+        Check here before asking the user for a login or key; ask (a question marked credential) only if missing."""
+        from assistant_kernel.core import credentials
+        return {"items": credentials.listing(runtime.ensure(project_id).vault_root)}
+
+    @tool(READ_ONLY)
+    def get_credential(key: str) -> dict:
+        """One saved credential WITH its value, for work that really needs it (e.g. logging in during a test).
+        Never copy the value into documents, reports, files or messages."""
+        from assistant_kernel.core import credentials
+        item = credentials.get(runtime.ensure(project_id).vault_root, key)
+        if item is None:
+            raise FileNotFoundError(f"没有凭据 {key}；用 list_credentials 查看已有的 key")
+        return item
+
+    @tool(READ_ONLY)
     async def list_recent_history(lookback_days: int = 365, limit: int = 50, cursor: str | None = None,
                                   scope: Literal["current_conversation", "project"] = "project") -> dict:
         """List recent messages in this Project (both channels, oldest first); cursor and scope are accepted

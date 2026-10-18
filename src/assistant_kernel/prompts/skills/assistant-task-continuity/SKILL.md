@@ -2,9 +2,10 @@
 name: assistant-task-continuity
 description: 所有工件（章程、需求、行业速写、设计、实施报告、Review 报告、改进建议）的固定章节和编号规则；PM 写工件、Supervisor 读工件时都以此为准。
 metadata:
-  version: "2.5.0"
+  version: "2.6.0"
   load: {roles: [pm, supervisor]}
   changelog:
+    - "2.6.0 2026-10-18 项目地图改为每个项目一份 map.yaml 索引（ROUND5 R5.2）"
     - "2.5.0 2026-10-17 增加项目地图格式和'变更与历史'规则：工件就地修改，原因写进迭代记录，历史用 list_iterations 按需查（ROUND4）"
     - "2.4.1 2026-10-16 运行声明文件改为项目根目录的 jobs.yaml（vault 的 runtime/ 目录存放 Kernel 内部数据）"
     - "2.4.0 2026-10-16 设计文档增加第 9 节'运行方式'（ROUND3 S3）"
@@ -61,11 +62,20 @@ Supervisor 读笔记了解 PM 的思路，但安排下一步时以工件和状�
 8 背景信息存档（Kernel 在需求文档获批时，自动把其第 10 节追加到这里，注明日期和任务；读的时候以最新条目为准）。
 早期项目的章程可能还有"变更记录"一节，不再更新；修改原因写进迭代记录。
 
-### 项目地图（文件交付：`knowledge/map.md`；代码交付：仓库内 `docs/MAP.md`，kernel 为 `docs/ARCHITECTURE.md`）
-1 结构概览（主要目录各管什么）· 2 组件（每个组件：用途 · 关键文件 · 入口 · 依赖 · 相关作业）· 3 数据与产物在哪里 ·
-4 常见任务从哪里看起。地图是索引不是说明书：每个组件三五行，写到"新来的人能马上找到地方"为止。
-地图只保留当前状态，不写变更记录；实施阶段改动了结构或组件时同步更新（文件交付通过候选文件，代码交付直接在工作区里改），
-并在迭代记录的 changes 里写一项 `type: map`。没有地图的项目，第一次实施时建立。
+### 项目地图（每个项目一份 `map.yaml`：文件交付在 `knowledge/map.yaml`；代码交付在仓库内，默认 `docs/map.yaml`）
+纯索引，每个文件或目录一条，路径相对地图所在的根目录（文件交付是项目目录，代码交付是仓库）：
+```yaml
+schema_version: project-map.v1
+entries:
+  - {path: product/entries/, kind: directory, purpose: 功能入口脚本（只有这里的脚本能被启动）}
+  - {path: product/entries/daily_report.py, name: 日报, kind: entry, purpose: 汇总前一天的交易并通知,
+     summary: 读 data/trades/，写 data/reports/，调用 analyst, related: [product/lib/report.py]}
+```
+- 必填 path、purpose；kind 取 directory / entry / module / script / config / doc / skill / agent / data / test / other。
+- 产物的每个 .py 文件（测试、数据目录除外）都要有一条，验证时检查；目录条目用来说明结构。
+- 地图只记当前状态：文件什么时候改的看 git（`map_lookup` 会附上），为什么改的看变更流水（`list_iterations`）。
+- 实施阶段新增、删除、改名文件或改变用途时同步更新（文件交付通过候选文件，代码交付直接在工作区里改），
+  并在迭代记录的 changes 里写一项 `type: map`。没有地图的项目，第一次实施时建立。
 
 ### 需求文档（task_contract）
 1 背景与现状 · 2 目标 · 3 使用者与场景 · 4 范围（包含 / 不包含）· 5 需求条目（R，每条写明优先级：必须 / 应该 / 可选）·

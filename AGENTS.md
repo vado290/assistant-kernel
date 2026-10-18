@@ -18,6 +18,8 @@ This repository is the Kernel of the personal super assistant: the control core 
 - Prompt text in `src/assistant_kernel/prompts/core/` is the **contract** (output formats, Kernel-parsed sections):
   change it only together with the code that reads it. Skills in `src/assistant_kernel/prompts/skills/` are
   **templates** copied into projects; bump `metadata.version` and add a changelog line when you change one.
+- `docs/map.yaml` is this repository's map (an index entry per file): adding, removing or renaming a Python file
+  means updating it in the same change, or validation fails.
 - Keep changes small and on the main path. No machinery for rare cases; the user prefers patches later over
   heavy code now.
 

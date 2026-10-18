@@ -42,8 +42,11 @@ class GatewayService:
             return None
         project_id, role = route
         command = text.strip().split()
-        if command[0] in ("/status", "/pending", "/cancel", "/evolve", "/jobs", "/iterations", "/grants"):   # commands
-            if command[0] == "/grants":
+        if command[0] in ("/status", "/pending", "/cancel", "/evolve", "/jobs", "/iterations", "/grants",
+                          "/secrets"):   # commands
+            if command[0] == "/secrets":
+                reply = await self.secrets_command(project_id, command[1:])
+            elif command[0] == "/grants":
                 reply = await self.grants_command(project_id, command[1:])
             elif command[0] == "/iterations":
                 reply = await self.iterations_text(project_id, command[1:])
@@ -81,11 +84,7 @@ class GatewayService:
         if action.startswith("answer:"):
             page = int(action.split(":")[1])
             drafts = (card["drafts"] or {}).get(str(item["target"]["id"]), {})
-            fields = [{"id": q["id"], "label": q["text"][:45], "required": bool(q.get("required", True)),
-                       "default": str(drafts.get(q["id"]) or render.suggested_answer(item, q))[:4000],
-                       "placeholder": ("可选：" + " / ".join(map(str, q["options"])))[:100] if q.get("options") else None,
-                       "long_text": q["text"]}
-                      for q in render.question_pages(item)[page]]
+            fields = [self._field(q, drafts, item) for q in render.question_pages(item)[page]]
             return Reply(modal={"custom_id": f"coremodal:{item_id}:answer:{page}", "title": "回答问题", "fields": fields})
         if action == "revise":
             questions = item["kind"] == "questions"
@@ -238,6 +237,32 @@ class GatewayService:
                 await self.kernel.set_card_display(card["interaction_id"], display)
 
     # ------------------------------------------------------------ slash commands
+
+    @staticmethod
+    def _field(q: dict, drafts: dict, item: dict) -> dict:
+        """One modal field; a credential question gets no suggested answer and says where the answer goes."""
+        credential = q.get("credential") if isinstance(q.get("credential"), dict) else None
+        if credential:
+            placeholder = f"提交后保存为项目凭据 {credential.get('key')}，不会出现在对话记录里"[:100]
+            default = ""
+        else:
+            placeholder = ("可选：" + " / ".join(map(str, q["options"])))[:100] if q.get("options") else None
+            default = str(drafts.get(q["id"]) or render.suggested_answer(item, q))[:4000]
+        return {"id": q["id"], "label": q["text"][:45], "required": bool(q.get("required", True)), "default": default,
+                "placeholder": placeholder, "long_text": q["text"]}
+
+    async def secrets_command(self, project_id: str, args: list[str]) -> str:
+        """/secrets · /secrets delete <key> [确认] (ROUND5 D8): the project's credentials, never their values."""
+        from assistant_kernel.core import credentials
+        from assistant_kernel.storage import ProjectRuntimeManager
+        vault = ProjectRuntimeManager(self.kernel.settings.data_root).ensure(project_id).vault_root
+        if not args:
+            return credentials.render(credentials.listing(vault))
+        if args[0] != "delete" or len(args) not in (2, 3):
+            return "用法：/secrets · /secrets delete <key>"
+        if args[2:] != ["确认"]:
+            return f"确定要删除凭据 {args[1]} 吗？请发送：/secrets delete {args[1]} 确认"
+        return f"已删除凭据 {args[1]}。" if credentials.delete(vault, args[1]) else f"没有凭据 {args[1]}。发送 /secrets 查看。"
 
     async def grants_command(self, project_id: str, args: list[str]) -> str:
         """/grants · /grants revoke <key> [确认] (ROUND4 R4.4)."""

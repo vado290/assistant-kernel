@@ -6,6 +6,7 @@ a marker in their topic, and the routing entry and project row are upserts.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,6 +19,7 @@ from assistant_kernel.core import skills
 from assistant_kernel.core.gitdelivery import init_repository
 from assistant_kernel.storage import ProjectRuntimeManager
 
+log = logging.getLogger(__name__)
 TEMPLATE = Path(__file__).parents[1] / "project_template"
 DISCORD_API = "https://discord.com/api/v10"
 
@@ -170,9 +172,21 @@ def gateway_config_path(settings) -> Path:
     return Path(os.environ.get("CORE_DISCORD_CONFIG") or settings.data_root / "config" / "core-discord.yaml")
 
 
+def first_commit(settings, spec: dict[str, Any]) -> None:
+    """The new project's own repository and its first commit (ROUND5 D13); the remote follows on the next push."""
+    from assistant_kernel.core import projectgit
+    vault = ProjectRuntimeManager(settings.data_root).describe(spec["project_id"]).vault_root
+    try:
+        projectgit.ensure_repo(vault)
+        projectgit.commit_all(vault, f"创建项目 {spec['display_name']}")
+    except (projectgit.GitError, OSError) as exc:   # a project without history still works
+        log.warning("first commit of %s failed: %s", spec["project_id"], exc)
+
+
 async def execute_bootstrap(run: dict[str, Any], ctx) -> dict[str, Any]:
     settings, spec = ctx.services["settings"], run["input"]["spec"]
     files = await asyncio.to_thread(write_project_files, settings, spec)
+    await asyncio.to_thread(first_commit, settings, spec)
     creator = ctx.services.get("discord_channels") or channel_creator(settings)
     channels = await creator.ensure(spec["project_id"], spec["display_name"], spec["purpose"])
     await asyncio.to_thread(add_routing, gateway_config_path(settings), spec["project_id"], channels)

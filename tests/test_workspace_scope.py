@@ -181,8 +181,8 @@ def test_resource_guide_explains_v2_resource_placement(tmp_path: Path) -> None:
     assert guide["layout_version"] == 2
     resources = {item["path"]: item for item in guide["resources"]}
     assert resources["agents/<agent-id>/"]["required"] == [
-        "config.yaml", "role.md", "MAP.md",
+        "config.yaml", "role.md",
     ]
-    assert "list_iterations" in resources["knowledge/map.md"]["purpose"]   # ROUND4: Markdown map, reasons in the stream
+    assert "map_lookup" in resources["knowledge/map.yaml"]["purpose"]   # ROUND5: one index per project
     assert "knowledge/map/" not in resources
     assert "runs/ and runtime/" in resources

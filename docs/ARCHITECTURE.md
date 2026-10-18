@@ -53,8 +53,11 @@ A project-creation task (`bootstrap`) only drafts its charter; approval creates 
 | `skills.py` / `agents.py` | skill loading by `metadata.load` rules; agent config loading |
 | `gitdelivery.py` | code delivery: worktrees, Kernel commits, tests on the commit, fast-forward publish |
 | `runtime.py` / `jobs.py` | released `jobs.yaml` (vault top level; code delivery: repository root on main) → scheduled jobs and supervisord services of projects |
-| `vault_sync.py` | Kernel's idempotent file writes that follow from state |
-| `gateway/` | Discord gateway: messages, cards, buttons, text commands (`/status /pending /cancel /evolve /jobs`) |
+| `vault_sync.py` | Kernel's idempotent file writes that follow from state; pushes project history to GitHub |
+| `projectgit.py` | each project folder (and each folder it may write to) is a repository: snapshot before a release, commit after it, private GitHub remote via `gh` |
+| `projectmap.py` | the project map `map.yaml` (one index entry per file; every product Python file listed), checked at validation, `map_lookup` tool |
+| `credentials.py` | the project's credentials `runtime/credentials.json`: look first, ask with a `credential` question, never in the conversation |
+| `gateway/` | Discord gateway: messages, cards, buttons, text commands (`/status /pending /cancel /evolve /jobs /iterations /grants /secrets`) |
 | `sql/` | migrations, applied in order, never edited after applying |
 
 ## Processes (supervisord in the AI container)

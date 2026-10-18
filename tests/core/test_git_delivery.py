@@ -41,6 +41,10 @@ def repo(tmp_path, project_files):
     gitdelivery.init_repository(path)
     (path / "check_hello.py").write_text(CHECK, "utf-8")
     (path / "hello.py").write_text("placeholder\n", "utf-8")
+    (path / "docs").mkdir()
+    (path / "docs" / "map.yaml").write_text(   # ROUND5 D12: every Python file of the repository is in the map
+        "schema_version: project-map.v1\nentries:\n  - {path: hello.py, purpose: 打招呼}\n"
+        "  - {path: check_hello.py, purpose: 检查 hello.py}\n", "utf-8")
     git(path, "add", "-A")
     git(path, "-c", "user.name=u", "-c", "user.email=u@x", "commit", "-qm", "test script")
     (project_files / "project.yaml").write_text(yaml.safe_dump({

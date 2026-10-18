@@ -1,0 +1,241 @@
+schema_version: project-map.v1
+entries:
+- path: src/assistant_kernel/core/
+  kind: directory
+  purpose: 控制核心：状态机、调度、卡片、网关、执行器、Kernel 工具（见 docs/ARCHITECTURE.md）
+- path: src/assistant_kernel/core/executors/
+  kind: directory
+  purpose: 各类 run 的执行器：PM、Supervisor、分诊、验证与发布、创建项目、作业
+- path: src/assistant_kernel/core/gateway/
+  kind: directory
+  purpose: Discord 网关：消息进出、卡片显示、命令
+- path: src/assistant_kernel/core/sql/
+  kind: directory
+  purpose: 数据库迁移（只新增，不修改已执行的）
+- path: src/assistant_kernel/harness/
+  kind: directory
+  purpose: Codex CLI 调用（一次调用一轮模型）
+- path: src/assistant_kernel/services/
+  kind: directory
+  purpose: 上一代保留下来的共享服务：工作区范围、文档、候选文件、验证、发布
+- path: src/assistant_kernel/prompts/core/
+  kind: directory
+  purpose: 合同：Kernel 解析或依赖的输出格式，与代码一起改
+- path: src/assistant_kernel/prompts/skills/
+  kind: directory
+  purpose: 技能模板：创建项目时复制给各 agent
+- path: scripts/
+  kind: directory
+  purpose: 部署与一次性迁移脚本
+- path: tests/
+  kind: directory
+  purpose: 测试：tests/core 为控制核心，每个测试一个临时数据库
+- path: docs/
+  kind: directory
+  purpose: 方案与记录
+- path: scripts/core_smoke.py
+  kind: module
+  purpose: Real-model smoke run of the rebuilt core (plan step 2f, decision D4).
+- path: scripts/round5_migrate.py
+  kind: module
+  purpose: ROUND5 R5.1 one-off migration of existing project folders (docs/ROUND5_PLAN.md
+    §10.1).
+- path: scripts/sync_shared_volcengine_key.py
+  kind: module
+  purpose: 把火山方舟的共享密钥同步到 Kernel 的共享配置
+- path: src/assistant_kernel/api/main.py
+  kind: module
+  purpose: 'kernel-api: health and version for the container health check and deploy.ps1.'
+- path: src/assistant_kernel/config/settings.py
+  kind: module
+  purpose: Kernel 设置：从环境变量读取数据库、目录、模型等配置
+- path: src/assistant_kernel/config/volcengine.py
+  kind: module
+  purpose: 火山方舟模型的共享配置读取
+- path: src/assistant_kernel/core/agents.py
+  kind: module
+  purpose: Load a project's live PM / Supervisor agent files (layout v2) for one model
+    call.
+- path: src/assistant_kernel/core/cards.py
+  kind: module
+  purpose: The single open card per project and its items (plan section 4).
+- path: src/assistant_kernel/core/db.py
+  kind: module
+  purpose: Connections, row locks and the append-only event log for the core schema.
+- path: src/assistant_kernel/core/dispatch.py
+  kind: module
+  purpose: 'Dispatcher: claims runs on demand and executes each one as its own asyncio
+    task.'
+- path: src/assistant_kernel/core/dispatch_main.py
+  kind: module
+  purpose: Process entry point for the core dispatcher (assistant-kernel-core-dispatcher).
+- path: src/assistant_kernel/core/drafts.py
+  kind: module
+  purpose: 'Per-task document drafts: the PM edits them through Kernel tools, Kernel
+    snapshots them into revisions.'
+- path: src/assistant_kernel/core/executors/auth_sync.py
+  kind: module
+  purpose: Keep every project's Codex login in step with one master copy.
+- path: src/assistant_kernel/core/executors/bootstrap.py
+  kind: module
+  purpose: 'Project bootstrap executor (phase 5): creates a new project deterministically
+    from an approved spec.'
+- path: src/assistant_kernel/core/executors/common.py
+  kind: module
+  purpose: 'Shared executor helpers: agent files, prompt text, documents, JSON output
+    and the model call.'
+- path: src/assistant_kernel/core/executors/delivery.py
+  kind: module
+  purpose: 'Validation and publish executors (plan 2.10–2.11): deterministic, no model
+    calls.'
+- path: src/assistant_kernel/core/executors/digest.py
+  kind: module
+  purpose: Render a project digest (Kernel.project_digest) as Markdown evidence for
+    an evolution review.
+- path: src/assistant_kernel/core/executors/job.py
+  kind: module
+  purpose: 'Job executor (docs/ROUND3_PLAN.md section 6): runs one scheduled job of
+    a project''s runtime manifest.'
+- path: src/assistant_kernel/core/executors/pm.py
+  kind: module
+  purpose: 'PM turn executor (plan 2.4–2.6): one turn of the project PM in the current
+    stage.'
+- path: src/assistant_kernel/core/executors/state.py
+  kind: module
+  purpose: 'Task state ledger (ROUND3_PLAN 4.1): the facts Kernel recorded about one
+    task, rendered as Markdown.'
+- path: src/assistant_kernel/core/executors/supervisor.py
+  kind: module
+  purpose: 'Supervisor executor (plan 2.7–2.9): a fresh, read-only evaluation that
+    proposes the next card item.'
+- path: src/assistant_kernel/core/executors/triage.py
+  kind: module
+  purpose: 'Triage executor (docs/ROUND2_PLAN.md R2.1): a read-only first look at
+    a PM-channel message while the'
+- path: src/assistant_kernel/core/gateway/config.py
+  kind: module
+  purpose: 'Gateway configuration: one explicit file mapping project channels (config/core-discord.yaml).'
+- path: src/assistant_kernel/core/gateway/discord_app.py
+  kind: module
+  purpose: 'Discord wiring for the core gateway: a thin layer over GatewayService
+    (all logic lives there).'
+- path: src/assistant_kernel/core/gateway/render.py
+  kind: module
+  purpose: Pure rendering of card items into channel messages (text, buttons, answer-modal
+    pages).
+- path: src/assistant_kernel/core/gateway/service.py
+  kind: module
+  purpose: Gateway logic, independent of the Discord library (a Transport does the
+    actual sending).
+- path: src/assistant_kernel/core/gitdelivery.py
+  kind: module
+  purpose: 'Code delivery (docs/ROUND2_PLAN.md R4a): a project whose deliverable is
+    a git repository.'
+- path: src/assistant_kernel/core/grants.py
+  kind: module
+  purpose: 'Directory grants (docs/ROUND4_PLAN.md section 5): check a requested directory
+    and build its grant policy.'
+- path: src/assistant_kernel/core/invariants.py
+  kind: module
+  purpose: Consistency checks for the three core invariants (plan principle P7).
+- path: src/assistant_kernel/core/iterlog.py
+  kind: module
+  purpose: 'Change stream helpers (docs/ROUND4_PLAN.md section 2): parse what the
+    PM writes, derive artifacts and significance,'
+- path: src/assistant_kernel/core/jobs.py
+  kind: module
+  purpose: Job store and runtime sync (docs/ROUND3_PLAN.md section 6.2).
+- path: src/assistant_kernel/core/kernel.py
+  kind: module
+  purpose: Public entry points of the rebuilt core. Each method is one transaction.
+- path: src/assistant_kernel/core/machine.py
+  kind: module
+  purpose: 'Task state machine (plan section 3): the only code that changes task state.'
+- path: src/assistant_kernel/core/migrate.py
+  kind: module
+  purpose: Ordered, run-once SQL migrations shipped inside the package.
+- path: src/assistant_kernel/core/projectgit.py
+  kind: module
+  purpose: Version history of each project (docs/ROUND5_PLAN.md D13, §10.2).
+- path: src/assistant_kernel/core/projectmap.py
+  kind: module
+  purpose: 'The project map (docs/ROUND5_PLAN.md D12): one index per project, `map.yaml`.'
+- path: src/assistant_kernel/core/rules.py
+  kind: module
+  purpose: 'Pure business rules: stages, cursors, stage moves, gates and derived approvals.'
+- path: src/assistant_kernel/core/runtime.py
+  kind: module
+  purpose: Shared job and service runtime (docs/ROUND3_PLAN.md section 6).
+- path: src/assistant_kernel/core/skills.py
+  kind: module
+  purpose: Skills and shared context (docs/ROUND2_PLAN.md section 4–5).
+- path: src/assistant_kernel/core/tools.py
+  kind: module
+  purpose: Kernel tools for one PM / Supervisor model call (plan D3), served over
+    stdio MCP.
+- path: src/assistant_kernel/core/vault_sync.py
+  kind: module
+  purpose: Kernel's own file writes that follow from database state (docs/ROUND2_PLAN.md,
+    R1).
+- path: src/assistant_kernel/harness/base.py
+  kind: module
+  purpose: 模型调用的请求与结果数据结构
+- path: src/assistant_kernel/harness/codex_cli.py
+  kind: module
+  purpose: 调用 Codex CLI 运行一轮模型：组装命令与配置、记录轨迹、解析结果
+- path: src/assistant_kernel/harness/codex_models.py
+  kind: module
+  purpose: Codex 可用模型目录与模型设置解析
+- path: src/assistant_kernel/harness/context_budget.py
+  kind: module
+  purpose: 上下文用量统计
+- path: src/assistant_kernel/harness/mcp_cleanup.py
+  kind: module
+  purpose: Bounded reconciliation of this invocation's tagged MCP processes on Linux.
+- path: src/assistant_kernel/harness/mcp_config.py
+  kind: module
+  purpose: Expose the Kernel tool server to one Codex invocation and close every inherited
+    MCP server.
+- path: src/assistant_kernel/harness/process_control.py
+  kind: module
+  purpose: 子进程管理：超时、取消、整组终止
+- path: src/assistant_kernel/model_providers/base.py
+  kind: module
+  purpose: 模型提供方的通用数据结构（向量、重排）
+- path: src/assistant_kernel/model_providers/chat.py
+  kind: module
+  purpose: 对话模型调用的通用接口
+- path: src/assistant_kernel/model_providers/qwen.py
+  kind: module
+  purpose: 通义千问的向量与重排调用
+- path: src/assistant_kernel/model_providers/volcengine.py
+  kind: module
+  purpose: 火山方舟的文本、OCR、向量、视频调用
+- path: src/assistant_kernel/services/candidate_bundle.py
+  kind: module
+  purpose: Seal one Task candidate into an immutable, content-addressed review bundle.
+- path: src/assistant_kernel/services/capability_bundle.py
+  kind: module
+  purpose: 发布：把候选文件应用到正式位置，失败回滚，保留差异与备份
+- path: src/assistant_kernel/services/contracts.py
+  kind: module
+  purpose: Pinned server-owned v1.2 contracts. No network schema resolution or model
+    selectors.
+- path: src/assistant_kernel/services/document_runtime.py
+  kind: module
+  purpose: Versioned semantic documents for one Project Task.
+- path: src/assistant_kernel/services/project_grants.py
+  kind: module
+  purpose: Durable, Project-owned authorization facts.
+- path: src/assistant_kernel/services/schedule_time.py
+  kind: module
+  purpose: Pure, timezone-explicit schedule arithmetic; no sleeping or business effects.
+- path: src/assistant_kernel/services/validation_runner.py
+  kind: module
+  purpose: 文件交付的验证：结构、组件等检查
+- path: src/assistant_kernel/services/workspace_scope.py
+  kind: module
+  purpose: 工作区范围：每次调用可访问的目录、候选文件写入与资源指南
+- path: src/assistant_kernel/storage/project_runtime.py
+  kind: module
+  purpose: 项目目录与 Codex home 的位置和创建

@@ -55,7 +55,7 @@ def config(settings, project_id: str) -> dict[str, Any] | None:
             "test_timeout": int(validation.get("timeout_seconds") or 1800),
             "pass_env": [str(p) for p in validation.get("pass_env") or []],   # e.g. POSTGRES_* for kernel's tests
             "release_note": str(data.get("release_note") or "").strip(),
-            "map_path": str(data.get("map_path") or "docs/MAP.md")}
+            "map_path": str(data.get("map_path") or "docs/map.yaml")}
 
 
 def branch(task_id: str) -> str:

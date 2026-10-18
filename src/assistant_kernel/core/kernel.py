@@ -29,6 +29,7 @@ class LeaseLost(Exception):
 class Kernel:
     def __init__(self, settings: KernelSettings, *, retry_backoff_seconds: float = 15.0, triage: bool = True):
         self.db = Database(settings)
+        self.settings = settings
         self.retry_backoff_seconds = retry_backoff_seconds
         self.triage = triage   # idle PM-channel messages go to triage first (R2.1); tests may start tasks directly
 
@@ -99,6 +100,8 @@ class Kernel:
     async def act(self, project_id: str, item_id: str, action: str, values: dict[str, Any] | None = None,
                   *, user_id: str | None = None, external_event_id: str | None = None) -> dict[str, Any]:
         """Apply a card action. Raises cards.StaleItem for replaced/handled items (UI: 'card updated')."""
+        if action == "submit" and (values or {}).get("answers"):
+            values = {**values, "answers": await self._store_credentials(project_id, item_id, values["answers"])}
         async with self.db.tx() as c:
             await lock_project(c, project_id)
             record = await one(
@@ -114,6 +117,27 @@ class Kernel:
             result = await machine.on_action(c, project_id, item_id, action, values or {},
                                              source_message_id=record["message_id"])
             return {"action": action, "task_id": str(result["task_id"]) if result.get("task_id") else None}
+
+    async def _store_credentials(self, project_id: str, item_id: str, answers: dict[str, Any]) -> dict[str, Any]:
+        """Answers to questions marked `credential` go to the project's credential file; the conversation keeps
+        only a note that they were stored (ROUND5 D8)."""
+        card = await self.card(project_id)
+        item = next((i for i in (card or {}).get("items", []) if i["item_id"] == item_id), None)
+        marked = {q["id"]: q["credential"] for q in ((item or {}).get("content") or {}).get("questions") or []
+                  if isinstance(q.get("credential"), dict) and q["credential"].get("key")}
+        if not marked:
+            return answers
+        from assistant_kernel.core import credentials
+        from assistant_kernel.storage import ProjectRuntimeManager
+        vault = ProjectRuntimeManager(self.settings.data_root).ensure(project_id).vault_root
+        stored = dict(answers)
+        for question_id, spec in marked.items():
+            value = str(answers.get(question_id) or "").strip()
+            if value:
+                credentials.put(vault, str(spec["key"]), value, service=str(spec.get("service") or ""),
+                                purpose=str(spec.get("purpose") or ""), source="user_card")
+                stored[question_id] = f"（已保存为项目凭据 {spec['key']}，用 get_credential 读取）"
+        return stored
 
     async def displayed_cards(self, project_id: str) -> list[dict[str, Any]]:
         """The open card plus closed cards whose channel messages still need tidying up."""

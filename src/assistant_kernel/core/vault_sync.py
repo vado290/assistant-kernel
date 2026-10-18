@@ -42,7 +42,8 @@ def _today() -> str:
 
 async def sync_vaults(kernel, settings) -> dict[str, int]:
     done = {}
-    for name, step in (("archived", _archive_backgrounds), ("shared", _apply_shared), ("worktrees", _remove_worktrees)):
+    for name, step in (("archived", _archive_backgrounds), ("shared", _apply_shared), ("worktrees", _remove_worktrees),
+                       ("push", _push_repositories)):
         try:
             done[name] = await step(kernel, settings)
         except Exception:   # one broken file must not stop the dispatcher
@@ -189,3 +190,38 @@ async def _remove_worktrees(kernel, settings) -> int:
             await event(c, row["project_id"], "worktree_released", task_id=row["task_id"], removed=gone, error=error)
         removed += gone
     return removed
+
+
+# ------------------------------------------------------------------ project history → GitHub (ROUND5 D13)
+
+async def _push_repositories(kernel, settings) -> int:
+    """Push committed history of each project folder and its writable external folders to their private GitHub
+    repositories. A failure (e.g. no `gh auth login` yet) is said once a day and retried at most hourly."""
+    import subprocess
+    from assistant_kernel.core import projectgit
+    from assistant_kernel.core.db import one
+    pushed = 0
+    for project_id in await kernel.active_projects():
+        async with kernel.db.tx() as c:
+            recent = await one(c, """SELECT bool_or(created_at > now() - interval '1 hour') AS waiting,
+                                            bool_or((payload->>'notified')::boolean) AS told
+                                     FROM core.task_events WHERE project_id=%s AND kind='git_push_failed'
+                                       AND created_at > now() - interval '1 day'""", (project_id,))
+        if recent["waiting"]:
+            continue
+        grants = await kernel.grants(project_id)
+        for path, name in projectgit.repositories(_vault(settings, project_id), project_id, grants):
+            if not await asyncio.to_thread(projectgit.pending_push, path):
+                continue
+            try:
+                await asyncio.to_thread(projectgit.push, path, name)
+                pushed += 1
+            except (projectgit.GitError, OSError, subprocess.TimeoutExpired) as exc:
+                tell = not recent["told"]
+                async with kernel.db.tx() as c:
+                    await event(c, project_id, "git_push_failed", path=str(path), error=str(exc)[:500], notified=tell)
+                    if tell:
+                        await notify(c, project_id, "supervisor", f"⚠ 推送到 GitHub 失败（本地提交不受影响，每小时重试）："
+                                     f"{str(exc)[:400]}")
+                break
+    return pushed

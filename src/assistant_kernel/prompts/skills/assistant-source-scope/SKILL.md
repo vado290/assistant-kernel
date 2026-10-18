@@ -2,9 +2,10 @@
 name: assistant-source-scope
 description: 怎样在项目已授权的目录里查找和读取文件：先看全貌再按需深入，只碰当前任务需要的文件；授权范围由用户和 Kernel 决定，agent 不能自行扩大。
 metadata:
-  version: "4.1.0"
+  version: "4.2.0"
   load: {roles: [pm]}
   changelog:
+    - "4.2.0 2026-10-18 可用 map_lookup 按关键词查项目地图（ROUND5 R5.2）"
     - "4.1.0 2026-10-17 地图改为 Kernel 提供的地图文档；变更原因用 list_iterations 查（ROUND4）"
     - "4.0.0 2026-10-16 按核心 v6 就地重写：删除已不存在的授权申请工具和 Context View 流程，只保留与当前工具一致的访问方法和行为准则"
 ---
@@ -20,7 +21,7 @@ metadata:
 1. `get_authorized_workspace`：看有哪些授权目录（root）及其概况。
 2. `list_authorized_tree(root_key, relative_path, max_depth)`：按目录逐层浏览，只展开与任务相关的部分。
 3. `read_authorized_file(uri)`：只读必要的文件；大文件先看目录结构和开头，确认相关后再读全文。
-4. 项目自己的文件和文档也可以用 `vault_list`、`vault_read_text` 读取。先看 Kernel 给出的项目地图定位相关组件，
+4. 项目自己的文件和文档也可以用 `vault_list`、`vault_read_text` 读取。先看 Kernel 给出的项目地图（或用 `map_lookup` 按关键词查）定位相关组件，
    再读实际文件；地图只是导航，结论以实际文件为准，发现地图过时在实施时顺手更新。
    想知道某个文件或组件为什么是现在这样，用 `list_iterations(artifact=...)` 查它的变更原因。
 5. 不要用 shell 递归扫描整个授权目录，既慢又会把无关内容带进上下文。

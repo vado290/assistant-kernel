@@ -2,12 +2,13 @@
 name: assistant-implementation
 description: 实施阶段：严格按已批准的设计写候选文件并自测，提交实施报告。
 metadata:
-  version: "2.2.1"
+  version: "2.3.0"
   load: {roles: [pm], stages: [build]}
   io:
     reads: [solution_design, task_contract, map]
     writes: [implementation_report, map, jobs, charter, skills]
   changelog:
+    - "2.3.0 2026-10-18 地图改为 map.yaml，产物每个 .py 都要登记（ROUND5 R5.2）"
     - "2.2.1 2026-10-17 增加 io 元数据（读写哪些工件），用于检查技能协作断链（ROUND4）"
     - "2.2.0 2026-10-17 实施时同步更新地图，报告末尾写迭代记录（ROUND4）"
     - "2.1.1 2026-10-16 运行声明文件改为项目根目录的 jobs.yaml（vault 的 runtime/ 目录存放 Kernel 内部数据）"
@@ -22,7 +23,8 @@ metadata:
 2. 所有交付文件都用 write_candidate_file 写成候选文件（目标路径即正式路径），不要直接改正式文件。
 3. 设计第 8 节列出的可并行子任务，可以交给子 agent，每个子 agent 的写集不能重叠（见 assistant-subagent-orchestration）。
 4. 在沙箱里实际运行测试或检查，按设计第 5 节逐个验证 A，把命令和真实结果写进报告。
-5. 改动了结构或组件时同步更新项目地图（位置见 Kernel 给出的"项目地图"一节；没有地图就建立）。
+5. 新增、删除、改名文件或改变了文件用途时，同步更新项目地图 `map.yaml`（位置见 Kernel 给出的"项目地图"一节，格式见
+   assistant-task-continuity）；产物的每个 .py 文件都要有一条，否则验证不通过。
 6. 全部完成后 outcome = ready_for_validation，document.kind = implementation_report，章节按 assistant-task-continuity；
    报告末尾必须写"迭代记录"（YAML，格式见输出要求）：本次改了哪些工件、为什么、怎样验证、预期效果和衡量方法。
    它随发布一起由用户批准，是以后复盘判断这次改动是否有效的依据，要写具体。

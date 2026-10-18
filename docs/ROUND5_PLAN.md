@@ -40,7 +40,7 @@
 - supervisord：容器内只有一个，Kernel 的 3 个程序在其中，配置已包含 Kernel 的程序目录 `runtime/kernel-services/programs/*.conf`；dispatcher 以 root 运行，可通过本地 socket 控制。登记、重启、查询、异常告警的代码 Round 3 已有，只在单元测试中用过。`deploy.ps1` 只重启 Kernel 自己的程序。
 - Kernel 的作业调度（Round 3）：到点建 `job` run，dispatcher 以子进程运行脚本，有超时、重试、告警、错过只补最近一次、上一次未结束则跳过；同样只在单元测试中用过。
 - 任务结束的现有方式：发布成功；你批准 Supervisor 的"完成"或"取消"提议；你批准复盘的后续任务；项目创建完成；你点停止或 `/cancel`；多次失败后停止。没有超时。
-- git：项目目录目前不在任何仓库里（trading-risk-bot 的目录另有一个旧 `.git`）；`H:\AI\crypto`、`H:\AI\IB` 各自是 git 仓库，远程都指向 `vado290/AI.git`，且也被外层仓库跟踪；容器里没有 GitHub 凭据和 `gh`；容器 home 不持久，只有 `/home/v/AI` 是挂载的。
+- git：项目目录目前不在任何仓库里。R5.2 时更正：trading-risk-bot 目录、`H:\AI\crypto`、`H:\AI\IB` 里的 `.git` 都是**空文件夹**（09-22 建），git 实际落到外层 `H:\AI` 仓库，它们都没有自己的历史；crypto、IB 的内容由外层仓库跟踪（各有白名单式 `.gitignore`）。容器里原本没有 GitHub 凭据和 `gh`（R5.2 已安装 gh 2.102.0，并写进 `Dockerfile.AI`）；容器 home 不持久，只有 `/home/v/AI` 是挂载的。
 - R5.0 核实结果（2026-10-18，真实 `codex exec`，验证项目的 Codex home）：
   1. **MCP**：Codex 默认把 MCP 工具延迟加载（`tool_search_always_defer_mcp_tools=true`），模型需要时再找到并调用，工具多也不占初始上下文；`enabled_tools` 之外的工具不可用（已测）。没有声明只读 / 非破坏性标注的工具在 `approval_mode="auto"` 下会被"需要批准"挡住；产物 MCP 由 AgentRunner 以 `default_tools_approval_mode="approve"` 传入（只对 `product.yaml` 允许的工具），已测可正常调用。Kernel 自己的工具带标注，不受影响（生产 PM 正常调用）。
   2. **续接会话**：在另一个工作目录 `exec resume` 正常，记得上一轮内容，并以新目录为工作目录。
@@ -254,6 +254,9 @@ assets:
 | R5.5 | §9 技能补全、复盘材料、端到端 | 在 kernel-v12-validation 里用真实任务从需求做到发布一个小产物并运行一周期复盘 |
 
 每期与相关技能、合同一起改并测试、部署；主干流程始终可用；小概率情况不加重代码，后续按需打补丁。
+
+**进度**：R5.0 完成（2026-10-18，结果见 §2）；R5.1 完成（0.44.0，三个项目已迁移，备份在 `backups/round5-r51-20261018/`）；
+R5.2 实施中（0.45.0：git、地图、凭据；kernel 源码仓库的地图 `docs/map.yaml` 由模块说明自动生成后补全）。
 
 ## 12. 风险与对策
 

@@ -13,6 +13,10 @@
 - outcome：本阶段工作完成用 completed（需求、设计、Review、运营和复盘都是如此，轻量流程也一样）；
   ready_for_validation 只用于实施阶段，表示候选文件已写好、请 Kernel 验证。
 - questions 只在 outcome 为 needs_input 时填写，否则为 []；options 和 recommended 可省略。
+- 需要用户提供登录账号、密钥等凭据时，先用 list_credentials 查项目里有没有；没有才问，并在该问题上加
+  `"credential": {"key": "binance_api", "service": "币安 API", "purpose": "下单与查询持仓"}`（key 用小写字母和下划线）。
+  这类问题直接出卡片给用户（不经 Supervisor 转述），用户填写后 Kernel 存进项目凭据库，你收到的回答是"已保存"的说明，
+  需要时用 get_credential 读取；不要把凭据的值写进任何文档、文件或消息。
 - **文档通过工具编辑，不放进 JSON**：本阶段的文档是一份草稿，先调用 get_authorized_workspace，再用
   read_task_document 读取，用 edit_task_document 修改：`edits` 是 `[{"old": 原文片段, "new": 新文字}]`，
   old 必须与草稿中的文字完全一致且只出现一次（不一致或出现多次会立即报错，读一下草稿再改）；
@@ -38,7 +42,7 @@
   significance: minor            # 重大改动写 major：数据库迁移、状态机或合同、授权、作业或服务、章程范围、交付方式
   changes:                       # 本次改动的每个工件；type: code/file/skill/charter/map/profile/brief/jobs/config/doc
     - {type: skill, target: assistant-requirements, action: modify, version: "3.2.0→3.3.0", note: 第 1 轮问题按定位/细化分组}
-    - {type: map, target: knowledge/map.md, action: modify, note: 组件 2 增加日报脚本}
+    - {type: map, target: knowledge/map.yaml, action: modify, note: 登记日报脚本}
   verification: 怎样验证的、结果
   expected_effect: 预期效果
   measure: 下次复盘怎样衡量（只能用这些数据：各阶段 PM 回合数、卡片修改/拒绝/"不确定"次数、执行失败或重试次数、作业成功/失败次数、用户发言次数）

@@ -14,7 +14,7 @@ reason: 用户说问题太散（复盘 P2）
 significance: minor
 changes:
   - {type: skill, target: assistant-requirements, action: modify, version: "3.2.0→3.3.0", note: 第 1 轮分组}
-  - {type: map, target: knowledge/map.md, action: modify, note: 无}
+  - {type: map, target: knowledge/map.yaml, action: modify, note: 无}
 verification: 模拟一轮
 expected_effect: 需求阶段 2 轮以内
 measure: 各阶段 PM 回合数
@@ -98,13 +98,16 @@ async def test_review_material_carries_the_stream(kernel, kernel_settings, proje
 def test_map_location_follows_delivery(kernel_settings, project_files):
     from assistant_kernel.core.executors.common import project_map
     (project_files / "knowledge").mkdir(exist_ok=True)
-    (project_files / "knowledge" / "map.md").write_text("## 1 结构概览\n日报脚本在 scripts/", "utf-8")
+    (project_files / "knowledge" / "map.yaml").write_text(
+        "schema_version: project-map.v1\nentries:\n  - {path: knowledge/, kind: directory, purpose: 日报脚本说明在这里}\n",
+        "utf-8")
     where, text = project_map(kernel_settings, "p1")
-    assert "knowledge/map.md" in where and "日报脚本" in text
+    assert "knowledge/map.yaml" in where and "日报脚本" in text and "`knowledge/`" in text
     repo = project_files.parent / "repo-p1"
     (repo / "docs").mkdir(parents=True)
-    (repo / "docs" / "MAP.md").write_text("代码地图", "utf-8")
+    (repo / "docs" / "map.yaml").write_text("schema_version: project-map.v1\nentries:\n  - {path: docs/, purpose: 代码地图}\n",
+                                            "utf-8")
     (project_files / "project.yaml").write_text(
         f"schema_version: project.v2\nproject_id: p1\nlayout_version: 2\ndelivery: git-repo\nrepository: {repo}\n", "utf-8")
     where, text = project_map(kernel_settings, "p1")
-    assert "docs/MAP.md" in where and text == "代码地图"
+    assert "docs/map.yaml" in where and "代码地图" in text
