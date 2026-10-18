@@ -66,6 +66,10 @@ def ensure_repo(path: Path, ignore: str | None = PROJECT_IGNORE) -> bool:
         return False
     path.mkdir(parents=True, exist_ok=True)
     git("init", "-q", "-b", "main", cwd=path)
+    # The folders live on the Windows drive H: mounted into the container: the container sees every file as
+    # executable and Windows git converts line endings; neither is a real change.
+    git("config", "core.filemode", "false", cwd=path)
+    git("config", "core.autocrlf", "false", cwd=path)
     if ignore and not (path / ".gitignore").exists():
         (path / ".gitignore").write_text(ignore, "utf-8", newline="\n")
     return True
