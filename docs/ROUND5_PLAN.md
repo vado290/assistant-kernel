@@ -261,6 +261,7 @@ R5.2 完成（0.45.1：git、地图、凭据；五个仓库已建立首次提交
 验收审计后修复（0.45.2，2026-10-19）：地图 `project:`/`grant:` 前缀与 kernel 地图补全（含覆盖测试）、技能模板按 Kernel 版本自动同步（三个项目已同步并提交）、发布提交号记入变更流水、外部目录在实施开始时快照；计划 D12/D13/D24、§7、§10.3 已按用户同意修订。
 系统地图审查后修复（0.45.3，2026-10-19，`assistant-data/system-map/generations/gen-20261019-fef3d31` 的 F1–F3）：平台工具加入 `get_authorized_workspace` 与 `list_recent_history`，Supervisor、分诊和产品 agent 的工具从此可用；agent 配置只保留加载器读取的字段、工具只用当前名称（模板、发布校验与迁移脚本 `scripts/r0453_agent_config_migrate.py`），PM 补上 `vault_list`、`vault_read_text`、`read_project_document`；技能 assistant-goal-supervisor 6.3.0、assistant-capability-maintenance 2.3.0 写明这些规则；新增守卫测试：技能和提示里点名的工具，加载它的角色必须用得了。
 系统地图第二轮后修复（0.45.4，2026-10-19，`gen-20261019-69b5264` 的 F8、F4、F6）：任务卡片等用户处理时（周度复盘最常见），用户在 PM 频道提出与当前任务无关的新工作，Supervisor 复核时提议新任务，批准后排在当前任务之后、它结束后自动开始（复用咨询的"创建新任务"卡片；技能 assistant-goal-supervisor 6.4.0）；`/version` 的 schema 字段改为最新迁移（含测试）；trading-risk-bot 护栏技能更正旧术语（1.0.1，项目自己的副本）。
+记忆机制改进（0.45.5，2026-10-19，用户逐项确认）：任务未获批结束时也保存需求文档的用户画像观察（背景事实不存）；Supervisor 在咨询和复核用户补充时用 `profile_observations` 记下用户明说的协作偏好与纠正，Kernel 写入画像并告知用户；Supervisor 的 prompt 增加任务状态簿，分诊增加用户画像；其他项目标“公共”的背景事实由 Kernel 列成候选，进入 kernel 的复盘材料和咨询提示；画像、存档、行业速写和公共背景的自动写入各自单独提交 git；技能 assistant-user-insight 1.1.0、assistant-goal-supervisor 6.5.0、assistant-requirements 3.2.2、assistant-domain-research 1.0.2、assistant-shared-context 1.1.0、assistant-evolution-review 2.1.0；trading 的旧记忆文件 interaction-memory.jsonl 迁移后归档。
 
 ## 12. 风险与对策
 

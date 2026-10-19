@@ -7,6 +7,8 @@
   路径可以写 Windows 路径（如 `H:\AI\crypto`）或容器路径（`/home/v/AI/crypto`），只能在 H:\AI 下；
   access 只读写 read，需要修改其中的文件才写 write；purpose 写清用途。
 
+- 用户在这次发言里**明说**了与协作方式有关的偏好，或纠正了 agent 的做法（例如“以后每次只问我一个问题”“别再写长报告”）：用 profile_observations 记下来，每条一行，格式见 assistant-user-insight，标 [用户]。Kernel 会写进用户画像并告诉用户记了什么。只记用户明说的，不记你的猜测。
+
 ## 输出要求（必须遵守）
 只输出一个 JSON 对象，不要加代码块标记或其他文字：
 
@@ -14,7 +16,8 @@
   "reply": "给用户的回答",
   "propose_new_task": {"goal": "新任务的目标", "message": "为什么建议单独作为一个任务"},
   "upgrade": {"decision": "...", "message": "...", "instruction": "...", "target_stage": "..."},
-  "propose_grant": {"path": "/home/v/AI/crypto", "access": "read", "purpose": "读取策略代码做风控分析"}
+  "propose_grant": {"path": "/home/v/AI/crypto", "access": "read", "purpose": "读取策略代码做风控分析"},
+  "profile_observations": ["提问方式 · 每次只问一个最必要的问题 · 原话“一次只问我一个” · [用户]"]
 }
 
-reply 必填；propose_new_task、upgrade、propose_grant 不用时省略。
+reply 必填；propose_new_task、upgrade、propose_grant、profile_observations 不用时省略。

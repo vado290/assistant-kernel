@@ -11,6 +11,7 @@ from assistant_kernel.core.executors.common import (
     PROFILE_HEADING, READ_ONLY_TOOLS, USER_PROFILE, call_for_json, capabilities, charter, knowledge_text, load_agent,
     project_catalog, prompt_text, render_documents,
 )
+from assistant_kernel.core.executors.digest import SHARED_CANDIDATES_HEADING, shared_candidates
 
 STAGE_ORDER = ["requirements", "design", "build", "review", "release", "operate"]
 PURPOSE_PROMPT = {"evaluate": "supervisor-evaluate", "review_input": "supervisor-review-input",
@@ -105,6 +106,10 @@ async def execute_supervisor(run: dict[str, Any], ctx) -> dict[str, Any]:
                         + f"- 阶段：{task['stage']}\n- 状态：{task['state']}\n"
                         f"- 已执行 PM 回合：{task['turn_count']}\n\n### 可去的阶段（Kernel 计算）\n\n{allowed_moves(task)}")
         sections.append("## 已生效文档\n\n" + render_documents(settings, task))
+        from assistant_kernel.core.executors.pm import STAGE_NAMES
+        from assistant_kernel.core.executors.state import render_state
+        sections.append("## 任务状态簿（Kernel 记录的事实：每轮的指令、用户的回答和补充、卡片操作；用户答过的不要再问）\n\n"
+                        + render_state(task, await kernel.task_ledger(task["task_id"]), STAGE_NAMES))
     else:
         sections.append("## 当前任务\n\n（项目当前没有进行中的任务）")
     sections.append("## 最近的对话\n\n" + render_messages(await kernel.recent_messages(run["project_id"])))
@@ -132,6 +137,10 @@ async def execute_supervisor(run: dict[str, Any], ctx) -> dict[str, Any]:
         sections.append(prompt_text("supervisor-kernel"))
     if "shared_context" in caps and purpose == "consult":
         sections.append(prompt_text("supervisor-shared"))
+        candidates = await asyncio.to_thread(shared_candidates, settings, await kernel.active_projects(),
+                                             exclude=project_id)
+        if candidates:
+            sections.append(SHARED_CANDIDATES_HEADING + candidates)
     if "routing" in caps and purpose == "consult":
         sections.append(prompt_text("routing"))
     parsed, model_result = await call_for_json(

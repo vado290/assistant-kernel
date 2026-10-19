@@ -6,6 +6,30 @@ from typing import Any
 RECENT_LIMIT, MAJOR_LIMIT = 30, 20   # hard caps on the change stream in a review (ROUND4)
 STAGE_LABELS = {"requirements": "需求", "design": "设计", "build": "实施", "review": "Review", "operate": "运营"}
 UNSURE = ("不清楚", "不知道", "不确定", "随便", "都行")
+SHARED_CANDIDATE_LIMIT = 20
+SHARED_CANDIDATES_HEADING = ("### 其他项目背景存档里标“公共”、公共背景还没有的事实（候选；值得采纳的由用户决定，"
+                             "用 propose_shared_update 一节一节提议）\n\n")
+
+
+def shared_candidates(settings, project_ids: list[str], *, exclude: str) -> str:
+    """Facts other projects archived as "公共" (true beyond that project) that the shared files do not hold yet.
+    A plain text check against the shared files: good enough to show a short list for a person to decide on."""
+    from assistant_kernel.core import skills
+    from assistant_kernel.core.executors.common import charter
+    from assistant_kernel.core.vault_sync import ARCHIVE
+    shared = "\n".join(s.body for s in skills.shared_context(settings.data_root))
+    found = []
+    for project_id in project_ids:
+        if project_id == exclude:
+            continue
+        for line in skills.section_text(charter(settings, project_id), ARCHIVE).splitlines():
+            fact = line.strip().lstrip("-*").strip()
+            if not fact.startswith("公共"):
+                continue
+            fact = fact[2:].lstrip("：:").strip()
+            if fact and fact[:20] not in shared:
+                found.append(f"- {project_id}：{fact}")
+    return "\n".join(found[:SHARED_CANDIDATE_LIMIT])
 
 
 async def evolution_material(kernel, settings, project_id: str) -> str:
@@ -44,6 +68,9 @@ async def evolution_material(kernel, settings, project_id: str) -> str:
         if lines:
             parts.append("### 其他项目的运营概况（按各项目的共享级别；用来发现多个项目共同的问题，据此改进公共模板）\n"
                          + "\n".join(lines))
+        candidates = shared_candidates(settings, await kernel.active_projects(), exclude=project_id)
+        if candidates:
+            parts.append(SHARED_CANDIDATES_HEADING + candidates)
     return "\n\n".join(parts)
 
 

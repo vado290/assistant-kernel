@@ -6,7 +6,8 @@ import asyncio
 from typing import Any
 
 from assistant_kernel.core.executors.common import (
-    READ_ONLY_TOOLS, call_for_json, capabilities, charter, load_agent, project_catalog, prompt_text,
+    PROFILE_HEADING, READ_ONLY_TOOLS, USER_PROFILE, call_for_json, capabilities, charter, knowledge_text, load_agent,
+    project_catalog, prompt_text,
 )
 from assistant_kernel.core.executors.supervisor import render_messages
 
@@ -21,6 +22,9 @@ async def execute_triage(run: dict[str, Any], ctx) -> dict[str, Any]:
     project_charter = await asyncio.to_thread(charter, settings, project_id)
     if project_charter:
         sections.append("## 项目章程\n\n" + project_charter)
+    profile = await asyncio.to_thread(knowledge_text, settings, project_id, USER_PROFILE)
+    if profile:
+        sections.append(PROFILE_HEADING + profile)
     sections.append("## 本项目对你的角色要求\n\n" + config.role_text)
     if config.skills_text:
         sections.append(config.skills_text)

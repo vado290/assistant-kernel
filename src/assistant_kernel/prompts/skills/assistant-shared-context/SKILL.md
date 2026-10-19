@@ -2,9 +2,10 @@
 name: assistant-shared-context
 description: 维护 kernel 的公共背景（组织与用户、技术环境、工作约定）：识别哪些信息是公共的，整理成更新卡片交给用户批准；从不写入密钥。
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   load: {roles: [pm, supervisor], capabilities: [shared_context]}
   changelog:
+    - "1.1.0 2026-10-19 其他项目标“公共”的背景事实由 Kernel 列成候选，用户采纳后逐节提议（记忆机制改进，0.45.5）"
     - "1.0.0 2026-10-16 首版：所有 agent 都要用到的公共事实需要有人维护，且每次修改都要经用户确认"
 ---
 
@@ -35,7 +36,7 @@ kernel vault 的 `knowledge/shared/` 下有三份文件，Kernel 会按场合把
 ## 信息从哪里来
 - 用户直接告诉 kernel；
 - 其他项目路由过来的交接说明；
-- 复盘时在各项目的背景存档中发现的新事实；
+- 其他项目背景存档里标“公共”的事实：Kernel 把公共背景里还没有的列成候选，放进 kernel 的周度复盘材料和 Supervisor 的咨询提示；用户说采纳哪些，你就逐节用 propose_shared_update 提议，不要一次合并多节；
 - 技术环境类事实可以用只读工具核实（例如查看容器、目录）。
 
 ## 定期检查

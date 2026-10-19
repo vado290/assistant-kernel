@@ -597,6 +597,9 @@ async def _review_input_result(c, task, run, result) -> None:
     if not task or task["state"] != "awaiting_user" or not item or item["item_id"] != run["base"].get("item_id"):
         await event(c, run["project_id"], "stale_result", task_id=run["task_id"], run_id=run["run_id"])
         return
+    if result.get("profile_observations"):
+        message = await one(c, "SELECT user_id FROM core.messages WHERE message_id=%s", (run["input"]["message_id"],))
+        await _record_profile(c, run, message or {"user_id": None}, result["profile_observations"])
     if result.get("propose_new_task"):   # the user's new message is a separate piece of work (system map F8)
         await _propose_new_task(c, run, result["propose_new_task"], run["input"]["message_id"], after=task["goal"])
     if result.get("decision") != "keep":
@@ -628,6 +631,7 @@ async def _consult_result(c, run, result) -> None:
     if isinstance(result.get("route"), dict) and "routing" in (result.get("_capabilities") or ()):
         link = {"link_message": str(await _route(c, run["project_id"], message, result["route"]))}
     await notify(c, run["project_id"], "supervisor", result["reply"], chat=chat, **link)
+    await _record_profile(c, run, message, result.get("profile_observations"))
     if result.get("propose_new_task"):
         await _propose_new_task(c, run, result["propose_new_task"], message["message_id"])
     shared = result.get("propose_shared_update")
@@ -650,6 +654,23 @@ async def _consult_result(c, run, result) -> None:
         item = cards.task_item(await cards.open_card(c, run["project_id"]), context_task)
         if task and task["state"] == "awaiting_user" and item:
             await _upgrade_item(c, task, item, upgrade)
+
+
+PROFILE_ITEMS, PROFILE_ITEM_CHARS = 5, 300
+
+
+async def _record_profile(c, run, message, items) -> None:
+    """Collaboration preferences or corrections the user stated, noted by Supervisor (consult / review_input):
+    recorded here, appended to knowledge/user-profile.md by vault_sync, and the user is told what was noted."""
+    if not isinstance(items, list):
+        return
+    notes = [str(i).strip()[:PROFILE_ITEM_CHARS] for i in items if str(i or "").strip()][:PROFILE_ITEMS]
+    if not notes:
+        return
+    await event(c, run["project_id"], "profile_observed", task_id=run.get("task_id"), run_id=run["run_id"],
+                source_run=str(run["run_id"]), user_id=message["user_id"], items=notes)
+    await notify(c, run["project_id"], "supervisor", "📝 已记入用户画像：" + "；".join(notes)[:600]
+                 + "（不对的话直接告诉我，我会更正）", task_id=run.get("task_id"))
 
 
 async def _source_user(c, task) -> str | None:

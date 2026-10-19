@@ -6,6 +6,9 @@ before writing, and a task event records that the step is done.
 
 - background archive: an approved requirements document's "背景信息存档" goes into the charter, its
   "用户画像观察" into knowledge/user-profile.md, and the task's domain brief into knowledge/domain-brief.md;
+  a task that ends without approval still gives its "用户画像观察" (marked as such; its facts were never confirmed);
+- profile observations Supervisor noted in a consultation or a card review go into knowledge/user-profile.md;
+- each such write is committed on its own, naming its source (system map memory review, 0.45.5);
 - (the iteration log moved to the core.iterations table in ROUND4; changes/iterations.md is no longer written)
 - shared context: an approved update is written into the kernel's knowledge/shared file.
 """
@@ -18,7 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from assistant_kernel.core import skills
+from assistant_kernel.core import projectgit, rules, skills
 from assistant_kernel.core.db import all_rows, event
 from assistant_kernel.core.machine import notify
 from assistant_kernel.storage import ProjectRuntimeManager
@@ -42,14 +45,29 @@ def _today() -> str:
 
 async def sync_vaults(kernel, settings) -> dict[str, int]:
     done = {}
-    for name, step in (("archived", _archive_backgrounds), ("shared", _apply_shared), ("worktrees", _remove_worktrees),
-                       ("templates", _sync_templates), ("push", _push_repositories)):
+    for name, step in (("archived", _archive_backgrounds), ("unapproved", _archive_unapproved),
+                       ("profile", _apply_profile_observations), ("shared", _apply_shared),
+                       ("worktrees", _remove_worktrees), ("templates", _sync_templates), ("push", _push_repositories)):
         try:
             done[name] = await step(kernel, settings)
         except Exception:   # one broken file must not stop the dispatcher
             log.exception("vault sync step %s failed", name)
             done[name] = 0
     return done
+
+
+def _commit(vault: Path, paths: list[str], message: str) -> None:
+    """Commit just these memory files (best effort: a git problem is logged, the write itself stands)."""
+    present = [p for p in paths if (vault / p).exists()]
+    if not present:
+        return
+    try:
+        projectgit.commit_paths(vault, present, message)
+    except (projectgit.GitError, OSError) as exc:
+        log.warning("commit of %s in %s failed: %s", present, vault, exc)
+
+
+MEMORY_FILES = ["knowledge/charter.md", "knowledge/user-profile.md", "knowledge/domain-brief.md", "knowledge/archive"]
 
 
 # ------------------------------------------------------------------ background archive → charter
@@ -131,11 +149,75 @@ async def _archive_backgrounds(kernel, settings) -> int:
                 briefed = await asyncio.to_thread(write_brief, knowledge / "domain-brief.md",
                                                   f"brief:{row['brief']['sha256'][:12]}", f"{heading} 调研，随需求批准存档",
                                                   research)
+        if written or profiled or briefed:
+            await asyncio.to_thread(_commit, _vault(settings, row["project_id"]), MEMORY_FILES,
+                                    f"存档：需求获批的背景、画像与行业速写（任务 {str(row['task_id'])[:8]}）")
         async with kernel.db.tx() as c:
             await event(c, row["project_id"], "background_archived", task_id=row["task_id"], doc_sha=sha,
                         written=written, empty=body.strip() in EMPTY, profiled=profiled, briefed=briefed)
         count += written
     return count
+
+
+async def _archive_unapproved(kernel, settings) -> int:
+    """A delivery task that ended without its requirements approved: its "用户画像观察" still says how the user works
+    with us, so it goes into the profile, marked as unapproved; its background facts were never confirmed and stay out."""
+    from assistant_kernel.core.executors.common import read_document
+    async with kernel.db.tx() as c:
+        rows = await all_rows(c, """
+            SELECT t.task_id, t.project_id, t.goal, t.documents->'task_contract' AS contract, m.user_id
+            FROM core.tasks t LEFT JOIN core.messages m ON m.message_id = t.source_message_id
+            WHERE t.state = ANY(%s) AND t.kind = 'delivery' AND t.documents ? 'task_contract'
+              AND coalesce(t.approvals->'requirements'->>'doc_sha', '') <> t.documents->'task_contract'->>'sha256'
+              AND NOT EXISTS (SELECT 1 FROM core.task_events e WHERE e.task_id = t.task_id
+                              AND e.kind = 'background_archived'
+                              AND e.payload->>'doc_sha' = t.documents->'task_contract'->>'sha256')""",
+                              (list(rules.TERMINAL_STATES),))
+    count = 0
+    for row in rows:
+        sha = row["contract"]["sha256"]
+        markdown = await asyncio.to_thread(read_document, settings, row["project_id"], row["contract"])
+        observed = skills.section_text(markdown, PROFILE_SECTION)
+        profiled = False
+        if observed.strip() not in EMPTY:
+            vault = _vault(settings, row["project_id"])
+            heading = f"{_today()} · {row['goal'][:40]}（任务 {str(row['task_id'])[:8]}，需求未获批，仅协作观察）"
+            profiled = await asyncio.to_thread(append_profile, vault / "knowledge" / "user-profile.md",
+                                               row["user_id"] or "默认", f"profile:{sha[:12]}", heading, observed)
+            if profiled:
+                await asyncio.to_thread(_commit, vault, ["knowledge/user-profile.md"],
+                                        f"存档：未获批任务的协作观察（任务 {str(row['task_id'])[:8]}）")
+        async with kernel.db.tx() as c:
+            await event(c, row["project_id"], "background_archived", task_id=row["task_id"], doc_sha=sha,
+                        unapproved=True, written=False, profiled=profiled, briefed=False)
+        count += profiled
+    return count
+
+
+# ------------------------------------------------------------------ Supervisor's profile observations
+
+async def _apply_profile_observations(kernel, settings) -> int:
+    """Observations Supervisor noted (machine._record_profile) → the user's section of knowledge/user-profile.md."""
+    async with kernel.db.tx() as c:
+        rows = await all_rows(c, """
+            SELECT a.project_id, a.payload FROM core.task_events a
+            WHERE a.kind = 'profile_observed'
+              AND NOT EXISTS (SELECT 1 FROM core.task_events b WHERE b.kind = 'profile_observation_applied'
+                              AND b.payload->>'source_run' = a.payload->>'source_run')
+            ORDER BY a.event_id""")
+    for row in rows:
+        payload, vault = row["payload"], _vault(settings, row["project_id"])
+        run = str(payload["source_run"])
+        body = "\n".join(f"- {item} · [Supervisor·对话]" for item in payload.get("items") or [])
+        added = await asyncio.to_thread(append_profile, vault / "knowledge" / "user-profile.md",
+                                        payload.get("user_id") or "默认", f"observed:{run[:12]}",
+                                        f"{_today()} · Supervisor 在对话中记下", body)
+        if added:
+            await asyncio.to_thread(_commit, vault, ["knowledge/user-profile.md"],
+                                    f"存档：Supervisor 记下的用户偏好或纠正（运行 {run[:8]}）")
+        async with kernel.db.tx() as c:
+            await event(c, row["project_id"], "profile_observation_applied", source_run=run)
+    return len(rows)
 
 
 # ------------------------------------------------------------------ shared context
@@ -161,6 +243,9 @@ async def _apply_shared(kernel, settings) -> int:
     for row in rows:
         update = row["payload"]
         await asyncio.to_thread(write_shared, settings.data_root, update)
+        await asyncio.to_thread(_commit, _vault(settings, skills.SHARED_CONTEXT_HOME),
+                                [f"knowledge/shared/{update['file']}"],
+                                f"公共背景：{update['file']} · {update['section']}（用户批准）")
         async with kernel.db.tx() as c:
             await event(c, row["project_id"], "shared_update_applied", item_id=update["item_id"])
             await notify(c, row["project_id"], "supervisor",
