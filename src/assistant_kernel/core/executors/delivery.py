@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any
 
 import yaml
@@ -42,7 +43,8 @@ async def execute_validation(run: dict[str, Any], ctx) -> dict[str, Any]:
         manifest_problem = await asyncio.to_thread(check_repo_manifest, settings, project_id, code, task_id)
         if manifest_problem:
             report += f"\n- runtime_manifest: {manifest_problem}"
-        map_problems = await asyncio.to_thread(check_repo_map, code, task_id)
+        vault = ProjectRuntimeManager(settings.data_root).ensure(project_id).vault_root
+        map_problems = await asyncio.to_thread(check_repo_map, code, task_id, vault)
         report += "".join(f"\n- map: {problem}" for problem in map_problems)
         return {"passed": passed and not manifest_problem and not map_problems, "report": report}
     bundle, problem = await asyncio.to_thread(_reseal, settings, project_id, task_id, bundle_sha)
@@ -103,6 +105,7 @@ def check_map(settings, project_id: str, task_id: str) -> list[str]:
         return [str(exc)]
 
     def exists(path: str) -> bool:
+        path = path.removeprefix(projectmap.PROJECT_PREFIX)   # the map already lives in the project folder
         return path in written or any(w.startswith(path + "/") for w in written) or \
             (path not in deleted and (vault / path).exists())
 
@@ -113,8 +116,9 @@ def check_map(settings, project_id: str, task_id: str) -> list[str]:
     return projectmap.problems(entries, exists, sorted(required)) if entries or required else []
 
 
-def check_repo_map(code: dict[str, Any], task_id: str) -> list[str]:
-    """Code delivery: the repository's map at the bound commit (the task worktree)."""
+def check_repo_map(code: dict[str, Any], task_id: str, vault: Path) -> list[str]:
+    """Code delivery: the repository's map at the bound commit (the task worktree); `project:` entries are files of
+    the project folder."""
     from assistant_kernel.core import projectmap
     worktree = gitdelivery.worktree_path(code, task_id)
     try:
@@ -122,7 +126,8 @@ def check_repo_map(code: dict[str, Any], task_id: str) -> list[str]:
     except ValueError as exc:
         return [str(exc)]
     required = projectmap.covered_files(worktree, worktree)
-    return projectmap.problems(entries, lambda p: (worktree / p).exists(), required) if entries or required else []
+    exists = projectmap.exists_in(worktree, vault)
+    return projectmap.problems(entries, exists, required) if entries or required else []
 
 
 def check_runtime_manifest(settings, project_id: str, task_id: str) -> str | None:
@@ -169,18 +174,23 @@ def check_repo_manifest(settings, project_id: str, code: dict[str, Any], task_id
 
 
 async def execute_publish(run: dict[str, Any], ctx) -> dict[str, Any]:
-    """Publish, between two commits of the project folder and its writable external folders (ROUND5 D13): a
-    snapshot first (keeps edits made outside a release), then the release itself. Git never blocks a release."""
+    """Publish, between two commits (ROUND5 D13): a snapshot of the project folder first (keeps edits made outside a
+    release), then the release commit of the project folder and its writable external folders. External folders had
+    their snapshot when the task's build stage began (PM edits them directly), so their release commit holds exactly
+    the task's changes. The commits (number and files) go into the result for the change record. Git never blocks
+    a release."""
     from assistant_kernel.core import projectgit
     settings, project_id, task_id = ctx.services["settings"], run["project_id"], str(run["task_id"])
     vault = ProjectRuntimeManager(settings.data_root).ensure(project_id).vault_root
     task, grants = await ctx.kernel.get_task(run["task_id"]), await ctx.kernel.grants(project_id)
-    problems = await asyncio.to_thread(projectgit.commit_release, vault, project_id, grants,
-                                       f"发布前快照（任务 {task_id[:8]}）")
+    problems, _ = await asyncio.to_thread(projectgit.commit_release, vault, project_id, grants,
+                                          f"发布前快照（任务 {task_id[:8]}）", external=False)
     result = await _publish(run, ctx)
     if result.get("outcome") == "published":
-        problems += await asyncio.to_thread(projectgit.commit_release, vault, project_id, grants,
-                                            f"发布：{(task or {}).get('goal', '')[:72]}\n\n任务 {task_id}")
+        more, commits = await asyncio.to_thread(projectgit.commit_release, vault, project_id, grants,
+                                                f"发布：{(task or {}).get('goal', '')[:72]}\n\n任务 {task_id}")
+        problems += more
+        result["commits"] = result.get("commits", []) + commits
     if problems:
         warning = "⚠ 发布已完成，但 git 提交有问题（不影响发布）：" + "；".join(problems)[:600]
         result["note"] = "\n".join(part for part in (result.get("note"), warning) if part)
@@ -199,6 +209,7 @@ async def _publish(run: dict[str, Any], ctx) -> dict[str, Any]:
         except gitdelivery.GitError as exc:
             return {"outcome": "failed", "error": str(exc)}
         return {"outcome": "published", "files": [f"git://{code['main']}/{f}" for f in files],
+                "commits": [{"repo": "code", "commit": bundle_sha[len(gitdelivery.PREFIX):], "files": files}],
                 "note": code["release_note"].format(commit=bundle_sha[len(gitdelivery.PREFIX):][:12])
                 if code["release_note"] else ""}
     bundle, problem = await asyncio.to_thread(_reseal, settings, project_id, task_id, bundle_sha)

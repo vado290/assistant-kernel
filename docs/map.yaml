@@ -1,5 +1,20 @@
 schema_version: project-map.v1
 entries:
+- path: project:knowledge/charter.md
+  kind: doc
+  purpose: kernel 项目的章程（在项目目录，不在源码仓库）
+- path: project:knowledge/shared/
+  kind: directory
+  purpose: 公共背景：组织、技术环境、工作约定（注入所有项目，只读）
+- path: project:agents/
+  kind: directory
+  purpose: kernel 项目自己的 PM / Supervisor 配置、角色和技能
+- path: docs/map.yaml
+  kind: doc
+  purpose: 本地图：kernel 项目唯一的索引
+- path: docs/ARCHITECTURE.md
+  kind: doc
+  purpose: 核心原则与模块说明（设计文档，不是地图）
 - path: src/assistant_kernel/core/
   kind: directory
   purpose: 控制核心：状态机、调度、卡片、网关、执行器、Kernel 工具（见 docs/ARCHITECTURE.md）
@@ -239,3 +254,10 @@ entries:
 - path: src/assistant_kernel/storage/project_runtime.py
   kind: module
   purpose: 项目目录与 Codex home 的位置和创建
+- path: scripts/round5_r52_migrate.py
+  kind: module
+  purpose: R5.2 一次性迁移：给项目目录和可写外部目录建立独立的 git 仓库
+- path: src/assistant_kernel/core/credentials.py
+  kind: module
+  purpose: 'Project credentials (docs/ROUND5_PLAN.md D8, §5.5): one JSON file per
+    project, `runtime/credentials.json`.'

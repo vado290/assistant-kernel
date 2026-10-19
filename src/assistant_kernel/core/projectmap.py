@@ -7,6 +7,8 @@ comes from git, why it changed from the change stream.
 Where it lives: `knowledge/map.yaml` in the project folder; a code-delivery project keeps it in its repository
 (`project.yaml` map_path, default `docs/map.yaml`), because there the PM only edits the repository.
 Every Python file of the deliverable (the project's `product/`, or the repository) must have an entry.
+The map indexes the whole project: in a repository's map, `project:<path>` names a file of the project folder
+(e.g. `project:knowledge/charter.md`); `grant:<key>/<path>` names a file in a granted external folder.
 """
 from __future__ import annotations
 
@@ -19,6 +21,7 @@ from typing import Any, Callable
 import yaml
 
 SCHEMA = "project-map.v1"
+PROJECT_PREFIX = "project:"
 KINDS = ("directory", "entry", "module", "script", "config", "doc", "skill", "agent", "data", "test", "other")
 SKIP_DIRS = {"data", "tests", "docs", "__pycache__", ".git", "archive", "runs", "runtime", ".agents",
              "build", "dist", ".venv", "venv", "node_modules"}
@@ -37,7 +40,10 @@ def location(settings, project_id: str) -> tuple[Path, Path, str]:
 
 
 def parse(text: str) -> list[dict[str, Any]]:
-    data = yaml.safe_load(text) or {}
+    try:
+        data = yaml.safe_load(text) or {}
+    except yaml.YAMLError as exc:   # reported as a map problem, never a crash of the validation run
+        raise ValueError(f"地图不是合法的 YAML：{str(exc)[:200]}") from exc
     if not isinstance(data, dict) or data.get("schema_version") != SCHEMA or not isinstance(data.get("entries"), list):
         raise ValueError(f"地图必须是 schema_version: {SCHEMA} 且带 entries 列表")
     return [dict(entry) for entry in data["entries"] if isinstance(entry, dict)]
@@ -89,21 +95,43 @@ def render(entries: list[dict[str, Any]], limit: int = RENDER_LIMIT) -> str:
     return text if len(text) <= limit else text[:limit] + "\n…（地图较长，其余条目用 map_lookup 查询）"
 
 
+def resolve(root: Path, project_root: Path, path: str) -> tuple[Path, str] | None:
+    """(the folder a map path is relative to, the path inside it); None for an external `grant:` path."""
+    if path.startswith("grant:"):
+        return None
+    if path.startswith(PROJECT_PREFIX):
+        return project_root, path[len(PROJECT_PREFIX):]
+    return root, path
+
+
+def exists_in(root: Path, project_root: Path) -> Callable[[str], bool]:
+    def exists(path: str) -> bool:
+        place = resolve(root, project_root, path)
+        return place is not None and (place[0] / place[1]).exists()
+    return exists
+
+
 def last_changed(root: Path, path: str) -> str:
     """Date of the last commit touching `path` ('' outside a repository)."""
-    if not (root / ".git").exists() or path.startswith("grant:"):
+    if not (root / ".git").exists():
         return ""
     done = subprocess.run(["git", "log", "-1", "--format=%cs", "--", path], cwd=str(root), capture_output=True,
                           text=True, timeout=30)
     return done.stdout.strip() if done.returncode == 0 else ""
 
 
-def lookup(root: Path, entries: list[dict[str, Any]], query: str, limit: int = 20) -> list[dict[str, Any]]:
-    """Entries whose path, name, purpose or summary contain every word of `query`, with their last change date."""
+def lookup(root: Path, entries: list[dict[str, Any]], query: str, limit: int = 20,
+           project_root: Path | None = None) -> list[dict[str, Any]]:
+    """Entries whose path, name, purpose or summary contain every word of `query`, with their last change date
+    (from the repository the file belongs to)."""
     words = [w.lower() for w in re.split(r"\s+", query.strip()) if w]
     matches = [e for e in entries if all(w in " ".join(str(e.get(k) or "") for k in
                                                           ("path", "name", "purpose", "summary")).lower() for w in words)]
-    return [{**e, "last_changed": last_changed(root, str(e.get("path") or ""))} for e in matches[:limit]]
+    found = []
+    for entry in matches[:limit]:
+        place = resolve(root, project_root or root, str(entry.get("path") or "").rstrip("/"))
+        found.append({**entry, "last_changed": last_changed(*place) if place else ""})
+    return found
 
 
 def skeleton(root: Path, files: list[str]) -> list[dict[str, Any]]:

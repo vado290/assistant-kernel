@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
 from assistant_kernel.core import drafts, gitdelivery, grants, iterlog, rules
@@ -86,6 +87,8 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
     state_text = render_state(task, await kernel.task_ledger(task["task_id"]), STAGE_NAMES)
     state_file = await asyncio.to_thread(write_state, settings, run["project_id"], task_id, state_text)
     build = stage == "build"
+    if build:   # external folders as they are before this task changes them (ROUND5 D13; once per task)
+        await external_snapshot(ctx, settings, run["project_id"], task_id)
     workspace = None
     if in_worktree:   # the task's own worktree, cut from main
         workspace = await asyncio.to_thread(gitdelivery.ensure_worktree, code, task_id)
@@ -201,6 +204,25 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
             report["bundle_sha"] = (task["documents"].get("validation") or {}).get("bundle_sha")
         result["report"] = report
     return result
+
+
+async def external_snapshot(ctx, settings, project_id: str, task_id: str) -> None:
+    """Commit the project's writable external folders before the task's first build turn, so the release commit
+    later holds exactly this task's changes there. Best effort; a marker in the task folder makes it once."""
+    from assistant_kernel.core import projectgit
+    from assistant_kernel.storage import ProjectRuntimeManager
+    vault = ProjectRuntimeManager(settings.data_root).ensure(project_id).vault_root
+    marker = vault / "runs" / task_id / "external-snapshot.done"
+    if marker.exists():
+        return
+    try:
+        grants = await ctx.kernel.grants(project_id)
+        await asyncio.to_thread(projectgit.snapshot_external, vault, project_id, grants,
+                                f"任务 {task_id[:8]} 开始实施前的快照")
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("done\n", "utf-8")
+    except Exception:   # a missing snapshot only makes the release commit less precise; never stop the turn
+        logging.getLogger(__name__).warning("external snapshot of task %s failed", task_id, exc_info=True)
 
 
 def outcome_misfit(parsed: dict[str, Any] | None, stage: str) -> str:

@@ -84,6 +84,31 @@ def commit_all(path: Path, message: str) -> str | None:
     return git("rev-parse", "HEAD", cwd=path)
 
 
+def commit_paths(path: Path, paths: list[str], message: str) -> str | None:
+    """Commit only what changed under `paths` (other pending edits stay uncommitted); None when nothing did."""
+    if not is_repo(path):
+        return None
+    git("add", "-A", "--", *paths, cwd=path)
+    if not git("diff", "--cached", "--name-only", "--", *paths, cwd=path):
+        return None
+    git(*IDENTITY, "commit", "-q", "-m", message[:4000], "--", *paths, cwd=path)
+    return git("rev-parse", "HEAD", cwd=path)
+
+
+def head(path: Path) -> str | None:
+    try:
+        return git("rev-parse", "HEAD", cwd=path) if is_repo(path) else None
+    except GitError:   # no commit yet
+        return None
+
+
+def changed_files(path: Path, before: str | None, after: str) -> list[str]:
+    """Files changed between two commits (all files of `after` when there is no `before`)."""
+    if before:
+        return [f for f in git("diff", "--name-only", before, after, cwd=path).splitlines() if f]
+    return [f for f in git("show", "--name-only", "--format=", after, cwd=path).splitlines() if f]
+
+
 def remote_name(project_id: str, key: str | None = None) -> str:
     return f"{project_id}-{key}" if key else f"project-{project_id}"
 
@@ -132,17 +157,40 @@ def repositories(vault: Path, project_id: str, grants: list[dict]) -> list[tuple
     return found
 
 
-def commit_release(vault: Path, project_id: str, grants: list[dict], message: str) -> list[str]:
-    """Commit the project folder and its writable external folders; returns problems (empty when all went well)."""
-    problems = []
-    for path, _ in repositories(vault, project_id, grants):
+def commit_release(vault: Path, project_id: str, grants: list[dict], message: str, *,
+                   external: bool = True) -> tuple[list[str], list[dict]]:
+    """Commit the project folder (and, with `external`, its writable external folders).
+    Returns (problems, commits): each commit as {repo: "project" or the folder key, commit, files changed}."""
+    problems, commits = [], []
+    for path, name in repositories(vault, project_id, grants):
+        if path != vault and not external:
+            continue
         try:
             if path == vault:
                 ensure_repo(path)
+            if not is_repo(path):
+                continue
+            before = head(path)
+            commit = commit_all(path, message)
+            if commit:
+                key = "project" if path == vault else name[len(project_id) + 1:]
+                commits.append({"repo": key, "commit": commit, "files": changed_files(path, before, commit)})
+        except (GitError, OSError, subprocess.TimeoutExpired) as exc:
+            log.warning("git commit in %s failed: %s", path, exc)
+            problems.append(f"{path}：{exc}")
+    return problems, commits
+
+
+def snapshot_external(vault: Path, project_id: str, grants: list[dict], message: str) -> list[str]:
+    """Commit the writable external folders as they are before a task starts changing them (its build stage), so
+    the release commit later holds exactly the task's changes there. Returns problems."""
+    problems = []
+    for path, _ in repositories(vault, project_id, grants)[1:]:
+        try:
             if is_repo(path):
                 commit_all(path, message)
         except (GitError, OSError, subprocess.TimeoutExpired) as exc:
-            log.warning("git commit in %s failed: %s", path, exc)
+            log.warning("snapshot of %s failed: %s", path, exc)
             problems.append(f"{path}：{exc}")
     return problems
 

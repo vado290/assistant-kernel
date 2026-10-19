@@ -2,9 +2,10 @@
 name: assistant-task-continuity
 description: 所有工件（章程、需求、行业速写、设计、实施报告、Review 报告、改进建议）的固定章节和编号规则；PM 写工件、Supervisor 读工件时都以此为准。
 metadata:
-  version: "2.6.0"
+  version: "2.6.1"
   load: {roles: [pm, supervisor]}
   changelog:
+    - "2.6.1 2026-10-19 地图可用 project: 和 grant: 前缀索引项目目录与外部目录的文件（ROUND5 R5.2 补）"
     - "2.6.0 2026-10-18 项目地图改为每个项目一份 map.yaml 索引（ROUND5 R5.2）"
     - "2.5.0 2026-10-17 增加项目地图格式和'变更与历史'规则：工件就地修改，原因写进迭代记录，历史用 list_iterations 按需查（ROUND4）"
     - "2.4.1 2026-10-16 运行声明文件改为项目根目录的 jobs.yaml（vault 的 runtime/ 目录存放 Kernel 内部数据）"
@@ -73,6 +74,8 @@ entries:
 ```
 - 必填 path、purpose；kind 取 directory / entry / module / script / config / doc / skill / agent / data / test / other。
 - 产物的每个 .py 文件（测试、数据目录除外）都要有一条，验证时检查；目录条目用来说明结构。
+- 地图索引整个项目：代码交付的地图在仓库里，项目目录里的文件（章程、技能等）写成 `project:knowledge/charter.md`；
+  授权的外部目录里的文件写成 `grant:<目录 key>/<路径>`。
 - 地图只记当前状态：文件什么时候改的看 git（`map_lookup` 会附上），为什么改的看变更流水（`list_iterations`）。
 - 实施阶段新增、删除、改名文件或改变用途时同步更新（文件交付通过候选文件，代码交付直接在工作区里改），
   并在迭代记录的 changes 里写一项 `type: map`。没有地图的项目，第一次实施时建立。

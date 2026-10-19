@@ -143,7 +143,8 @@ async def to_bootstrapping(c, task, spec: dict[str, Any]) -> dict[str, Any]:
 RELEASED = ("published", "published_after_reconcile")   # close reasons where the approved release took effect
 
 
-async def close(c, task, state: str, reason: str, published_files: list[str] | None = None) -> dict[str, Any]:
+async def close(c, task, state: str, reason: str, published_files: list[str] | None = None,
+                commits: list[dict] | None = None) -> dict[str, Any]:
     """Finish a task, withdraw its runs and card item, then start the next queued task."""
     task = await _update(c, task, state=state, close_reason=reason, closed_at=_now())
     await c.execute("UPDATE core.runs SET status='cancelled', ended_at=now() WHERE task_id=%s AND status='queued'",
@@ -173,7 +174,7 @@ async def close(c, task, state: str, reason: str, published_files: list[str] | N
             (Jsonb({"task_id": str(task["task_id"]), "task_contract": docs.get("task_contract"),
                     "solution_design": docs.get("solution_design"),
                     "bundle_sha": task["approvals"]["release"]["bundle_sha"]}), task["project_id"]))
-    await record_task(c, task, state, reason, published_files)
+    await record_task(c, task, state, reason, published_files, commits)
     await activate_next(c, task["project_id"])
     return task
 
@@ -238,13 +239,20 @@ async def revoke_grant(c, project_id: str, key: str, *, reason: str) -> bool:
     return row is not None
 
 
-async def record_task(c, task, state: str, reason: str, published_files: list[str] | None) -> None:
+async def record_task(c, task, state: str, reason: str, published_files: list[str] | None,
+                      commits: list[dict] | None = None) -> None:
     """Every finished task leaves exactly one record: the PM's (approved with the release) when there is one,
     otherwise one built from the task itself — never blocking the close."""
     docs, files = task["documents"], list(published_files or [])
+    # The release commits (ROUND5 §7): each repository's commit number; external folders' changed files join the
+    # file list (the project folder's and the code repository's are the published files already).
+    files += [f"grant://{done['repo']}/{f}" for done in commits or [] if done.get("repo") not in ("project", "code")
+              for f in done.get("files") or []]
     bundle = (docs.get("implementation_report") or {}).get("bundle_sha") or ""
     facts = {"files": files, "close_reason": reason, "turns": task["turn_count"],
              **({"commit": bundle[4:]} if bundle.startswith("git:") else {}),
+             **({"commits": [{"repo": done.get("repo"), "commit": done.get("commit")} for done in commits]}
+                if commits else {}),
              **({"release_approval_message": task["approvals"]["release"].get("message_id")}
                 if task["approvals"].get("release") else {})}
     kind = {"evolution": "review", "bootstrap": "bootstrap"}.get(task["kind"], "task")
@@ -538,7 +546,8 @@ async def _publish_result(c, task, run, result) -> None:
         if "manifest_sha" in result:   # only a released jobs.yaml is registered (jobs.sync_runtime)
             await event(c, task["project_id"], "runtime_manifest_published", task_id=task["task_id"],
                         manifest_sha=result["manifest_sha"])
-        await close(c, task, "completed", "published", published_files=result.get("files"))
+        await close(c, task, "completed", "published", published_files=result.get("files"),
+                    commits=result.get("commits"))
         if result.get("note"):   # the project's own release note, e.g. kernel: "ready to deploy"
             await notify(c, task["project_id"], "pm", str(result["note"])[:1000], task_id=task["task_id"])
     elif outcome == "failed":

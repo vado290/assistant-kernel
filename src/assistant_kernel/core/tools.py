@@ -276,7 +276,8 @@ def build_server(scope: Scope) -> MCPServer:
         from assistant_kernel.core import projectmap
         root, path, shown = projectmap.location(settings, project_id)
         entries = projectmap.load(path)
-        matches = projectmap.lookup(root, entries, query, limit=min(max(limit, 1), 50))
+        matches = projectmap.lookup(root, entries, query, limit=min(max(limit, 1), 50),
+                                    project_root=runtime.ensure(project_id).vault_root)
         return {"map": shown, "total_entries": len(entries), "count": len(matches), "entries": matches}
 
     @tool(READ_ONLY)

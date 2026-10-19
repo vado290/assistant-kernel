@@ -10,6 +10,7 @@ every project by the same load rules.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -280,6 +281,38 @@ def refresh_unmodified(vault: Path, known: dict[str, str] | None = None) -> tupl
         else:
             kept.append(copy.name)
     return refreshed, kept
+
+
+OFFERED = "runtime/skill-templates.json"   # which template skills Kernel has already given the project
+
+
+def offered(vault: Path) -> dict[str, Any] | None:
+    path = vault / OFFERED
+    return json.loads(path.read_text("utf-8")) if path.is_file() else None
+
+
+def sync_templates(vault: Path, capabilities: frozenset[str], version: str) -> dict[str, list[str]]:
+    """Kernel rollout (once per Kernel version): install template skills the project has never been given and
+    bring copies it never edited up to date. A skill the project removed after being given it stays removed;
+    edited copies are left alone (the weekly review lists them). Returns what changed."""
+    record = offered(vault) or {}
+    known = set(record.get("offered") or [])
+    applicable = [t for t in template_skills() if set(t.load.get("capabilities") or ()) <= capabilities]
+    installed = []
+    for template in applicable:
+        if record and template.name in known:
+            continue
+        for agent in template_agents(template):
+            target = agent_skill_dir(vault, agent) / template.name
+            if not target.exists():
+                _install(template, target)
+                installed.append(f"{agent}/{template.name}")
+    refreshed, kept = refresh_unmodified(vault)
+    path = vault / OFFERED
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"kernel_version": version, "offered": sorted(known | {t.name for t in applicable})},
+                               ensure_ascii=False, indent=2), "utf-8")
+    return {"installed": installed, "refreshed": sorted(set(refreshed)), "kept": sorted(set(kept))}
 
 
 # ------------------------------------------------------------------ shared-context sections

@@ -41,7 +41,7 @@ def test_a_release_commits_the_project_and_its_writable_folders(tmp_path):
     projectgit.ensure_repo(readonly, None)
     grants = [{"resource_key": "crypto", "policy_json": {"path": str(external), "access": "write"}},
               {"resource_key": "docs", "policy_json": {"path": str(readonly), "access": "read"}}]
-    assert projectgit.commit_release(vault, "p1", grants, "发布：日报") == []
+    assert projectgit.commit_release(vault, "p1", grants, "发布：日报")[0] == []
     assert log(vault) == ["发布：日报"] and log(external) == ["发布：日报"] and log(readonly) == []
     assert [name for _, name in projectgit.repositories(vault, "p1", grants)] == ["project-p1", "p1-crypto"]
 
