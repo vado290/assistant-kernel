@@ -257,6 +257,9 @@ entries:
 - path: scripts/round5_r52_migrate.py
   kind: module
   purpose: R5.2 一次性迁移：给项目目录和可写外部目录建立独立的 git 仓库
+- path: scripts/r0453_agent_config_migrate.py
+  kind: module
+  purpose: 0.45.3 一次性迁移：清理各项目 agent 配置中不生效的字段和已退役的工具名，给 PM 补上技能用到的三个工具
 - path: src/assistant_kernel/core/credentials.py
   kind: module
   purpose: 'Project credentials (docs/ROUND5_PLAN.md D8, §5.5): one JSON file per

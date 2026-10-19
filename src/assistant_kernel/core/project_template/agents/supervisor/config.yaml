@@ -4,21 +4,11 @@ agent_key: project:{project_id}:supervisor
 kind: supervisor
 status: active
 display_name: Goal Supervisor
-aliases: []
 role: role.md
-scope_profile: current-project
 harness:
   provider: openai
   model: gpt-5.6-sol
   reasoning_effort: medium
   context_policy: max
   timeout_seconds: 90
-  sandbox: project-scope
-mcp_servers: {}
-entrypoints:
-  pm_handoff: false
-  feishu_slash: false
-triggers:
-- after_agent_turn
-- user_consultation
 tools: []

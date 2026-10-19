@@ -32,9 +32,17 @@ MVP_TOOLS = frozenset({
 CANDIDATE_TOOLS = frozenset({"write_candidate_file", "delete_candidate_file"})
 # Kernel's own document protocol for PM turns: granted whenever offered, a project's tool list does not narrow it.
 DOCUMENT_TOOLS = frozenset({"read_task_document", "edit_task_document"})
-# Platform tools every model turn gets whatever the project's own tool list says (ROUND4: the change stream).
-PLATFORM_TOOLS = DOCUMENT_TOOLS | {"list_iterations", "map_lookup", "list_credentials", "get_credential"}
+# Platform tools every model turn gets (among those its executor offers) whatever the project's own tool list says:
+# the initialising tool (every other tool needs it called first), recent conversation, the change stream (ROUND4),
+# the map and the credentials (ROUND5). An empty tool list (Supervisor) therefore means "platform tools only".
+PLATFORM_TOOLS = DOCUMENT_TOOLS | {"get_authorized_workspace", "list_recent_history", "list_iterations", "map_lookup",
+                                   "list_credentials", "get_credential"}
 READ_ONLY_TOOLS = MVP_TOOLS - CANDIDATE_TOOLS - DOCUMENT_TOOLS - {"volcengine_generate", "volcengine_ocr"}
+
+
+def effective_tools(offered: frozenset[str], configured) -> tuple[str, ...]:
+    """The tools a model turn gets: what its executor offers, narrowed by the agent's config list (platform tools stay)."""
+    return tuple(sorted(offered & (set(configured) | PLATFORM_TOOLS)))
 
 
 def prompt_text(name: str) -> str:
@@ -207,7 +215,7 @@ async def call_model(ctx, run: dict[str, Any], config: AgentConfig, prompt: str,
     settings, harness = ctx.services["settings"], ctx.services["harness"]
     project_id = run["project_id"]
     invocation_id = f"{run['run_id']}-a{run['attempt']}-{uuid.uuid4().hex[:8]}"
-    allowed = tuple(sorted(tools & (set(config.allowed_tools) | PLATFORM_TOOLS)))
+    allowed = effective_tools(tools, config.allowed_tools)
     model, effort, window, compact = config.model, config.reasoning_effort, None, None
     if hasattr(harness, "resolve_model_profile"):
         profile = await harness.resolve_model_profile(

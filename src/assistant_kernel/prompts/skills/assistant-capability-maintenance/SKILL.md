@@ -1,13 +1,14 @@
 ---
 name: assistant-capability-maintenance
-description: 编写和修改技能的规范：技能的固定结构、写法原则、模板与项目副本的关系和修改流程。提出或实施技能改进时使用。
+description: 编写和修改技能（以及 agent 的 config.yaml）的规范：技能的固定结构、写法原则、模板与项目副本的关系和修改流程。提出或实施技能改进时使用。
 metadata:
-  version: "2.2.0"
+  version: "2.3.0"
   load: {roles: [pm], stages: [build, evolution]}
   io:
     reads: [improvement_proposal, skills]
     writes: [skills]
   changelog:
+    - "2.3.0 2026-10-19 模板更新改为按 ROUND5 D20 的实际做法描述；增加 agent 配置（config.yaml）的有效字段和工具名规则（0.45.3）"
     - "2.2.0 2026-10-18 技能改为每个 agent 一个平级目录 agents/<agent>/.agents/skills/（ROUND5 R5.1）"
     - "2.1.0 2026-10-17 固定结构增加 io 元数据和'交接'一节；技能之间只通过工件协作；修改原因写进迭代记录（ROUND4）"
     - "2.0.1 2026-10-17 增加 io 元数据（读写哪些工件），用于检查技能协作断链（ROUND4）"
@@ -25,10 +26,19 @@ metadata:
   （PM、Supervisor 各一份，同一技能可以重复），并在每个副本中记下
   来源 `template: {name, version}`。打磨公共模板是 kernel 自我升级的一部分。
 - **项目副本**：复制之后归项目所有。项目在自己的运营和复盘中修改副本，可以大改甚至推翻模板；Kernel 只加载项目自己的副本。
-- **模板更新**：模板出了新版本时，各项目的周度复盘会看到"模板有更新"及其变更记录，由项目自己决定是否采用、采用哪些部分；
-  从不自动覆盖项目副本。
+- **模板更新**：Kernel 升级后会同步一次模板（ROUND5 D20）：项目没改过的副本自动换成新版；新增的模板技能补装到对应 agent；
+  项目改过的副本保留不动，周度复盘会看到"模板有更新"及其变更记录，由项目自己决定是否采用、采用哪些部分；
+  项目主动删掉的技能不会再被补回。
 - **加载方式**：`load` 写明场合的技能每轮自动加载全文；写 `on_demand: true` 的技能只在提示中列出名称、用途和路径，
   需要时用 `vault_read_text` 读取全文（适合不常用的领域方法，节省上下文）。
+
+## agent 配置（config.yaml）
+每个 agent 目录下的 `config.yaml` 只有这些字段生效：`schema_version: agent-config.v2`、`agent_id`、`agent_key`、`kind`、`status`、
+`role`（默认 role.md）、`harness`（provider、model、reasoning_effort、context_policy、timeout_seconds）和 `tools`。
+- `tools` 只能写当前的工具名（发布前的校验会拒绝未知名称，名称以校验报错里列出的为准）：它只能收窄执行器给的工具，不能扩大。
+- 平台工具总会给，不用写：get_authorized_workspace、list_recent_history、list_iterations、map_lookup、list_credentials、
+  get_credential，以及 PM 的任务文档工具。所以 Supervisor 写 `tools: []` 就是"只用平台工具"。
+- 沙箱、能否写候选文件由 Kernel 按角色和阶段决定，不在配置里写；别的字段写了也不会生效，不要添加。
 
 ## 固定结构
 ```

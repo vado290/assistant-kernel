@@ -259,6 +259,7 @@ assets:
 **进度**：R5.0 完成（2026-10-18，结果见 §2）；R5.1 完成（0.44.0，三个项目已迁移，备份在 `backups/round5-r51-20261018/`）；
 R5.2 完成（0.45.1：git、地图、凭据；五个仓库已建立首次提交；远程推送待 `gh auth login`）。
 验收审计后修复（0.45.2，2026-10-19）：地图 `project:`/`grant:` 前缀与 kernel 地图补全（含覆盖测试）、技能模板按 Kernel 版本自动同步（三个项目已同步并提交）、发布提交号记入变更流水、外部目录在实施开始时快照；计划 D12/D13/D24、§7、§10.3 已按用户同意修订。
+系统地图审查后修复（0.45.3，2026-10-19，`assistant-data/system-map/generations/gen-20261019-fef3d31` 的 F1–F3）：平台工具加入 `get_authorized_workspace` 与 `list_recent_history`，Supervisor、分诊和产品 agent 的工具从此可用；agent 配置只保留加载器读取的字段、工具只用当前名称（模板、发布校验与迁移脚本 `scripts/r0453_agent_config_migrate.py`），PM 补上 `vault_list`、`vault_read_text`、`read_project_document`；技能 assistant-goal-supervisor 6.3.0、assistant-capability-maintenance 2.3.0 写明这些规则；新增守卫测试：技能和提示里点名的工具，加载它的角色必须用得了。
 
 ## 12. 风险与对策
 

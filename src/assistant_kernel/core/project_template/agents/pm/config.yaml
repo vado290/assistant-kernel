@@ -1,46 +1,25 @@
 agent_id: pm
 agent_key: project:{project_id}:manager
-aliases:
-- manager
 display_name: Project PM
-entrypoints:
-  feishu_slash: true
-  pm_handoff: true
 harness:
   context_policy: max
   provider: openai
   reasoning_effort: medium
-  sandbox: project-scope
   timeout_seconds: 1800
 kind: manager
-mcp_servers: {}
 role: role.md
 schema_version: agent-config.v2
-scope_profile: current-project
 status: active
 tools:
 - get_authorized_workspace
 - list_authorized_tree
 - read_authorized_file
-- current_conversation_route
+- read_project_document
 - list_recent_history
-- run_status
-- get_public_background_fields
-- list_source_discovery_roots
-- inspect_source_path
-- project_task_status
-- queue_project_task
-- request_operation_report
-- list_project_credentials
+- vault_list
+- vault_read_text
+- write_candidate_file
+- delete_candidate_file
 - volcengine_model_status
 - volcengine_generate
 - volcengine_ocr
-- get_project_credential
-- request_project_credential
-- delete_project_credential
-- write_candidate_file
-- delete_candidate_file
-- run_project_action
-triggers:
-- user_message
-- handoff

@@ -242,31 +242,21 @@ class ValidationRunner:
         if not isinstance(data, dict):
             self._issue(issues, "agent_config_type", relative, "Agent config must be an object")
             return
-        if not str(data.get("agent_key") or "").strip():
-            self._issue(issues, "agent_key", relative, "agent_key is required")
-        schema_version = str(data.get("schema_version") or "")
-        if schema_version == "agent-config.v2":
-            for key in ("agent_id", "kind", "status", "role", "scope_profile"):
-                if not data.get(key):
-                    self._issue(
-                        issues, f"agent_{key}", relative, f"{key} is required for agent-config.v2"
-                    )
-            if not isinstance(data.get("harness"), dict):
-                self._issue(
-                    issues, "agent_harness", relative,
-                    "harness must be an object for agent-config.v2",
-                )
-            if not isinstance(data.get("entrypoints"), dict):
-                self._issue(
-                    issues, "agent_entrypoints", relative,
-                    "entrypoints must be an object for agent-config.v2",
-                )
-        if "skills" in data and not isinstance(data["skills"], (list, dict)):
-            self._issue(issues, "agent_skills", relative, "skills must be a list or object")
-        if "tools" in data and not isinstance(data["tools"], list):
+        # The same rules the loader applies (core/agents.py); other keys are not read and need no check.
+        from assistant_kernel.core.executors.common import MVP_TOOLS
+        if str(data.get("schema_version") or "") != "agent-config.v2":
+            self._issue(issues, "agent_schema", relative, "schema_version must be agent-config.v2")
+        harness = data.get("harness")
+        if harness is not None and not isinstance(harness, dict):
+            self._issue(issues, "agent_harness", relative, "harness must be an object")
+        tools = data.get("tools")
+        if tools is not None and not isinstance(tools, list):
             self._issue(issues, "agent_tools", relative, "tools must be a list")
-        if "mcp_servers" in data and not isinstance(data["mcp_servers"], dict):
-            self._issue(issues, "agent_mcp", relative, "mcp_servers must be an object")
+        elif tools:
+            unknown = sorted({str(t) for t in tools} - MVP_TOOLS)
+            if unknown:
+                self._issue(issues, "agent_tools", relative,
+                            f"unknown tools (current names: {', '.join(sorted(MVP_TOOLS))}): {', '.join(unknown)}")
 
     def _validate_mcp_manifest(
         self, path: Path, relative: str, issues: list[dict[str, str]]
