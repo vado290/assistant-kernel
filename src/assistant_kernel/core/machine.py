@@ -579,11 +579,26 @@ async def _bootstrap_result(c, task, run, result) -> None:
     await close(c, task, "completed", "project_created")
 
 
+async def _propose_new_task(c, run, proposal: dict[str, Any], message_id, *, after: str | None = None) -> None:
+    """A "create a new task?" card item; on approval the task queues behind any active one (activate_next)."""
+    if not isinstance(proposal, dict) or not str(proposal.get("goal") or "").strip():
+        raise InvalidResult("propose_new_task needs a goal")
+    text = str(proposal.get("message") or "是否创建新任务？")
+    if after:
+        text += f"\n（批准后排在当前任务「{after[:60]}」之后，它结束后自动开始；也可以发送 /cancel 先结束当前任务。）"
+    await cards.add_item(c, run["project_id"], cards.new_item(
+        target_kind="consultation", target_id=str(run["run_id"]), kind="decision", origin="supervisor",
+        content={"decision": "new_task", "message": text, "actions": list(DECISION_ACTIONS["new_task"]),
+                 "data": {"goal": str(proposal["goal"]).strip(), "source_message_id": str(message_id)}}))
+
+
 async def _review_input_result(c, task, run, result) -> None:
     item = cards.task_item(await cards.open_card(c, run["project_id"]), run["task_id"]) if task else None
     if not task or task["state"] != "awaiting_user" or not item or item["item_id"] != run["base"].get("item_id"):
         await event(c, run["project_id"], "stale_result", task_id=run["task_id"], run_id=run["run_id"])
         return
+    if result.get("propose_new_task"):   # the user's new message is a separate piece of work (system map F8)
+        await _propose_new_task(c, run, result["propose_new_task"], run["input"]["message_id"], after=task["goal"])
     if result.get("decision") != "keep":
         item = await _upgrade_item(c, task, item, result.get("item") or {})
     newer = await one(c, """SELECT message_id FROM core.messages WHERE task_id=%s AND direction='inbound'
@@ -613,13 +628,8 @@ async def _consult_result(c, run, result) -> None:
     if isinstance(result.get("route"), dict) and "routing" in (result.get("_capabilities") or ()):
         link = {"link_message": str(await _route(c, run["project_id"], message, result["route"]))}
     await notify(c, run["project_id"], "supervisor", result["reply"], chat=chat, **link)
-    new_task = result.get("propose_new_task")
-    if new_task:
-        await cards.add_item(c, run["project_id"], cards.new_item(
-            target_kind="consultation", target_id=str(run["run_id"]), kind="decision", origin="supervisor",
-            content={"decision": "new_task", "message": new_task.get("message") or "是否创建新任务？",
-                     "actions": list(DECISION_ACTIONS["new_task"]),
-                     "data": {"goal": new_task["goal"], "source_message_id": str(message["message_id"])}}))
+    if result.get("propose_new_task"):
+        await _propose_new_task(c, run, result["propose_new_task"], message["message_id"])
     shared = result.get("propose_shared_update")
     if isinstance(shared, dict) and "shared_context" in (result.get("_capabilities") or ()):
         await cards.add_item(c, run["project_id"], cards.new_item(

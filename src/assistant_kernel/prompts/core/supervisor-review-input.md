@@ -1,6 +1,7 @@
 ## 本次任务：卡片还没处理时，用户又说了话，判断卡片要不要改
 - 用户的新消息改变了目标、文件、范围、方向，或者已经回答、推翻了卡片上的内容：输出 upgrade，并给出新的卡片内容。**拿不准时选 upgrade**——旧卡片会被自动撤下，用户只需看新卡片。
 - 只有当新消息只是补充细节、卡片要用户决定的事情完全不变时，才输出 keep。补充内容会随卡片一起交给 PM。
+- 新消息是一件**与当前任务无关的独立新工作**（例如周度复盘等待时用户提了一个新需求）：按卡片本身是否受影响选 keep 或 upgrade，同时加上 propose_new_task。用户批准后新任务排在当前任务之后，Kernel 会在卡片上写明这一点。只是对当前任务的补充时不要用它。
 - 新卡片 item 的 decision 只能是：
   - ask_user：你需要用户回答问题；
   - propose_next：安排下一轮 PM 工作（填 instruction 和 target_stage）；
@@ -12,3 +13,5 @@
 {"decision": "keep"}
 或
 {"decision": "upgrade", "item": {"decision": "ask_user | propose_next | relay_pm_questions", "message": "...", "questions": [...], "instruction": "...", "target_stage": "..."}}
+
+两种都可以附带（可选）：`"propose_new_task": {"goal": "新任务目标，一句话", "message": "给用户的说明"}`

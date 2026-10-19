@@ -13,9 +13,10 @@ from assistant_kernel.services.validation_runner import ValidationRunner
 
 SRC = Path(__file__).parents[2] / "src" / "assistant_kernel"
 TEMPLATE = SRC / "core" / "project_template" / "agents"
-# Who reads each core prompt (triage and consult run with the Supervisor's config).
+# Who reads each core prompt: triage runs with the PM config (executors/triage.py), consult with the Supervisor's;
+# routing is read by both, so it is checked against the narrower Supervisor set.
 PROMPT_ROLES = {"pm-": "pm", "git-delivery": "pm", "runtime-manifest": "pm",
-                "supervisor-": "supervisor", "triage": "supervisor", "routing": "supervisor"}
+                "supervisor-": "supervisor", "triage": "pm", "routing": "supervisor"}
 
 
 def template_tools(agent: str) -> list[str]:
