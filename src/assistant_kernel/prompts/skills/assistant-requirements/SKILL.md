@@ -2,12 +2,13 @@
 name: assistant-requirements
 description: 需求阶段的工作方法：先摸清用户所在组织、行业和项目现状，再分轮用多问题卡片收集和澄清需求、化解矛盾、补充用户没想到的需求，最后提交需求文档并存档背景信息。
 metadata:
-  version: "3.2.3"
+  version: "3.2.4"
   load: {roles: [pm], stages: [requirements]}
   io:
     reads: [charter, user_profile, domain_brief, shared_context, state_ledger, user_answers]
     writes: [task_contract, working_notes]
   changelog:
+    - "3.2.4 2026-10-20 Supervisor 的推测转成本轮的确认式问题（0.45.7）"
     - "3.2.3 2026-10-20 背景信息存档追加到 knowledge/background.md，不再写进章程文件（0.45.6）"
     - "3.2.2 2026-10-19 按标题引用章程各节（各项目章程的节号不同）；画像观察在任务未获批结束时也会存档（记忆机制改进，0.45.5）"
     - "3.2.1 2026-10-17 增加 io 元数据（读写哪些工件），用于检查技能协作断链（ROUND4）"
@@ -30,6 +31,7 @@ metadata:
 
 ### 第 0 步：先查再问（不消耗用户时间）
 读章程（特别是"组织与行业背景"和"背景信息存档"两节）、用户画像、行业速写和 Kernel 注入的公共背景，读相关项目文件。
+指令附有"Supervisor 的推测"时，把每条推测改写成确认式问题，合并进本轮的问题卡片，不要直接写进需求。
 已经知道的不再问；有可能过时的（超过半年，或用户的话与之不符），用确认式问题核对："章程记录你们是 XX 行业，仍然如此吗？"
 
 **行业调研**：按 assistant-domain-research 的条件判断是否需要调研（没有行业速写、超过 180 天、或本任务的行业、地区、规模不同）。

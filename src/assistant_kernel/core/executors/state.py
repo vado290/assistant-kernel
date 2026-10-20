@@ -50,7 +50,10 @@ def render_state(task: dict[str, Any], ledger: dict[str, Any], stage_names: dict
             continue
         lines.append(head)
         if given.get("kind") == "instruction":
-            lines.append(f"  - 指令（用户已确认）：{_cut(given.get('instruction'), 600)}")
+            lines.append(f"  - 指令（用户已确认）：{_cut(given.get('instruction'), 1200)}")
+            for guess in given.get("inferred_intent") or []:
+                lines.append(f"  - Supervisor 推测（假设）：{_cut(guess.get('text'), 300)}"
+                             + (f"（依据：{_cut(guess.get('basis'), 150)}）" if guess.get("basis") else ""))
         elif given.get("kind") == "answers":
             asked = {q["id"]: q["text"] for q in given.get("questions") or []}
             for qid, value in (given.get("answers") or {}).items():

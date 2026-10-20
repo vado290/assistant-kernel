@@ -263,6 +263,9 @@ entries:
 - path: scripts/r0456_migrate.py
   kind: module
   purpose: 0.45.6 一次性迁移：章程里的背景信息存档移到 knowledge/background.md，kernel 项目加上公开规则，trading 关闭推送
+- path: scripts/r0457_supervisor_timeout.py
+  kind: module
+  purpose: 0.45.7 一次性迁移：把各项目 Supervisor 每轮限时从 90 秒改为 5 分钟（项目自己设过的值保留）
 - path: src/assistant_kernel/core/credentials.py
   kind: module
   purpose: 'Project credentials (docs/ROUND5_PLAN.md D8, §5.5): one JSON file per

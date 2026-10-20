@@ -3,12 +3,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
-from assistant_kernel.core import grants, rules
+from assistant_kernel.core import grants, iterlog, rules
+from assistant_kernel.core.runtime import DEFAULT_TZ
 from assistant_kernel.core import skills as skill_rules
 from assistant_kernel.core.executors.common import (
-    PROFILE_HEADING, READ_ONLY_TOOLS, USER_PROFILE, call_for_json, capabilities, charter, knowledge_text, load_agent,
+    DOMAIN_BRIEF, PROFILE_HEADING, READ_ONLY_TOOLS, USER_PROFILE, call_for_json, capabilities, charter, knowledge_text, load_agent,
     project_catalog, prompt_text, render_documents,
 )
 from assistant_kernel.core.executors.digest import SHARED_CANDIDATES_HEADING, shared_candidates
@@ -55,6 +58,9 @@ def render_reason(run_input: dict[str, Any]) -> str:
                        ("error", "错误"), ("instruction", "你上次提出的指令")):
         if run_input.get(key):
             lines.append(f"- {label}：{run_input[key]}")
+    if run_input.get("inferred_intent"):
+        lines.append("- 你上次的推测（用户看过后提出了修改）：\n" + "\n".join(
+            f"  - {i['text']}" for i in run_input["inferred_intent"]))
     if run_input.get("pm_questions"):
         lines.append("- PM 的问题：\n" + "\n".join(
             f"  - [{q['id']}]{'（必答）' if q.get('required', True) else ''} {q['text']}" for q in run_input["pm_questions"]))
@@ -80,6 +86,37 @@ def render_card(card: dict[str, Any] | None) -> str:
     return "\n".join(f"- [{i['kind']}] " + json.dumps(i["content"], ensure_ascii=False)[:1500] for i in card["items"])
 
 
+TASK_STATES = {"queued": "排队中", "completed": "完成", "cancelled": "取消"}
+BRIEF_LIMIT = 2000
+
+
+async def situation_line(kernel, run_input: dict[str, Any], task: dict[str, Any] | None) -> str:
+    """When it is and who is speaking: Supervisor starts every run without memory (system map, 0.45.7)."""
+    message_id = run_input.get("message_id") or (task or {}).get("source_message_id")
+    message = await kernel.get_message(message_id) if message_id else None
+    user = (message or {}).get("user_id")
+    who = f"当前用户：{user}（用户画像中\"用户 {user}\"一节）" if user else "当前用户：未知（看画像中最相关的一节）"
+    return f"当前时间：{datetime.now(ZoneInfo(DEFAULT_TZ)):%Y-%m-%d %H:%M}（{DEFAULT_TZ}）· {who}"
+
+
+async def project_situation(kernel, settings, project_id: str, task: dict[str, Any] | None) -> str:
+    """What else is going on in the project: other tasks (queued, recently ended, with their ledgers), the latest
+    changes, and the industry brief's opening — material for reading what the user meant but has not said."""
+    lines = ["## 项目近况（Kernel 汇总）"]
+    others = await kernel.recent_tasks(project_id, exclude=(task or {}).get("task_id"))
+    lines.append("### 其他任务（排队中的和最近结束的；需要细节时在只读沙箱里读它的状态簿）")
+    lines += [f"- [{TASK_STATES.get(t['state'], t['state'])}] {t['goal']}（{t['kind']}"
+              + (f"，结束原因 {t['close_reason']}" if t.get("close_reason") else "")
+              + f"，{t['updated_at']:%m-%d}）· `runs/{t['task_id']}/state.md`" for t in others] or ["（无）"]
+    changes = await kernel.iterations(project_id, days=180, limit=5)
+    lines.append("### 最近的变更流水（细节用 list_iterations 查）\n" + (iterlog.render(changes, brief=True) or "（无）"))
+    brief = await asyncio.to_thread(knowledge_text, settings, project_id, DOMAIN_BRIEF)
+    if brief:
+        cut = brief if len(brief) <= BRIEF_LIMIT else brief[:BRIEF_LIMIT] + "\n…（全文在 knowledge/domain-brief.md）"
+        lines.append("### 行业速写（开头部分；注意日期和有效期）\n" + cut)
+    return "\n".join(lines)
+
+
 async def execute_supervisor(run: dict[str, Any], ctx) -> dict[str, Any]:
     kernel, settings = ctx.kernel, ctx.services["settings"]
     purpose, run_input = run["purpose"], run["input"]
@@ -90,13 +127,15 @@ async def execute_supervisor(run: dict[str, Any], ctx) -> dict[str, Any]:
     config = await asyncio.to_thread(load_agent, settings, project_id, "supervisor", purpose=purpose,
                                      task_kind=task["kind"] if task else None)
     card = await kernel.card(project_id)
-    sections = [f"# 项目 {project_id} · Supervisor（{PURPOSE_NAMES[purpose]}）"]
+    sections = [f"# 项目 {project_id} · Supervisor（{PURPOSE_NAMES[purpose]}）",
+                await situation_line(kernel, run_input, task)]
     project_charter = await asyncio.to_thread(charter, settings, project_id)
     if project_charter:
         sections.append("## 项目章程\n\n" + project_charter)
     profile = await asyncio.to_thread(knowledge_text, settings, project_id, USER_PROFILE)
     if profile:
         sections.append(PROFILE_HEADING + profile)
+    sections.append(await project_situation(kernel, settings, project_id, task))
     sections.append("## 本项目对你的角色要求\n\n" + config.role_text)
     if config.skills_text:
         sections.append(config.skills_text)

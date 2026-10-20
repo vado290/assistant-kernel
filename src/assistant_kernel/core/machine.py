@@ -421,6 +421,21 @@ async def _supervisor_result(c, task, run, result) -> None:
     await to_awaiting(c, task, _supervisor_item(task, run["input"], result))
 
 
+INFERRED_ITEMS = 3
+
+
+def _inferred(items) -> list[dict[str, str]]:
+    """Supervisor's guesses at what the user meant but did not (fully) say: each a text and its basis; at most three.
+    They ride on the card for the user to see, reach the PM marked as hypotheses, and stay in the ledger."""
+    found = []
+    for item in items if isinstance(items, list) else []:
+        text = str((item.get("text") if isinstance(item, dict) else item) or "").strip()[:300]
+        basis = str(item.get("basis") or "").strip()[:200] if isinstance(item, dict) else ""
+        if text:
+            found.append({"text": text, "basis": basis})
+    return found[:INFERRED_ITEMS]
+
+
 def _supervisor_item(task, run_input: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
     """Turn a Supervisor decision into the task's card item, enforcing Kernel rules."""
     decision = result.get("decision")
@@ -463,6 +478,7 @@ def _supervisor_item(task, run_input: dict[str, Any], result: dict[str, Any]) ->
         return cards.new_item(target_kind="task", target_id=str(task["task_id"]), kind="next_step",
                               origin="supervisor", deliver_to="pm",
                               content={"message": message, "instruction": result["instruction"],
+                                       "inferred_intent": _inferred(result.get("inferred_intent")),
                                        "target_stage": target, "approve": approve, "doc_shas": shas,
                                        "track": track, "track_changed": track != task.get("track", "full")})
     if decision in ("propose_complete", "propose_cancel"):
@@ -845,7 +861,8 @@ async def _next_step_action(c, task, item, action, values, source_message_id):
     if action == "revise":
         if not values.get("text"):
             raise ValueError("revise needs the requested change")
-        return await to_supervising(c, task, "revise", text=values["text"], instruction=content["instruction"])
+        return await to_supervising(c, task, "revise", text=values["text"], instruction=content["instruction"],
+                                    inferred_intent=content.get("inferred_intent") or [])
     if action == "stop":
         return await close(c, task, "cancelled", "stopped_by_user")
     if action != "execute":
@@ -864,6 +881,7 @@ async def _next_step_action(c, task, item, action, values, source_message_id):
         raise cards.StaleItem(error)
     task = await _update(c, task, approvals=approvals, track=track)
     return await to_pm(c, task, {"kind": "instruction", "instruction": content["instruction"],
+                                 "inferred_intent": content.get("inferred_intent") or [],
                                  "note": values.get("text", "")}, stage=content["target_stage"])
 
 

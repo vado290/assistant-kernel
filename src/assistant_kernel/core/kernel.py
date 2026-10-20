@@ -242,6 +242,18 @@ class Kernel:
         async with self.db.tx() as c:
             return await all_rows(c, " ".join(sql), tuple(params))
 
+    async def recent_tasks(self, project_id: str, *, exclude=None, limit: int = 5) -> list[dict[str, Any]]:
+        """The project's other tasks a stateless Supervisor should know about: queued ones, then the latest ended."""
+        async with self.db.tx() as c:
+            return await all_rows(c, """
+                (SELECT task_id, kind, state, close_reason, left(goal, 120) AS goal, updated_at FROM core.tasks
+                 WHERE project_id=%s AND state='queued' AND task_id IS DISTINCT FROM %s ORDER BY created_at)
+                UNION ALL
+                (SELECT task_id, kind, state, close_reason, left(goal, 120) AS goal, updated_at FROM core.tasks
+                 WHERE project_id=%s AND state = ANY(%s) AND task_id IS DISTINCT FROM %s
+                 ORDER BY updated_at DESC LIMIT %s)""",
+                (project_id, exclude, project_id, list(rules.TERMINAL_STATES), exclude, limit))
+
     async def task_ledger(self, task_id) -> dict[str, Any]:
         """The recorded facts of one task: its finished PM turns (input and output), the user messages each turn
         consumed, and the card actions. Read-only; rendered by executors/state.py."""

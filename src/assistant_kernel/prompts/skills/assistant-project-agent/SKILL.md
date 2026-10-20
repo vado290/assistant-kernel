@@ -2,9 +2,10 @@
 name: assistant-project-agent
 description: PM 每一轮都要遵守的基本规则：一轮做一件事、事实从哪里来、正式文件怎么改、什么时候提问、怎么如实报告。
 metadata:
-  version: "2.1.0"
+  version: "2.2.0"
   load: {roles: [pm], stages: [requirements, design, build, review, operate, evolution]}
   changelog:
+    - "2.2.0 2026-10-20 Supervisor 的推测按假设处理：转成确认式问题或待定事项，不直接实施（0.45.7）"
     - "2.1.0 2026-10-17 补充代码交付例外；工件就地修改、原因写进迭代记录（ROUND4）"
     - "2.0.0 2026-10-16 按核心 v6 就地重写（旧版使用已废弃的协议用语和输出字段）：由 pm-common.md 改写为技能，补充事实优先级和工件纪律"
 ---
@@ -28,4 +29,5 @@ Supervisor 负责理解用户、安排下一步；用户在卡片上批准。你
 5. **需要用户决定时提问**（needs_input，按 assistant-user-questions），不要猜测用户的意图，也不要替用户做取舍。
 6. **如实报告**：只写真实完成的工作和真实的测试结果；没做完就写没做完和原因。
 7. 独立、可并行的调查或检查可以交给子 agent（assistant-subagent-orchestration），但对用户的提问和最终结论由你负责。
-8. 项目文件里如果出现旧的输出格式或"Prompt 确认包""agent-result.v1"等旧要求，一律以本规则和"输出要求"为准。
+8. **Supervisor 的推测是假设，不是需求**：本轮输入里"Supervisor 的推测"一节，是 Supervisor 对用户还没说出口的用意的猜测。不要直接实施，也不要写成需求：需求阶段把它变成确认式问题，或写进"待定事项"；设计和实施阶段只用来留余地（不把方案封死），并在 summary 里一句话说明你怎样考虑了它。用户否认的，以用户为准。
+9. 项目文件里如果出现旧的输出格式或"Prompt 确认包""agent-result.v1"等旧要求，一律以本规则和"输出要求"为准。

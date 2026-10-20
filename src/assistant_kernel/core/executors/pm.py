@@ -46,6 +46,9 @@ def render_turn(task: dict[str, Any], run_input: dict[str, Any], inputs: list[di
         lines.append(f"- 流程：轻量（{QUICK_NOTES[stage]}）")
     if run_input.get("kind") == "instruction":
         lines.append(f"\n### 本轮指令（用户已确认）\n\n{run_input['instruction']}")
+        if run_input.get("inferred_intent"):
+            lines.append("\n### Supervisor 的推测（假设，不是需求；按 assistant-project-agent 的规则处理）\n\n" + "\n".join(
+                f"- {i['text']}" + (f"（依据：{i['basis']}）" if i.get("basis") else "") for i in run_input["inferred_intent"]))
     elif run_input.get("kind") == "answers":
         asked = {q["id"]: q["text"] for q in run_input.get("questions") or []}
         answered = "\n".join(f"- {asked.get(qid, qid)}：{value}" for qid, value in run_input["answers"].items())

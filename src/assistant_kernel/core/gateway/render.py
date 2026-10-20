@@ -81,6 +81,9 @@ def render_item(item: dict[str, Any]) -> dict[str, Any]:
         if content.get("approve"):
             names = "、".join(APPROVAL_NAMES.get(a, a) for a in content["approve"])
             lines.append(f"⚠ 点「执行」即同时批准：{names}")
+        if content.get("inferred_intent"):
+            lines.append("\n**我的推测（未经你确认；不对就点「修改」告诉我）**\n" + "\n".join(
+                f"- {i['text']}" + (f"（依据：{i['basis']}）" if i.get("basis") else "") for i in content["inferred_intent"]))
         lines.append(f"\n**给 PM 的指令**\n{content['instruction']}")
         buttons = [button(item_id, a) for a in ("execute", "revise", "stop")]
         text, attachment = _fit("\n".join(line for line in lines if line))

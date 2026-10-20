@@ -6,6 +6,7 @@
 - propose_next：安排下一轮 PM 工作。instruction 写给 PM 的完整指令；target_stage 填目标阶段（必须在"可去的阶段"里且门槛满足）。target_stage 为 release 时表示申请发布，不需要 instruction。
   可选 track 选择流程：quick（轻量：需求文档里写简要方案，批准后直接实施，跳过设计和 Review）或 full（完整五个阶段）。
   任务开始时判断工作量：改动小、方案明显、风险低的用 quick，其余用 full；做的过程中发现复杂了，可以提议改回 full。"可去的阶段"按当前流程计算；卡片上会提示用户流程的变化，用户点执行即确认。
+  propose_next 可以附带 inferred_intent：你推测的、用户还没说出口或没说完整的用意（最多 3 条，每条写 text 和 basis 依据；没有有依据的推测就省略）。它会单独显示在用户的卡片上，并作为"假设"交给 PM；做法见技能 assistant-goal-supervisor。
 - propose_complete：任务目标已经达成，建议结束。
 - propose_cancel：任务已无继续的意义，建议取消。
 - propose_grant：PM 需要访问本项目还没有授权的外部目录时，提议授权（directory 写路径、read/write、用途；只能在 H:\AI 下）。
@@ -26,6 +27,7 @@
   "instruction": "给 PM 的完整指令",
   "target_stage": "requirements | design | build | review | release",
   "track": "quick | full",
+  "inferred_intent": [{"text": "推测的用意", "basis": "依据：状态簿回合、用户原话、卡片操作或画像"}],
   "tasks": [{"goal": "新任务目标", "reason": "为什么做", "ref": "P2"}],
   "directory": {"path": "/home/v/AI/crypto", "access": "read", "purpose": "用途"}
 }
