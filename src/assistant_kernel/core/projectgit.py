@@ -37,7 +37,18 @@ def gh_config_dir() -> str:
 
 
 def owner() -> str:
-    return os.environ.get("CORE_GITHUB_OWNER") or "vado290"
+    """The GitHub account the repositories belong to: CORE_GITHUB_OWNER, else the account `gh` is logged in as
+    (anyone may install the public kernel project; its repositories go to their own account, never a fixed one)."""
+    configured = os.environ.get("CORE_GITHUB_OWNER")
+    if configured:
+        return configured
+    try:
+        login = run("gh", "api", "user", "--jq", ".login", cwd=Path.cwd(), timeout=60)
+    except (GitError, OSError, subprocess.TimeoutExpired) as exc:
+        raise GitError(f"不知道推送到哪个 GitHub 账号（gh 未登录？）：{exc}") from exc
+    if not login:
+        raise GitError("gh 没有返回登录的 GitHub 账号")
+    return login
 
 
 def _env() -> dict[str, str]:
@@ -84,9 +95,25 @@ def commit_all(path: Path, message: str) -> str | None:
     return git("rev-parse", "HEAD", cwd=path)
 
 
+def ignored(path: Path, paths: list[str]) -> set[str]:
+    """Which of `paths` the repository ignores (e.g. the personal files of the public kernel project)."""
+    if not paths:
+        return set()
+    done = subprocess.run(["git", "check-ignore", "--", *paths], cwd=str(path), capture_output=True, text=True,
+                          timeout=60, env=_env())
+    if done.returncode not in (0, 1):   # 1: none of them is ignored
+        raise GitError(f"git check-ignore 失败：{(done.stderr or done.stdout).strip()[-500:]}")
+    return {line.strip() for line in done.stdout.splitlines() if line.strip()}
+
+
 def commit_paths(path: Path, paths: list[str], message: str) -> str | None:
-    """Commit only what changed under `paths` (other pending edits stay uncommitted); None when nothing did."""
+    """Commit only what changed under `paths` (other pending edits stay uncommitted); None when nothing did.
+    Ignored paths are left out: naming one to `git add` would fail the whole commit."""
     if not is_repo(path):
+        return None
+    skip = ignored(path, paths)
+    paths = [p for p in paths if p not in skip]
+    if not paths:
         return None
     git("add", "-A", "--", *paths, cwd=path)
     if not git("diff", "--cached", "--name-only", "--", *paths, cwd=path):
@@ -116,7 +143,8 @@ def remote_name(project_id: str, key: str | None = None) -> str:
 def ensure_remote(path: Path, name: str) -> str:
     """`origin` → https://github.com/<owner>/<name>.git, creating the private repository when it does not exist.
     A different existing origin is kept as `legacy-origin`. Needs a `gh auth login` in GH_CONFIG_DIR."""
-    url = f"https://github.com/{owner()}/{name}.git"
+    account = owner()
+    url = f"https://github.com/{account}/{name}.git"
     remotes = git("remote", cwd=path).split()
     if "origin" in remotes:
         if git("remote", "get-url", "origin", cwd=path) == url:
@@ -126,9 +154,9 @@ def ensure_remote(path: Path, name: str) -> str:
         else:
             git("remote", "remove", "origin", cwd=path)
     try:
-        run("gh", "repo", "view", f"{owner()}/{name}", "--json", "name", cwd=path, timeout=60)
+        run("gh", "repo", "view", f"{account}/{name}", "--json", "name", cwd=path, timeout=60)
     except GitError:
-        run("gh", "repo", "create", f"{owner()}/{name}", "--private", cwd=path, timeout=60)
+        run("gh", "repo", "create", f"{account}/{name}", "--private", cwd=path, timeout=60)
     git("remote", "add", "origin", url, cwd=path)
     return url
 

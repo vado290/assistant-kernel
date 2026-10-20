@@ -133,9 +133,20 @@ def project_map(settings, project_id: str) -> tuple[str, str]:
         return shown, f"（地图无法读取：{exc}；实施时按 assistant-task-continuity 的格式修正）"
 
 
+BACKGROUND_TITLE = "背景信息存档"
+
+
 def charter(settings, project_id: str) -> str:
-    """The project charter (knowledge/charter.md); empty when the project has none."""
-    return knowledge_text(settings, project_id, "charter.md")
+    """The project charter as every agent reads it: knowledge/charter.md followed by its background archive.
+    Since 0.45.6 the archive is its own file, knowledge/background.md (Kernel appends to it), so the charter file holds
+    only the project's definition and can be shared; readers still find the archive as the charter's section.
+    Empty when the project has neither."""
+    text = knowledge_text(settings, project_id, "charter.md")
+    background = knowledge_text(settings, project_id, "background.md")
+    if background:
+        body = background.split("\n", 1)[1].strip() if background.startswith("# ") else background   # drop its title
+        text = (text + "\n\n" if text else "") + f"## {BACKGROUND_TITLE}（Kernel 追加，knowledge/background.md）\n\n{body}"
+    return text
 
 
 CATALOG_SECTIONS = ("项目用途", "范围", "路由信息")

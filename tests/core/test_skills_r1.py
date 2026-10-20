@@ -82,16 +82,17 @@ def skills_json(value) -> str:
     return json.dumps(value, default=str)
 
 
-async def test_approved_background_is_archived_into_the_charter_once(kernel, kernel_settings, project_files):
+async def test_approved_background_is_archived_into_background_md_once(kernel, kernel_settings, project_files):
     charter = project_files / "knowledge" / "charter.md"
     charter.parent.mkdir(parents=True, exist_ok=True)
-    charter.write_text("# 章程\n\n## 9 背景信息存档\n（需求文档获批时由 Kernel 追加）\n", "utf-8")
+    charter.write_text("# 章程\n\n## 1 项目用途\n日报\n", "utf-8")
     await _approved_requirements(kernel, kernel_settings,
                                  "# 需求\n\n## 2 目标\n日报\n\n## 10 背景信息存档\n- 公司做连锁零售（用户 2026-10-16）\n")
     assert (await sync_vaults(kernel, kernel_settings))["archived"] == 1
     assert (await sync_vaults(kernel, kernel_settings))["archived"] == 0
-    text = charter.read_text("utf-8")
-    assert text.count("公司做连锁零售") == 1 and "需求文档获批时" not in text and "（任务 " in text
+    text = (project_files / "knowledge" / "background.md").read_text("utf-8")
+    assert text.count("公司做连锁零售") == 1 and "（任务 " in text and text.startswith("# 背景信息存档")
+    assert charter.read_text("utf-8") == "# 章程\n\n## 1 项目用途\n日报\n"            # the charter file is left alone
 
 
 async def test_shared_update_card_then_write(kernel, sim, kernel_settings, shared):

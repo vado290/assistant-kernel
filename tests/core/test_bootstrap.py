@@ -119,7 +119,8 @@ async def test_project_is_created_from_the_approved_charter(kernel, sim, dispatc
     assert "变更记录" not in charter                                           # reasons live in the stream
     first = (await kernel.iterations("sales-report"))[0]
     assert first["kind"] == "bootstrap" and first["significance"] == "major" and "销售日报" in first["title"]
-    assert "20 家门店" in skills.section_text(charter, "背景信息存档")
+    assert skills.section_text(charter, "背景信息存档") == ""                     # the charter file holds the definition
+    assert "20 家门店" in (vault / "knowledge" / "background.md").read_text("utf-8")   # the archive its own file (0.45.6)
     config = yaml.safe_load((vault / "project.yaml").read_text("utf-8"))
     assert config["delivery"] == "vault-files" and config["capabilities"] == [] and config["created_by"] == "kernel-core-bootstrap"
     assert "日报数字必须注明数据来源" in (vault / "agents" / "pm" / "role.md").read_text("utf-8")

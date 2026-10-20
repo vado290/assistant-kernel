@@ -2,12 +2,13 @@
 name: assistant-requirements
 description: 需求阶段的工作方法：先摸清用户所在组织、行业和项目现状，再分轮用多问题卡片收集和澄清需求、化解矛盾、补充用户没想到的需求，最后提交需求文档并存档背景信息。
 metadata:
-  version: "3.2.2"
+  version: "3.2.3"
   load: {roles: [pm], stages: [requirements]}
   io:
     reads: [charter, user_profile, domain_brief, shared_context, state_ledger, user_answers]
     writes: [task_contract, working_notes]
   changelog:
+    - "3.2.3 2026-10-20 背景信息存档追加到 knowledge/background.md，不再写进章程文件（0.45.6）"
     - "3.2.2 2026-10-19 按标题引用章程各节（各项目章程的节号不同）；画像观察在任务未获批结束时也会存档（记忆机制改进，0.45.5）"
     - "3.2.1 2026-10-17 增加 io 元数据（读写哪些工件），用于检查技能协作断链（ROUND4）"
     - "3.2.0 2026-10-16 细化轮增加'运行要求'（ROUND3 S3）"
@@ -65,7 +66,7 @@ domain_brief；你核对后，从其中的候选问题库挑选第 1 轮问题�
 - outcome = completed，document.kind = task_contract，章节严格按 assistant-task-continuity。
 - **第 10 节"背景信息存档"必写**：本次收集到的组织、行业、项目事实，每条带来源和日期；其中对其他项目也成立的事实（例如公司情况、
   部署环境）注明"公共"，kernel 复盘时会据此提议更新公共背景。需求文档获批后，Kernel 会把这一节
-  原样追加到项目章程的"背景信息存档"，以后所有任务都会读到，所以要写成脱离本任务也能看懂的事实陈述；没有新信息就写"无"。
+  原样追加到项目的 knowledge/background.md（每轮随章程一起提供），以后所有任务都会读到，所以要写成脱离本任务也能看懂的事实陈述；没有新信息就写"无"。
 - **"用户画像观察"一节必写**：本任务中观察到的、与协作方式有关的用户特点（按 assistant-user-insight 的格式），
   获批后 Kernel 追加到项目的用户画像（任务没走到获批就结束时也会追加，并注明未获批）；没有新观察就写"无"。
 - 调查类工作（行业资料、竞品、现有系统盘点）可以交给子 agent 并行完成（见 assistant-subagent-orchestration），

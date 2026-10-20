@@ -32,6 +32,7 @@ def fill(text: str, values: dict[str, str]) -> str:
 
 # Sections of the draft that do not belong in the charter (change reasons live in core.iterations, ROUND4).
 CHARTER_ONLY_IN_TASK = ("创建参数", "用户画像观察", "修订记录", "变更记录")
+ARCHIVE_TITLE = "背景信息存档"   # collected while creating the project; goes to knowledge/background.md (0.45.6)
 ROLE_SECTIONS = {"pm": "本项目对 PM 的特别要求", "supervisor": "本项目对 Supervisor 的特别要求"}
 
 
@@ -49,18 +50,16 @@ def render_charter(spec: dict[str, Any], draft: str, created: str, task_id: str)
     body = "\n".join(line for line in body.splitlines() if not line.startswith("# ")).strip()   # its own title goes
     header = (f"# {spec['display_name']} · 项目章程\n\n> 项目 ID：`{spec['project_id']}` · 创建于 {created}（任务 {task_id[:8]}）。"
               "PM 和 Supervisor 每一轮都会读本章程；第 1、5、7 节同时用于 kernel 的项目路由。\n"
-              "> 第 1–7 节通过任务修改（修改原因记在项目的变更流水里）；第 8 节由 Kernel 在需求文档获批时自动追加。\n\n")
-    text = header + body + "\n"
-    if not skills.section_bounds(text.splitlines(), "背景信息存档"):
-        text = skills.replace_section(text, "8 背景信息存档", "（需求文档获批时由 Kernel 追加）")
-    return text
+              "> 各节通过任务修改（修改原因记在项目的变更流水里）。背景信息存档在 `knowledge/background.md`，"
+              "由 Kernel 在需求文档获批时追加。\n\n")
+    return header + drop_section(body, ARCHIVE_TITLE).strip() + "\n"
 
 
 def write_project_files(settings, spec: dict[str, Any]) -> list[str]:
     """Create the project's vault from the template and the approved charter. Repeatable: the vault is ours
     (project.yaml is written first and marks it), and everything below is derived deterministically from `spec`."""
     from assistant_kernel.core.executors.common import read_document
-    from assistant_kernel.core.vault_sync import append_profile, write_brief
+    from assistant_kernel.core.vault_sync import append_archive, append_profile, write_brief
     runtime = ProjectRuntimeManager(settings.data_root)
     vault = runtime.describe(spec["project_id"]).vault_root
     existing = vault / "project.yaml"
@@ -98,6 +97,10 @@ def write_project_files(settings, spec: dict[str, Any]) -> list[str]:
         task_id = str(spec.get("task_id") or "")
         (vault / "knowledge" / "charter.md").write_text(render_charter(spec, draft, created, task_id), "utf-8",
                                                         newline="\n")
+        facts = skills.section_text(draft, ARCHIVE_TITLE)
+        if facts.strip() and facts.strip() not in ("无", "无。", "（无）"):
+            append_archive(vault / "knowledge" / "background.md", f"archive:{charter_doc['sha256'][:12]}",
+                           f"{created} · 创建项目时收集", facts)
         observed = skills.section_text(draft, "用户画像观察")
         if observed.strip() and observed.strip() not in ("无", "无。", "（无）"):
             append_profile(vault / "knowledge" / "user-profile.md", spec.get("user_id") or "默认",

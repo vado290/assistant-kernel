@@ -263,6 +263,8 @@ R5.2 完成（0.45.1：git、地图、凭据；五个仓库已建立首次提交
 系统地图第二轮后修复（0.45.4，2026-10-19，`gen-20261019-69b5264` 的 F8、F4、F6）：任务卡片等用户处理时（周度复盘最常见），用户在 PM 频道提出与当前任务无关的新工作，Supervisor 复核时提议新任务，批准后排在当前任务之后、它结束后自动开始（复用咨询的"创建新任务"卡片；技能 assistant-goal-supervisor 6.4.0）；`/version` 的 schema 字段改为最新迁移（含测试）；trading-risk-bot 护栏技能更正旧术语（1.0.1，项目自己的副本）。
 记忆机制改进（0.45.5，2026-10-19，用户逐项确认）：任务未获批结束时也保存需求文档的用户画像观察（背景事实不存）；Supervisor 在咨询和复核用户补充时用 `profile_observations` 记下用户明说的协作偏好与纠正，Kernel 写入画像并告知用户；Supervisor 的 prompt 增加任务状态簿，分诊增加用户画像；其他项目标“公共”的背景事实由 Kernel 列成候选，进入 kernel 的复盘材料和咨询提示；画像、存档、行业速写和公共背景的自动写入各自单独提交 git；技能 assistant-user-insight 1.1.0、assistant-goal-supervisor 6.5.0、assistant-requirements 3.2.2、assistant-domain-research 1.0.2、assistant-shared-context 1.1.0、assistant-evolution-review 2.1.0；trading 的旧记忆文件 interaction-memory.jsonl 迁移后归档。
 
+kernel 项目公开（0.45.6，2026-10-20，用户确认）：kernel 项目是所有用户都需要的默认项目，推送到公开仓库；每个安装各自的内容不进它的 git（`.gitignore`：archive/、knowledge/shared/、background.md、user-profile.md、domain-brief.md、knowledge/archive/，像 runtime/credentials.json 一样由各安装自己生成），历史从一个只含公开内容的提交重新开始（旧历史备份为 bundle）。为此：章程的“背景信息存档”改存 `knowledge/background.md`（所有项目；Agent 读到的章程仍在末尾带这一节），章程文件只放项目定义；提交时跳过被忽略的路径（否则整个提交失败）；kernel 项目缺少的公共背景文件从 `core/shared_template` 补齐；推送的 GitHub 账号取 CORE_GITHUB_OWNER 或 gh 当前登录的账号（不再写死）；`core.projects.settings.git_push = false` 的项目（trading-risk-bot：私密，不对外）只在本地提交、不推送；kernel 项目的角色写明“本项目公开，具体事实写进公共背景或背景存档”。技能 assistant-task-continuity 2.7.0、assistant-requirements 3.2.3；迁移脚本 scripts/r0456_migrate.py。
+
 ## 12. 风险与对策
 
 - **Codex 行为假设**：R5.0 先核实，不符时调整 §5.3 的做法。

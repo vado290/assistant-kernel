@@ -4,13 +4,15 @@ The state machine only changes the database. Whatever must also land in a vault 
 on the dispatcher's maintenance tick. Every step is idempotent: the file is checked for its marker
 before writing, and a task event records that the step is done.
 
-- background archive: an approved requirements document's "背景信息存档" goes into the charter, its
+- background archive: an approved requirements document's "背景信息存档" goes into knowledge/background.md (kept
+  apart from the charter since 0.45.6, so a charter holds only the project's definition and can be public), its
   "用户画像观察" into knowledge/user-profile.md, and the task's domain brief into knowledge/domain-brief.md;
   a task that ends without approval still gives its "用户画像观察" (marked as such; its facts were never confirmed);
 - profile observations Supervisor noted in a consultation or a card review go into knowledge/user-profile.md;
 - each such write is committed on its own, naming its source (system map memory review, 0.45.5);
 - (the iteration log moved to the core.iterations table in ROUND4; changes/iterations.md is no longer written)
-- shared context: an approved update is written into the kernel's knowledge/shared file.
+- shared context: an approved update is written into the kernel's knowledge/shared file; a missing shared file
+  starts from the template (a new installation of the public kernel project).
 """
 from __future__ import annotations
 
@@ -28,6 +30,9 @@ from assistant_kernel.storage import ProjectRuntimeManager
 
 log = logging.getLogger(__name__)
 ARCHIVE = "背景信息存档"
+BACKGROUND = "background.md"
+BACKGROUND_HEADER = ("# 背景信息存档\n\n本项目积累的组织、行业与项目事实。Kernel 在需求文档获批时追加其\"背景信息存档\"一节，"
+                     "每条注明日期和任务；读的时候以最新条目为准。\n")
 PROFILE_SECTION = "用户画像观察"
 PROFILE_HEADER = ("# 用户画像\n\n每位用户一节。Kernel 在需求文档获批时追加其中的\"用户画像观察\"；周度复盘可以提议整理。"
                   "标 [推断] 的内容未经用户确认，用户的纠正优先。\n")
@@ -46,7 +51,7 @@ def _today() -> str:
 async def sync_vaults(kernel, settings) -> dict[str, int]:
     done = {}
     for name, step in (("archived", _archive_backgrounds), ("unapproved", _archive_unapproved),
-                       ("profile", _apply_profile_observations), ("shared", _apply_shared),
+                       ("profile", _apply_profile_observations), ("seed_shared", _seed_shared), ("shared", _apply_shared),
                        ("worktrees", _remove_worktrees), ("templates", _sync_templates), ("push", _push_repositories)):
         try:
             done[name] = await step(kernel, settings)
@@ -67,21 +72,20 @@ def _commit(vault: Path, paths: list[str], message: str) -> None:
         log.warning("commit of %s in %s failed: %s", present, vault, exc)
 
 
-MEMORY_FILES = ["knowledge/charter.md", "knowledge/user-profile.md", "knowledge/domain-brief.md", "knowledge/archive"]
+MEMORY_FILES = ["knowledge/background.md", "knowledge/user-profile.md", "knowledge/domain-brief.md",
+                "knowledge/archive"]
 
 
-# ------------------------------------------------------------------ background archive → charter
+# ------------------------------------------------------------------ background archive → knowledge/background.md
 
-def append_archive(charter: Path, marker: str, heading: str, body: str) -> bool:
-    """Add one dated entry to the charter's archive section; False when it is already there."""
-    text = charter.read_text("utf-8")
+def append_archive(path: Path, marker: str, heading: str, body: str) -> bool:
+    """Add one dated entry to knowledge/background.md (created on first use); False when it is already there."""
+    text = path.read_text("utf-8") if path.is_file() else BACKGROUND_HEADER
     if marker in text:
         return False
-    current = skills.section_text(text, ARCHIVE)
-    kept = "\n".join(line for line in current.splitlines() if not line.startswith("（需求文档获批时"))
     entry = f"### {heading} <!-- {marker} -->\n\n{body.strip()}"
-    charter.write_text(skills.replace_section(text, ARCHIVE, (kept + "\n\n" + entry).strip()), "utf-8",
-                       newline="\n")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text.rstrip() + "\n\n" + entry + "\n", "utf-8", newline="\n")
     return True
 
 
@@ -113,7 +117,7 @@ def write_brief(path: Path, marker: str, heading: str, body: str) -> bool:
 
 
 async def _archive_backgrounds(kernel, settings) -> int:
-    """On requirements approval: background → charter, user-profile observations → user-profile.md,
+    """On requirements approval: background → knowledge/background.md, user-profile observations → user-profile.md,
     the task's domain brief → knowledge/domain-brief.md."""
     from assistant_kernel.core.executors.common import read_document
     async with kernel.db.tx() as c:
@@ -132,11 +136,11 @@ async def _archive_backgrounds(kernel, settings) -> int:
         markdown = await asyncio.to_thread(read_document, settings, row["project_id"], row["contract"])
         body = skills.section_text(markdown, ARCHIVE)
         knowledge = _vault(settings, row["project_id"]) / "knowledge"
-        charter = knowledge / "charter.md"
         heading = f"{_today()} · {row['goal'][:40]}（任务 {str(row['task_id'])[:8]}）"
         written = False
-        if body.strip() not in EMPTY and charter.is_file():
-            written = await asyncio.to_thread(append_archive, charter, f"archive:{sha[:12]}", heading, body)
+        if body.strip() not in EMPTY:
+            written = await asyncio.to_thread(append_archive, knowledge / BACKGROUND, f"archive:{sha[:12]}", heading,
+                                              body)
         observed = skills.section_text(markdown, PROFILE_SECTION)
         profiled = False
         if observed.strip() not in EMPTY:
@@ -232,6 +236,28 @@ def write_shared(data_root: Path, update: dict[str, Any]) -> None:
     path.write_text(text, "utf-8", newline="\n")
 
 
+SHARED_TEMPLATE = Path(__file__).parent / "shared_template"
+
+
+def seed_shared(data_root: Path) -> list[str]:
+    """Shared files the kernel project lacks, copied from the template; existing files are never touched.
+    The shared files are personal to an installation, so the public kernel project does not carry them."""
+    if not (data_root / "vaults" / skills.SHARED_CONTEXT_HOME).is_dir():
+        return []
+    added = []
+    for name in skills.SHARED_FILES:
+        target, source = skills.shared_path(data_root, name), SHARED_TEMPLATE / name
+        if not target.exists() and source.is_file():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(source.read_text("utf-8"), "utf-8", newline="\n")
+            added.append(name)
+    return added
+
+
+async def _seed_shared(kernel, settings) -> int:
+    return len(await asyncio.to_thread(seed_shared, settings.data_root))
+
+
 async def _apply_shared(kernel, settings) -> int:
     async with kernel.db.tx() as c:
         rows = await all_rows(c, """
@@ -280,13 +306,19 @@ async def _remove_worktrees(kernel, settings) -> int:
 # ------------------------------------------------------------------ project history → GitHub (ROUND5 D13)
 
 async def _push_repositories(kernel, settings) -> int:
-    """Push committed history of each project folder and its writable external folders to their private GitHub
-    repositories. A failure (e.g. no `gh auth login` yet) is said once a day and retried at most hourly."""
+    """Push committed history of each project folder and its writable external folders to their GitHub
+    repositories. A failure (e.g. no `gh auth login` yet) is said once a day and retried at most hourly.
+    A project with settings `git_push: false` (a private one, e.g. trading) is never pushed; it still commits."""
     import subprocess
     from assistant_kernel.core import projectgit
     from assistant_kernel.core.db import one
     pushed = 0
     for project_id in await kernel.active_projects():
+        async with kernel.db.tx() as c:
+            setting = await one(c, "SELECT settings->>'git_push' AS push FROM core.projects WHERE project_id=%s",
+                                (project_id,))
+        if (setting or {}).get("push") == "false":
+            continue
         async with kernel.db.tx() as c:
             recent = await one(c, """SELECT bool_or(created_at > now() - interval '1 hour') AS waiting,
                                             bool_or((payload->>'notified')::boolean) AS told
