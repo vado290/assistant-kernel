@@ -1,6 +1,9 @@
-# Assistant Kernel
+# Super Assistant
 
 English · [中文](README.zh-CN.md)
+
+Internally the system is called the **Assistant Kernel** (Python package `assistant_kernel`); this repository is
+its source.
 
 A document-driven personal assistant. You talk to each project's **PM** and **Supervisor** in Discord; the
 Kernel runs short `codex exec` turns for them, keeps all state in PostgreSQL, and keeps every project's files in
@@ -41,7 +44,7 @@ Every project is a folder `assistant-data/vaults/<project>/`:
 | `runs/` | per-task working files — never in git |
 
 The default project `kernel` (maintaining this Kernel, creating and routing projects, the shared background) is
-published on its own as `project-kernel`; see its README.
+published on its own as [project-kernel](https://github.com/vado290/project-kernel); see its README.
 
 ## Sensitive data: what is stored where, and who can see it
 

@@ -1,6 +1,8 @@
-# Assistant Kernel
+# Super Assistant（超级助理）
 
 [English](README.md) · 中文
+
+系统内部的名字是 **Assistant Kernel**（Python 包名 `assistant_kernel`），本仓库就是它的源码。
 
 一个以文档驱动的个人助理。你在 Discord 里和每个项目的 **PM**、**Supervisor** 对话；Kernel 替它们运行一次次简短的
 `codex exec` 回合，所有状态都保存在 PostgreSQL 里，每个项目的文件放在各自的文件夹，并有各自的 git 历史。
@@ -36,7 +38,7 @@
 | `runtime/` | Kernel 内部数据，包括项目的凭据库——从不进 git |
 | `runs/` | 各任务的工作文件——从不进 git |
 
-默认项目 `kernel`（维护本 Kernel、创建和路由项目、公共背景）单独发布为 `project-kernel`，说明见它的 README。
+默认项目 `kernel`（维护本 Kernel、创建和路由项目、公共背景）单独发布为 [project-kernel](https://github.com/vado290/project-kernel)，说明见它的 README。
 
 ## 敏感数据：存在哪里、谁能看到
 
