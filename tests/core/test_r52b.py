@@ -105,7 +105,7 @@ def test_rollout_gives_new_skills_refreshes_unedited_and_respects_removals(tmp_p
     assert skills.offered(vault)["kernel_version"] == "9.9.10"
 
 
-async def test_existing_rollout_does_not_bypass_adoption_policy(kernel, kernel_settings, project_files):
+async def test_rollout_runs_once_per_version_and_commits_only_skills(kernel, kernel_settings, project_files):
     await kernel.ensure_project("p1")
     shutil_target = skills.agent_skill_dir(project_files, "pm") / "assistant-credentials"
     import shutil
@@ -113,10 +113,11 @@ async def test_existing_rollout_does_not_bypass_adoption_policy(kernel, kernel_s
     projectgit.ensure_repo(project_files)
     projectgit.commit_all(project_files, "start")
     (project_files / "notes.md").write_text("an unrelated edit", "utf-8")
-    assert await vault_sync._sync_templates(kernel, kernel_settings) == 0
-    assert not shutil_target.exists() and log(project_files)[0] == "start"
+    assert await vault_sync._sync_templates(kernel, kernel_settings) >= 1
+    assert shutil_target.exists() and log(project_files)[0].startswith("同步技能模板")
     assert "notes.md" in projectgit.git("status", "--porcelain", cwd=project_files)   # not swept into that commit
-    assert await vault_sync._sync_templates(kernel, kernel_settings) == 0          # disabled until exact policy authorization
+    assert await vault_sync._sync_templates(kernel, kernel_settings) == 0          # same Kernel version: once
+    # ROUND5 D24 restored in 0.45.11: the per-version rollout runs alongside the (disabled) adoption policy path.
 
 
 def test_release_commits_name_the_task_and_carry_external_changes(tmp_path):

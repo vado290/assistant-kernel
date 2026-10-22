@@ -184,8 +184,9 @@ async def close(c, task, state: str, reason: str, published_files: list[str] | N
 async def insert_iteration(c, project_id: str, task_id, *, kind: str, title: str, reason: str, source: str = "user",
                            source_ref: str | None = None, changes: list | None = None, significance: str = "minor",
                            facts: dict | None = None, outcome: str = "", complete: bool = True,
-                           **texts: str) -> dict[str, Any] | None:
-    """One row of the project's change stream; a task gets at most one row of each kind."""
+                           created_at: str | None = None, **texts: str) -> dict[str, Any] | None:
+    """One row of the project's change stream; a task gets at most one row of each kind. `created_at` dates a row
+    imported from history (a commit's time) instead of now."""
     changes = changes or []
     files = list((facts or {}).get("files") or [])
     row = {"title": title[:200], "reason": reason, "changes": changes,
@@ -194,12 +195,13 @@ async def insert_iteration(c, project_id: str, task_id, *, kind: str, title: str
     return await one(
         c, """INSERT INTO core.iterations(project_id, task_id, kind, title, source, source_ref, reason, changes,
                                           artifacts, significance, verification, expected_effect, measure, followups,
-                                          outcome, facts, complete, search_text)
-              VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                          outcome, facts, complete, search_text, created_at)
+              VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                      COALESCE(%s::timestamptz, now()))
               ON CONFLICT (task_id, kind) WHERE task_id IS NOT NULL DO NOTHING RETURNING *""",
         (project_id, task_id, kind, row["title"], source, source_ref, reason, Jsonb(changes), row["artifacts"],
          row["significance"], *(texts.get(k, "") for k in ("verification", "expected_effect", "measure", "followups")),
-         outcome, Jsonb(facts or {}), complete, iterlog.search_text(row)))
+         outcome, Jsonb(facts or {}), complete, iterlog.search_text(row), created_at))
 
 
 async def grant_directory(c, project_id: str, directory: dict[str, str], *, reason: str, source: str = "user",

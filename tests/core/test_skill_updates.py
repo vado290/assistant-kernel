@@ -13,7 +13,7 @@ import pytest
 import yaml
 from psycopg.types.json import Jsonb
 
-from assistant_kernel.core import skill_updates as su, skills, vault_sync
+from assistant_kernel.core import skill_updates as su, skills
 from .sim import next_step
 
 
@@ -175,7 +175,7 @@ async def test_disabled_by_default_and_read_only_preview(kernel, release):
     plan, _ = su.preview(kernel.settings, 'p1', release)
     assert not plan['problems']
     assert await su.list_updates(kernel, 'p1') == []
-    assert await vault_sync._sync_templates(kernel, kernel.settings) == 0
+    assert await su.maintain(kernel) == 0                                     # adoption: nothing without a policy
     row = await su.prepare(kernel, 'p1', release)
     with pytest.raises(PermissionError):
         await su.execute(kernel, row['update_id'])
@@ -541,7 +541,8 @@ async def test_directory_contract_first_adoption_in_isolated_projects(kernel, ke
         assert (await su.execute(kernel, row['update_id']))['status'] == 'applied'
         for stage in ('requirements','design','build','review','evolution'):
             selection = skills.select(root, kernel_settings.data_root, role='pm', stage=stage)
-            assert any(s.name == 'assistant-task-continuity' and s.version == '2.12.0' for s in selection.always)
+            current = skills.parse(skills.TEMPLATE_SKILLS / 'assistant-task-continuity' / 'SKILL.md').version
+            assert any(s.name == 'assistant-task-continuity' and s.version == current for s in selection.always)
         assert (root / 'knowledge/charter.md').read_text() == 'Existing charter, no directory section'
         assert (root / 'data/live.csv').read_bytes() == b'preserve,42\n' and not (root / 'artifacts').exists()
         assert (await su.execute(kernel, row['update_id'], rollback=True))['status'] == 'rolled_back'

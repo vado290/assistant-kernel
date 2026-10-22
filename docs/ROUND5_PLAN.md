@@ -31,7 +31,7 @@
 | D21 | 每个运行中的功能都有自己的日志，格式统一，Kernel 每日汇总，复盘技能收集分析 |
 | D22 | 管理分两层：开发、发布按项目；运行（启停、心跳、告警、日志）按功能 |
 | D23 | 任务边界：Supervisor 的"完成"判断标准写进技能；等待用户超过 7 天无回应的任务自动结束 |
-| D24 | Kernel 每个版本自动给各项目补齐新增的模板技能、刷新项目没改过的副本；项目删除过的不再加回，改过的留给复盘决定（2026-10-19，R5.2 修复） |
+| D24 | Kernel 每个版本自动给各项目补齐新增的模板技能、刷新项目没改过的副本；项目删除过的不再加回，改过的留给复盘决定（2026-10-19，R5.2 修复；0.45.8 一度改为只按采用批次更新，0.45.11 按用户决定恢复） |
 
 ## 2. 已核实的事实
 
@@ -265,6 +265,8 @@ R5.2 完成（0.45.1：git、地图、凭据；五个仓库已建立首次提交
 
 kernel 项目公开（0.45.6，2026-10-20，用户确认）：kernel 项目是所有用户都需要的默认项目，推送到公开仓库；每个安装各自的内容不进它的 git（`.gitignore`：archive/、knowledge/shared/、background.md、user-profile.md、domain-brief.md、knowledge/archive/，像 runtime/credentials.json 一样由各安装自己生成），历史从一个只含公开内容的提交重新开始（旧历史备份为 bundle）。为此：章程的“背景信息存档”改存 `knowledge/background.md`（所有项目；Agent 读到的章程仍在末尾带这一节），章程文件只放项目定义；提交时跳过被忽略的路径（否则整个提交失败）；kernel 项目缺少的公共背景文件从 `core/shared_template` 补齐；推送的 GitHub 账号取 CORE_GITHUB_OWNER 或 gh 当前登录的账号（不再写死）；`core.projects.settings.git_push = false` 的项目（trading-risk-bot：私密，不对外）只在本地提交、不推送；kernel 项目的角色写明“本项目公开，具体事实写进公共背景或背景存档”。技能 assistant-task-continuity 2.7.0、assistant-requirements 3.2.3；迁移脚本 scripts/r0456_migrate.py。
 Supervisor 下一轮指令改进（0.45.7，2026-10-20，用户确认）：propose_next 可附 `inferred_intent`（推测的用意，最多 3 条、每条带依据），单独显示在卡片上、作为"假设"交给 PM、记进状态簿；PM 把推测转成确认式问题或待定事项，不直接实施；推测力度跟随用户画像；Supervisor 的 prompt 增加当前时间与当前用户、项目近况（排队和最近结束的任务及其状态簿、最近 5 条变更、行业速写开头）；状态簿中的指令保留到 1200 字；Supervisor 每轮最多 5 分钟（模板与 `scripts/r0457_supervisor_timeout.py`）；技能 assistant-goal-supervisor 6.6.0、assistant-user-insight 1.2.0、assistant-project-agent 2.2.0、assistant-requirements 3.2.4。
+0.45.8–0.45.10（2026-10-21/22，另一会话）：技能采用批次（`core/skill_updates.py`、迁移 0008、`docs/SKILL_ADOPTION.md`）、Review 基线与发布准入（`docs/REVIEW_STAGE_RELEASE_CHECKLIST.md`）及相应技能更新；已部署但当时未提交，2026-10-22 原样补提交（`075de09`）。其中“版本变化不再刷新副本”与 D24 冲突。
+kernel 职能与地图分析后修复（0.45.11，2026-10-22，用户确认）：恢复 D24（没改过的副本随版本自动刷新，技能采用批次只用于改过的副本等特殊情况、默认关闭），先用 `scripts/r04511_stamp_fingerprints.py` 给已有副本补内容指纹；任务之外的提交（手工、其他工具、Kernel 维护）导入变更流水（`vault_sync._import_commits`，按提交时间、每个提交一次，发布提交不重复）；`deploy.ps1` 要求工作区已提交；kernel 章程按新职能重写；技能 assistant-capability-maintenance 2.6.0、assistant-task-continuity 2.13.0。
 
 ## 12. 风险与对策
 

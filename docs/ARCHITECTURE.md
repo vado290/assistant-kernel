@@ -55,7 +55,7 @@ A project-creation task (`bootstrap`) only drafts its charter; approval creates 
 | `skill_updates.py` | project skill-adoption batches, verified full-directory baselines, guarded writes and recovery; disabled without an approved policy; see SKILL_ADOPTION.md |
 | `gitdelivery.py` | code delivery: worktrees, Kernel commits, tests on the commit, fast-forward publish |
 | `runtime.py` / `jobs.py` | released `jobs.yaml` (vault top level; code delivery: repository root on main) → scheduled jobs and supervisord services of projects |
-| `vault_sync.py` | Kernel's idempotent file writes that follow from state; pushes project history to GitHub |
+| `vault_sync.py` | Kernel's idempotent file writes that follow from state; template rollout per Kernel version (D24); imports commits made outside tasks into the change stream; pushes project history to GitHub |
 | `projectgit.py` | each project folder (and each folder it may write to) is a repository: snapshot before a release, commit after it, private GitHub remote via `gh` |
 | `projectmap.py` | the project map `map.yaml` (one index entry per file; every product Python file listed), checked at validation, `map_lookup` tool |
 | `credentials.py` | the project's credentials `runtime/credentials.json`: look first, ask with a `credential` question, never in the conversation |

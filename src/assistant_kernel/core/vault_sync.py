@@ -53,7 +53,8 @@ async def sync_vaults(kernel, settings) -> dict[str, int]:
     done = {}
     for name, step in (("archived", _archive_backgrounds), ("unapproved", _archive_unapproved),
                        ("profile", _apply_profile_observations), ("seed_shared", _seed_shared), ("shared", _apply_shared),
-                       ("worktrees", _remove_worktrees), ("templates", _sync_templates), ("push", _push_repositories)):
+                       ("worktrees", _remove_worktrees), ("templates", _sync_templates), ("imported", _import_commits),
+                       ("push", _push_repositories)):
         try:
             done[name] = await step(kernel, settings)
         except Exception:   # one broken file must not stop the dispatcher
@@ -345,10 +346,109 @@ async def _push_repositories(kernel, settings) -> int:
     return pushed
 
 
+# ------------------------------------------------------------------ commits made outside tasks → change stream
+
+IMPORT_DAYS, IMPORT_LIMIT, IMPORT_EVERY = 30, 100, 600   # look-back, commits per repository and tick, seconds
+_last_import = 0.0
+
+
+def _commits(path: Path, days: int, limit: int) -> list[dict[str, Any]]:
+    """The repository's commits of the last `days`, oldest first: sha, author, ISO date, subject, body, files."""
+    from assistant_kernel.core import projectgit
+    out = projectgit.git("log", f"--since={days} days ago", f"-n{limit}", "--reverse", "--name-only",
+                         "--format=%x01%H%x02%an%x02%cI%x02%s%x02%b%x03", cwd=path)
+    found = []
+    for block in out.split("\x01")[1:]:   # separators that str.strip() (in projectgit.git) leaves alone
+        head, _, names = block.partition("\x03")
+        sha, author, date, subject, body = (head.split("\x02") + [""] * 5)[:5]
+        found.append({"sha": sha, "author": author, "date": date, "subject": subject.strip(), "body": body.strip(),
+                      "files": [f for f in names.splitlines() if f.strip()]})
+    return found
+
+
+def _repositories(settings, project_id: str, grants: list[dict]) -> list[tuple[Path, str, str]]:
+    """(folder, label, file scheme) of every repository whose history belongs to the project's change stream."""
+    from assistant_kernel.core import gitdelivery, projectgit
+    vault = _vault(settings, project_id)
+    found = [(vault, "project", "workspace://project/")]
+    found += [(path, name[len(project_id) + 1:], f"grant://{name[len(project_id) + 1:]}/")
+              for path, name in projectgit.repositories(vault, project_id, grants)[1:]]
+    code = gitdelivery.config(settings, project_id)
+    if code:
+        found.append((Path(code["repo"]), "code", f"git://{code['main']}/"))
+    return [item for item in found if projectgit.is_repo(item[0])]
+
+
+async def _import_commits(kernel, settings) -> int:
+    """Changes made outside tasks (by hand, by other tools, by Kernel's own upkeep) are part of what changed in a
+    project: each such commit becomes an `imported` row of the change stream, dated by the commit (system map M1).
+    A task's release is recorded by the task itself, so release commits (and, in a code repository, every commit
+    Kernel made for a task) are left out. At most every IMPORT_EVERY seconds; a commit is imported once."""
+    global _last_import
+    from assistant_kernel.core import gitdelivery, machine, projectgit
+    now = asyncio.get_running_loop().time()
+    if _last_import and now - _last_import < IMPORT_EVERY:
+        return 0
+    _last_import = now
+    kernel_names = {identity[1].split("=", 1)[1] for identity in (projectgit.IDENTITY, gitdelivery.IDENTITY)}
+    imported = 0
+    for project_id in await kernel.active_projects():
+        grants = await kernel.grants(project_id)
+        for path, label, scheme in await asyncio.to_thread(_repositories, settings, project_id, grants):
+            try:
+                commits = await asyncio.to_thread(_commits, path, IMPORT_DAYS, IMPORT_LIMIT)
+            except Exception as exc:   # one unreadable repository must not stop the others
+                log.warning("reading the history of %s failed: %s", path, exc)
+                continue
+            by_kernel = lambda c: c["author"] in kernel_names  # noqa: E731
+            wanted = [c for c in commits if not (by_kernel(c) and (label == "code" or c["subject"].startswith("发布：")))]
+            if not wanted:
+                continue
+            refs = {f"git:{label}:{c['sha']}": c for c in wanted}
+            async with kernel.db.tx() as c:
+                rows = await all_rows(c, "SELECT source_ref FROM core.iterations WHERE project_id=%s AND source_ref = ANY(%s)",
+                                      (project_id, list(refs)))
+                for ref in [r for r in refs if r not in {row["source_ref"] for row in rows}]:
+                    commit = refs[ref]
+                    files = [scheme + f for f in commit["files"]]
+                    row = await machine.insert_iteration(
+                        c, project_id, None, kind="imported", source="system" if by_kernel(commit) else "manual",
+                        source_ref=ref, title=commit["subject"] or f"提交 {commit['sha'][:8]}",
+                        reason=f"任务之外的提交（{label} {commit['sha'][:8]}，{commit['author']}）："
+                               + (commit["body"] or commit["subject"] or "（提交说明为空）")[:1200],
+                        changes=[{"type": "file", "target": f, "action": "modify", "note": ""} for f in commit["files"][:30]],
+                        outcome="已提交（导入）", facts={"files": files[:200], "commit": commit["sha"], "repo": label,
+                                                    "author": commit["author"]}, created_at=commit["date"])
+                    imported += bool(row)
+    return imported
+
+
 # ------------------------------------------------------------------ template skills → each project (ROUND5 R5.2 fix)
 
 async def _sync_templates(kernel, settings) -> int:
-    """One guarded adoption path; existing project copies are never refreshed merely by a version bump."""
-    from assistant_kernel.core.skill_updates import maintain
-    return await maintain(kernel)
+    """Once per Kernel version (ROUND5 D24): give every project the template skills new to it and refresh the copies
+    it never edited (skills.sync_templates), committing just the agents' folders. Edited copies stay for the weekly
+    review. Then the operator-approved adoption batches (skill_updates; nothing happens without a policy)."""
+    from assistant_kernel import __version__
+    from assistant_kernel.core import projectgit
+    from assistant_kernel.core.skill_updates import WRITING, list_updates, maintain
+    changed = 0
+    for project_id in await kernel.active_projects():
+        vault = _vault(settings, project_id)
+        if (skills.offered(vault) or {}).get("kernel_version") == __version__:
+            continue
+        if any(row["status"] in WRITING for row in await list_updates(kernel, project_id, 100)):
+            continue   # an adoption batch is writing this project's skills: next tick
+        result = await asyncio.to_thread(skills.sync_templates, vault, skills.project_config(vault)["capabilities"],
+                                         __version__)
+        if result["installed"] or result["refreshed"]:
+            changed += 1
+            try:
+                await asyncio.to_thread(projectgit.commit_paths, vault, ["agents"],
+                                        f"同步技能模板（Kernel {__version__}）")
+            except (projectgit.GitError, OSError) as exc:
+                log.warning("committing synced skills of %s failed: %s", project_id, exc)
+        async with kernel.db.tx() as c:
+            await event(c, project_id, "skills_synced", kernel_version=__version__, **result)
+    return changed + await maintain(kernel)
 

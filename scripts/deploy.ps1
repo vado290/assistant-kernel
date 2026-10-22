@@ -67,6 +67,17 @@ function Wait-Ready($expectedVersion) {
 }
 
 
+# 0. production runs only committed code (system map analysis 2026-10-22, K2): the wheel is built from the
+#    working copy, so uncommitted or untracked files would reach prod without any record. -TestOnly may run anyway.
+if (-not $TestOnly) {
+    $dirty = git -C (Join-Path $PSScriptRoot "..") status --porcelain
+    if ($LASTEXITCODE -ne 0) { throw "git status failed; cannot confirm the source is committed" }
+    if ($dirty) {
+        Write-Host $dirty
+        throw "the working copy has uncommitted changes: commit them first (or use -TestOnly to only run the tests)"
+    }
+}
+
 # 1. build one wheel from the checked-out source
 $version = (Select-String -LiteralPath (Join-Path $PSScriptRoot "..\pyproject.toml") -Pattern '^version = "(.+)"$').Matches[0].Groups[1].Value
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"

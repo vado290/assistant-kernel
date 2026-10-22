@@ -1,6 +1,9 @@
 # Skill adoption operations
 
 This feature is off for every project unless an authorized maintainer configures an exact adoption policy.
+Since 0.45.11 the per-version rollout of ROUND5 D24 runs again: copies a project never edited (content fingerprint
+unchanged) are refreshed automatically. Adoption batches are only for special cases, such as merging a template into
+a copy the project edited, or a whole batch that must be reversible.
 Do not use this document as permission to enable it or deploy. The original task/approval/stage rules remain in force.
 
 ## Ownership and scope
