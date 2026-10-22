@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import pytest
 
+from assistant_kernel.core import rules
 from assistant_kernel.core.dispatch import Dispatcher
 from assistant_kernel.core.executors.delivery import execute_publish, execute_validation
 from assistant_kernel.services.candidate_bundle import CandidateBundleService
@@ -60,6 +61,192 @@ async def test_build_validate_review_publish_writes_the_real_file(kernel, sim, d
     assert (project_files / "docs" / "hello.md").read_text("utf-8") == "# Hello\n"
 
 
+@pytest.mark.parametrize("delete_manifest,lease_loss", [(False, False), (True, False), (False, True)])
+async def test_reconcile_restores_runtime_evidence_without_republishing(
+        kernel, sim, dispatcher, kernel_settings, project_files, delete_manifest, lease_loss, monkeypatch):
+    import hashlib
+    from assistant_kernel.core import jobs, runtime
+    from assistant_kernel.core.db import event
+    manifest = "schema_version: runtime-manifest.v1\njobs:\n  - id: daily\n    type: script\n    entry: scripts/report.py\n    schedule: {kind: cron, expression: '0 9 * * *'}\n"
+    if delete_manifest:
+        (project_files / "scripts").mkdir()
+        (project_files / "scripts/report.py").write_text("print('ok')\n", "utf-8")
+        (project_files / "jobs.yaml").write_text(manifest, "utf-8")
+        async with kernel.db.tx() as c:
+            await event(c, "p1", "runtime_manifest_published", manifest_sha=runtime.manifest_sha(manifest))
+        await jobs.sync_runtime(kernel, kernel_settings)
+    task_id = (await kernel.receive("p1", role="pm", text="runtime publication"))["task_id"]
+    await to_build(kernel, ScriptsAsSim(dispatcher, sim), task_id)
+    files = {"docs/result.md": "result"} if delete_manifest else {"jobs.yaml": manifest, "scripts/report.py": "print('ok')\n"}
+    bundle = write_candidate(kernel_settings, task_id, files=files)
+    if delete_manifest:
+        scopes = WorkspaceScopeService(kernel_settings)
+        scopes.delete_candidate(scopes.resolve("p1", task_id, None, candidate_enabled=True, shared_agreement=True),
+                                "workspace://project/jobs.yaml", hashlib.sha256((project_files / "jobs.yaml").read_bytes()).hexdigest())
+        bundle = CandidateBundleService(kernel_settings).seal("p1", task_id)["bundle_sha256"]
+    dispatcher.scripts.add("pm_turn", pm("ready_for_validation", report=report("implementation_report", "i1", bundle_sha=bundle)))
+    dispatcher.scripts.add("supervisor:evaluate", next_step("review"))
+    await settle(dispatcher)
+    await kernel.act("p1", (await sim.item("p1"))["item_id"], "execute")
+    dispatcher.scripts.add("pm_turn", pm("completed", report=report("review_report", "rv1", verdict="pass", bundle_sha=bundle,
+                                                                  review_baseline=rules.review_baseline(await sim.task(task_id)))))
+    dispatcher.scripts.add("supervisor:evaluate", next_step("release"))
+    await settle(dispatcher)
+    await kernel.act("p1", (await sim.item("p1"))["item_id"], "approve")
+    if lease_loss:
+        import asyncio
+        import json
+        import threading
+        from pathlib import Path
+        started, resume = threading.Event(), threading.Event()
+        original = Path.replace
+        def replace(path, target):
+            value = original(path, target)
+            if Path(target).name == "journal.json" and len(json.loads(Path(target).read_text())["applied_target_uris"]) == 2:
+                started.set()
+                assert resume.wait(30)
+                raise OSError("journal failure after all target writes")
+            return value
+        monkeypatch.setattr(Path, "replace", replace)
+        try:
+            await dispatcher.claim_and_start()
+            for _ in range(1000):
+                if started.is_set(): break
+                await asyncio.sleep(.01)
+            assert started.is_set()
+            async with kernel.db.tx() as c:
+                await c.execute("UPDATE core.runs SET lease_until=now()-interval '1 second' WHERE task_id=%s AND run_type='publish'", (task_id,))
+            assert await kernel.recover_expired() == 1
+            item = await sim.item("p1")
+            assert item["content"]["decision"] == "reconcile"
+            assert (project_files / "jobs.yaml").read_text() == manifest
+            with pytest.raises(ValueError, match="尚未确认停止"):
+                await kernel.act("p1", item["item_id"], "published")
+            with pytest.raises(ValueError, match="尚未确认停止"):
+                await kernel.act("p1", item["item_id"], "failed")
+            with pytest.raises(ValueError, match="尚未确认停止"):
+                await kernel.cancel_task(task_id)
+            assert (await sim.task(task_id))["state"] == "awaiting_user"
+        finally:
+            resume.set()
+            await dispatcher.drain()
+        assert not (project_files / "jobs.yaml").exists()
+        assert not (project_files / "scripts/report.py").exists()
+        assert (await sim.item("p1"))["item_id"] == item["item_id"]
+        with pytest.raises(ValueError, match="终态未确认"):
+            await kernel.act("p1", item["item_id"], "published")
+        await kernel.act("p1", item["item_id"], "failed")
+        assert (await sim.task(task_id))["state"] == "supervising"
+        return
+    async def lost_result(run, ctx):
+        await execute_publish(run, ctx)
+        raise RuntimeError("worker lost result after file effects")
+    dispatcher.executors["publish"] = lost_result
+    await settle(dispatcher)
+    item = await sim.item("p1")
+    assert item["content"]["decision"] == "reconcile"
+    if not delete_manifest:
+        async with kernel.db.tx() as c:
+            published_run = await (await c.execute("SELECT run_id FROM core.runs WHERE task_id=%s AND run_type='publish'", (task_id,))).fetchone()
+        root = project_files / "runs" / str(published_run["run_id"]) / "publication"
+        journal, stopped = root / "journal.json", root / "writer-stopped.json"
+        journal_bytes, stopped_bytes = journal.read_bytes(), stopped.read_bytes()
+        journal.unlink()
+        stopped.unlink()  # legacy task with no positive stop evidence
+        with pytest.raises(ValueError, match="尚未确认停止"):
+            await kernel.act("p1", item["item_id"], "failed")
+        with pytest.raises(ValueError, match="尚未确认停止"):
+            await kernel.cancel_task(task_id)
+        assert await kernel.expire_idle_tasks(days=0) == []
+        stopped.write_bytes(stopped_bytes)  # maintenance confirms this already-returned test worker has stopped
+        with pytest.raises(ValueError, match="尚未核实"):
+            await kernel.act("p1", item["item_id"], "published")
+        journal.write_bytes(journal_bytes)
+    target = project_files / ("docs/result.md" if delete_manifest else "scripts/report.py")
+    expected = target.read_bytes()
+    target.write_bytes(b"unverified external change")
+    with pytest.raises(ValueError, match="尚未核实"):
+        await kernel.act("p1", item["item_id"], "published")
+    assert (await sim.item("p1"))["item_id"] == item["item_id"]
+    target.write_bytes(expected)
+    # Changed mutable candidates must not be re-sealed or re-applied during reconciliation.
+    (project_files / "runs" / task_id / "candidate/manifest.json").write_text("{}", "utf-8")
+    await kernel.act("p1", item["item_id"], "published")
+    assert (await sim.task(task_id))["close_reason"] == "published_after_reconcile"
+    async with kernel.db.tx() as c:
+        rows = list(await (await c.execute("SELECT payload->>'manifest_sha' AS sha FROM core.task_events WHERE task_id=%s AND kind='runtime_manifest_published'", (task_id,))).fetchall())
+    assert rows == [{"sha": None if delete_manifest else runtime.manifest_sha(manifest)}]
+    await jobs.sync_runtime(kernel, kernel_settings)
+    assert bool(await jobs.list_jobs(kernel, "p1")) is not delete_manifest
+    assert target.read_bytes() == expected
+
+
+async def test_interrupted_file_publish_waits_for_rollback(kernel_settings, project_files, monkeypatch):
+    import asyncio
+    import threading
+    import uuid
+    from pathlib import Path
+    from types import SimpleNamespace
+    from assistant_kernel.core.executors.delivery import _publish
+    (project_files / "docs").mkdir()
+    for name in ("one.md", "two.md"):
+        (project_files / "docs" / name).write_text("old", "utf-8")
+    task_id = str(uuid.uuid4())
+    bundle = write_candidate(kernel_settings, task_id, files={"docs/one.md": "new", "docs/two.md": "new"})
+    started, resume = threading.Event(), threading.Event()
+    original = Path.replace
+    def replace(path, target):
+        value = original(path, target)
+        if Path(target) == project_files / "docs/one.md" and str(path).endswith(".tmp") and not started.is_set():
+            started.set()
+            assert resume.wait(10)
+        return value
+    monkeypatch.setattr(Path, "replace", replace)
+    ctx = SimpleNamespace(services={"settings": kernel_settings}, cancel=threading.Event())
+    work = asyncio.create_task(_publish({"project_id": "p1", "task_id": task_id, "run_id": "interrupted", "input": {"bundle_sha": bundle}}, ctx))
+    for _ in range(1000):
+        if started.is_set(): break
+        await asyncio.sleep(.01)
+    assert started.is_set()
+    work.cancel()
+    await asyncio.sleep(.01)
+    assert ctx.cancel.is_set() and not work.done()
+    work.cancel()   # repeated cancellation must not skip the join either
+    await asyncio.sleep(.01)
+    assert not work.done()
+    resume.set()
+    with pytest.raises(asyncio.CancelledError):
+        await work
+    assert all((project_files / "docs" / name).read_text() == "old" for name in ("one.md", "two.md"))
+    import json
+    journal = json.loads((project_files / "runs/interrupted/publication/journal.json").read_text())
+    assert journal["status"] == "rolled_back"
+
+
+@pytest.mark.parametrize("snapshot_failure", [False, True])
+async def test_failure_before_journal_still_records_writer_stop(kernel_settings, project_files, monkeypatch, snapshot_failure):
+    import json
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from assistant_kernel.core import projectgit
+    from assistant_kernel.core.executors import delivery
+    async def fail(*args): raise ValueError("bad candidate before any target write")
+    def snapshot(*args, **kwargs):
+        if snapshot_failure: raise ValueError("bad candidate before any target write")
+        return [], []
+    monkeypatch.setattr(delivery, "_publish", fail)
+    monkeypatch.setattr(projectgit, "commit_release", snapshot)
+    ctx = SimpleNamespace(services={"settings": kernel_settings},
+                          kernel=SimpleNamespace(get_task=AsyncMock(return_value={}), grants=AsyncMock(return_value=[])))
+    run = {"project_id": "p1", "task_id": "t1", "run_id": "r1", "input": {"bundle_sha": "abc"}}
+    with pytest.raises(ValueError, match="bad candidate"):
+        await execute_publish(run, ctx)
+    root = project_files / "runs/r1/publication"
+    assert not (root / "journal.json").exists()
+    assert json.loads((root / "writer-stopped.json").read_text()) == {
+        "project_id": "p1", "publish_run_id": "r1", "bundle_sha": "abc"}
+
+
 async def test_a_project_can_publish_its_charter_role_and_skills(kernel, sim, dispatcher, kernel_settings, project_files):
     """Round 2 / I6: improvements to a project's own charter, roles and skills go through the normal publish."""
     skill = (project_files / "agents/pm/.agents/skills/assistant-operation/SKILL.md").read_text("utf-8")
@@ -84,7 +271,8 @@ async def _publish(kernel, sim, dispatcher, kernel_settings, files):
     assert task["documents"]["validation"]["passed"], task["documents"]["validation"]
     await kernel.act("p1", (await sim.item("p1", task_id))["item_id"], "execute")
 
-    dispatcher.scripts.add("pm_turn", pm("completed", report=report("review_report", "rv1", verdict="pass", bundle_sha=bundle)))
+    dispatcher.scripts.add("pm_turn", pm("completed", report=report("review_report", "rv1", verdict="pass", bundle_sha=bundle,
+                                                                  review_baseline=rules.review_baseline(task))))
     dispatcher.scripts.add("supervisor:evaluate", next_step("release"))
     await settle(dispatcher)
     await kernel.act("p1", (await sim.item("p1", task_id))["item_id"], "approve")

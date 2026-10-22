@@ -110,3 +110,37 @@ async def test_document_tools_edit_only_the_stage_draft(kernel, sim, kernel_sett
         await kernel.cancel_task(task_id)
         stopped = payload(await edit(content="late"))
         assert stopped["ok"] is False and stopped["error_type"] == "PermissionError"
+
+
+async def test_evolution_read_pages_through_scoped_mcp(kernel, kernel_settings, project_files, tmp_path):
+    from psycopg.types.json import Jsonb
+    from assistant_kernel.core import machine
+    task = await kernel.start_evolution("p1")
+    run = await kernel.claim("pages-worker")
+    async with kernel.db.tx() as c:
+        for number in range(4):
+            await machine.insert_iteration(c, "p1", None, kind="task", title=f"effect {number}", reason="r",
+                                           expected_effect="improve", measure="result")
+            await c.execute("""INSERT INTO core.messages(project_id,channel,direction,role,body)
+                VALUES ('p1','api','inbound','pm',%s)""", (Jsonb({"text": f"feedback {number}"}),))
+    snapshot = workspace_snapshot(kernel_settings, "p1", str(task["task_id"]), "pages", candidates=False)
+    tools = ("get_authorized_workspace", "list_iterations", "list_recent_history")
+    env = private_config(kernel_settings, run, task["task_id"], snapshot, tmp_path, tools=tools, stage="operate")
+    server = StdioServerParameters(command=sys.executable, args=["-m", "assistant_kernel.core.tools"], env=env)
+    async with stdio_client(server) as (read, write), ClientSession(read, write) as session:
+        await session.initialize()
+        await session.call_tool("get_authorized_workspace", {})
+        args = {"pending_only": True, "oldest_first": True, "limit": 2}
+        first = payload(await session.call_tool("list_iterations", args))
+        assert first["truncated"] and len(first["references"]) == 2
+        second = payload(await session.call_tool("list_iterations", {**args, "cursor": first["next_cursor"]}))
+        assert second["count"] == 2 and second["next_cursor"] is None
+        assert {r["iteration_id"] for r in first["references"]}.isdisjoint(r["iteration_id"] for r in second["references"])
+        history = payload(await session.call_tool("list_recent_history", {"limit": 2}))
+        older = payload(await session.call_tool("list_recent_history", {"limit": 2, "cursor": history["next_cursor"]}))
+        assert len(older["items"]) == 2 and older["next_cursor"] is None
+        bad = payload(await session.call_tool("list_iterations", {**args, "cursor": history["next_cursor"]}))
+        assert bad["ok"] is False and bad["error_type"] == "ValueError"
+        await kernel.cancel_task(task["task_id"])
+        stopped = payload(await session.call_tool("list_iterations", args))
+        assert stopped["ok"] is False and stopped["error_type"] == "PermissionError"

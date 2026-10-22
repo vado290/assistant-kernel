@@ -194,8 +194,19 @@ def digest(paths: list[Path]) -> str:
 
 
 def body_sha(body: str) -> str:
-    """Short fingerprint of a skill body; a copy whose body still has it was never edited by the project."""
+    """Legacy body-only fingerprint; not sufficient to prove that metadata was never edited."""
     return hashlib.sha256(body.encode()).hexdigest()[:16]
+
+
+def _content_sha(path: Path) -> str:
+    """Fingerprint SKILL.md's body and all YAML metadata except our own installation stamp."""
+    text = path.read_text("utf-8")
+    match = _FRONT.match(text)
+    front = (yaml.safe_load(match.group(1)) if match else None) or {}
+    if isinstance(front.get("metadata"), dict):
+        front["metadata"].pop("template", None)
+    content = yaml.safe_dump(front, allow_unicode=True, sort_keys=True) + "\0" + (match.group(2) if match else text).strip()
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
 def _install(skill: Skill, target: Path) -> None:
@@ -203,7 +214,8 @@ def _install(skill: Skill, target: Path) -> None:
         shutil.rmtree(target)
     shutil.copytree(skill.path.parent, target)
     text = (target / "SKILL.md").read_text("utf-8")
-    stamp = f'  template: {{name: {skill.name}, version: "{skill.version}", sha: "{body_sha(skill.body)}"}}'
+    stamp = (f'  template: {{name: {skill.name}, version: "{skill.version}", sha: "{body_sha(skill.body)}", '
+             f'content_sha: "{_content_sha(target / "SKILL.md")}"}}')
     text = re.sub(r"(\nmetadata:\n)", lambda m: m.group(1) + stamp + NL, text, count=1)
     (target / "SKILL.md").write_text(text, "utf-8", newline="\n")
 
@@ -263,10 +275,11 @@ def template_updates(vault: Path) -> list[dict[str, str]]:
 
 
 def refresh_unmodified(vault: Path, known: dict[str, str] | None = None) -> tuple[list[str], list[str]]:
-    """Bring copies the project never edited up to the current template; returns (refreshed, kept as edited).
+    """Refresh proven-unmodified copies; return refreshed names and conservatively kept names.
 
-    Only for Kernel rollouts: a copy counts as unmodified when its body still matches the fingerprint
-    recorded at install (or one in ``known``, for copies installed before fingerprints were recorded).
+    Only for Kernel rollouts: both body and metadata must match the content fingerprint recorded at install.
+    Legacy copies without that baseline are kept, even if their body matches. ``known`` remains accepted for
+    caller compatibility, but legacy body-only fingerprints cannot authorize replacement.
     """
     templates = {s.name: s for s in template_skills()}
     refreshed, kept = [], []
@@ -274,7 +287,8 @@ def refresh_unmodified(vault: Path, known: dict[str, str] | None = None) -> tupl
         template = templates.get(copy.name)
         if template is None or copy.version == template.version and copy.load == template.load:
             continue
-        unmodified = body_sha(copy.body) in {copy.template.get("sha"), (known or {}).get(copy.name)} - {None}
+        baseline = copy.template.get("content_sha")
+        unmodified = bool(baseline) and _content_sha(copy.path) == baseline
         if unmodified:
             _install(template, copy.path.parent)
             refreshed.append(copy.name)

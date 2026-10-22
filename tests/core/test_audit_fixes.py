@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from psycopg.types.json import Jsonb
 
-from assistant_kernel.core import grants, jobs, machine, runtime
+from assistant_kernel.core import grants, jobs, machine, rules, runtime
 from assistant_kernel.core.db import one
 from assistant_kernel.core.dispatch import Dispatcher
 from assistant_kernel.core.executors.delivery import check_repo_manifest
@@ -87,10 +87,11 @@ async def test_m4_and_l2_input_after_the_last_turn_is_reported_and_records_survi
     record = {"title": "日报工具", "reason": "用户需要", "changes": [], "significance": "major",
               "verification": "", "expected_effect": "", "measure": "", "followups": ""}
     sim.script("pm_turn", pm("ready_for_validation",
-                             report=report("implementation_report", "i1", bundle_sha="b1", iteration=record)))
+                             report=report("implementation_report", "i1", bundle_sha="no-files:i1", iteration=record)))
     sim.script("validation", {"passed": True})
     await execute_next(kernel, sim, task_id, "review")
-    sim.script("pm_turn", pm("completed", report=report("review_report", "rv1", verdict="pass", bundle_sha="b1")))
+    sim.script("pm_turn", pm("completed", report=report("review_report", "rv1", verdict="pass", bundle_sha="no-files:i1",
+                                                       review_baseline=rules.review_baseline(await sim.task(task_id)))))
     sim.script("supervisor:evaluate", next_step("release"))
     await sim.drain()
     await kernel.act("p1", (await sim.item("p1", task_id))["item_id"], "approve")

@@ -5,6 +5,7 @@ Every Sim.step() asserts the three invariants: one active task per project,
 one cursor per active task, one open card per project.
 """
 from datetime import datetime, timedelta
+from copy import deepcopy
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -15,7 +16,205 @@ from assistant_kernel.core.db import all_rows
 
 from .sim import Fail, next_step, pm, relay, report
 
+
+def reviewed_task():
+    task = {"kind": "delivery", "track": "full", "stage": "review", "documents": {
+        "task_contract": report("task_contract", "r1"), "solution_design": report("solution_design", "d1"),
+        "implementation_report": report("implementation_report", "i1", bundle_sha="b1"),
+        "validation": {"passed": True, "bundle_sha": "b1", "report": "checks passed"}},
+        "approvals": {"requirements": {"doc_sha": "r1"},
+                      "design": {"doc_sha": "d1", "based_on_requirements_sha": "r1"}}}
+    task["documents"]["review_report"] = report("review_report", "rv1", verdict="pass", bundle_sha="b1",
+                                                review_baseline=rules.review_baseline(task))
+    return task
+
+
+@pytest.mark.parametrize("changed", ["task_contract", "solution_design", "implementation_report", "validation", "bundle"])
+def test_review_cannot_cover_changed_inputs_even_with_renewed_approvals(changed):
+    task = reviewed_task()
+    assert rules.review_passed(task)
+    if changed in ("task_contract", "solution_design", "implementation_report"):
+        task["documents"][changed]["sha256"] += "-new"
+    elif changed == "validation":
+        task["documents"]["validation"]["report"] = "different evidence"
+    else:
+        for name in ("implementation_report", "validation"):
+            task["documents"][name]["bundle_sha"] = "b2"
+    task["approvals"] = {"requirements": {"doc_sha": rules.doc_sha(task, "task_contract")},
+                         "design": {"doc_sha": rules.doc_sha(task, "solution_design"),
+                                    "based_on_requirements_sha": rules.doc_sha(task, "task_contract")}}
+    assert not rules.review_passed(task)
+    for stage in ("review", "release"):
+        task["stage"] = stage
+        assert rules.move_error(task, "release")   # retries cannot bypass the same gate
+
+
+def test_review_gate_does_not_redefine_historical_release_approval_or_quick():
+    task = reviewed_task()
+    task["approvals"]["release"] = {"bundle_sha": "b1", "review_sha": "rv1"}
+    task["documents"]["review_report"].pop("review_baseline")
+    before = deepcopy(task)
+    assert not rules.review_passed(task)
+    assert rules.approval_valid(task, "release")   # historical completion/reconcile semantics stay intact
+    assert task == before                        # never backfill or mutate old reports
+    task.update(track="quick", stage="build")
+    task["documents"].pop("solution_design")
+    assert rules.move_error(task, "release") is None
+    task.update(track="full", stage="release")
+    assert rules.stage_moves(task) == {"release"}
+    assert rules.move_error(task, "review") is not None
+
+
+@pytest.mark.parametrize("approval", ["requirements", "design"])
+def test_review_needs_current_approvals(approval):
+    task = reviewed_task()
+    task["approvals"].pop(approval)
+    assert not rules.review_passed(task)
+
 deferred = pytest.mark.skip(reason="post-MVP: deferred by the MVP-first rule (see plan section 10)")
+
+
+async def review_ready(kernel, sim):
+    task_id = await start_task(kernel, sim)
+    await to_build(kernel, sim, task_id)
+    sim.script("pm_turn", pm("ready_for_validation", report=report("implementation_report", "i1", bundle_sha="b1")))
+    sim.script("validation", {"passed": True, "report": "checks passed"})
+    await execute_next(kernel, sim, task_id, "review")
+    return task_id
+
+
+def reviewed_result(task, sha="rv1"):
+    return pm("completed", report=report("review_report", sha, verdict="pass",
+                                         bundle_sha=rules.validated_bundle(task), review_baseline=rules.review_baseline(task)))
+
+
+@pytest.mark.parametrize("change", ["legacy", "requirements", "implementation", "card_revision"])
+async def test_expired_release_card_can_reject_rereview_and_publish(kernel, sim, monkeypatch, change):
+    from psycopg.types.json import Jsonb
+
+    task_id = await review_ready(kernel, sim)
+    result = reviewed_result(await sim.task(task_id))
+    if change == "legacy":
+        result["report"].pop("review_baseline")
+    sim.script("pm_turn", result)
+    sim.script("supervisor:evaluate", next_step("release"))
+    # A pre-upgrade card was created under the old eligibility rule. No automatic metadata upgrade.
+    with monkeypatch.context() as prior:
+        if change == "legacy":
+            prior.setattr(rules, "review_error", lambda task: None)
+        await sim.drain()
+    item = await sim.item("p1", task_id)
+    task = await sim.task(task_id)
+    if change != "legacy":
+        docs, approvals = task["documents"], task["approvals"]
+        if change == "requirements":
+            docs["task_contract"]["sha256"] = "r2"
+            approvals["requirements"]["doc_sha"] = "r2"
+            approvals["design"]["based_on_requirements_sha"] = "r2"
+        elif change == "implementation":
+            docs["implementation_report"]["sha256"] = "i2"
+        else:
+            docs["review_report"]["sha256"] = "rv2"
+        # Fault injection into a temporary DB represents a card left over from an older baseline.
+        async with kernel.db.tx() as c:
+            await c.execute("UPDATE core.tasks SET documents=%s, approvals=%s WHERE task_id=%s",
+                            (Jsonb(docs), Jsonb(approvals), task_id))
+    with pytest.raises(ValueError, match="本次未批准.*不同意"):
+        await kernel.act("p1", item["item_id"], "approve")
+    from assistant_kernel.core.gateway.config import GatewayConfig, ProjectChannels
+    from assistant_kernel.core.gateway.service import GatewayService
+    from .test_gateway import FakeTransport, PM_CH, SUP_CH, USER
+    gateway = GatewayService(kernel, GatewayConfig(guild_id="g", allowed_user_ids=frozenset({USER}),
+                             projects={"p1": ProjectChannels("p1", PM_CH, SUP_CH)}), FakeTransport())
+    reply = await gateway._act("p1", item["item_id"], "approve", {}, USER, "expired-attempt")
+    assert "本次未批准" in reply.text and "不同意" in reply.text and "卡片已更新" not in reply.text
+    assert (await sim.item("p1", task_id))["item_id"] == item["item_id"]
+    assert "release" not in (await sim.task(task_id))["approvals"]
+    await sim.assert_consistent()
+    await kernel.act("p1", item["item_id"], "reject")
+    await execute_next(kernel, sim, task_id, "review", "按当前版本复审")
+    with pytest.raises(StaleItem):
+        await kernel.act("p1", item["item_id"], "approve")
+    if change == "legacy":
+        sim.script("pm_turn", pm("completed"))  # no report must not silently stamp the old report
+        await execute_next(kernel, sim, task_id, "review", "补齐有效审查报告")
+        assert not rules.review_passed(await sim.task(task_id))
+    sim.script("pm_turn", reviewed_result(await sim.task(task_id), "rv3"))
+    sim.script("supervisor:evaluate", next_step("release"))
+    await sim.drain()
+    await kernel.act("p1", (await sim.item("p1", task_id))["item_id"], "approve")
+    sim.script("publish", {"outcome": "published"})
+    await sim.drain()
+    assert (await sim.task(task_id))["close_reason"] == "published"
+
+
+async def confirm_simulated_publisher_stopped(kernel, task_id):
+    """The simulator has no worker thread; provide the same positive stop evidence as the real executor."""
+    import json
+    async with kernel.db.tx() as c:
+        run = await (await c.execute("SELECT * FROM core.runs WHERE task_id=%s AND run_type='publish' ORDER BY created_at DESC LIMIT 1", (task_id,))).fetchone()
+    path = kernel.settings.data_root / "vaults" / run["project_id"] / "runs" / str(run["run_id"]) / "publication/writer-stopped.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"project_id": run["project_id"], "publish_run_id": str(run["run_id"]),
+                                "bundle_sha": run["input"]["bundle_sha"]}), "utf-8")
+
+
+async def test_publish_failure_can_reapprove_same_review_and_complete(kernel, sim):
+    task_id = await review_ready(kernel, sim)
+    sim.script("pm_turn", reviewed_result(await sim.task(task_id)))
+    sim.script("supervisor:evaluate", next_step("release"))
+    await sim.drain()
+    first = await sim.item("p1", task_id)
+    await kernel.act("p1", first["item_id"], "approve")
+    sim.script("publish", {"outcome": "failed", "error": "temporary publish obstacle"})
+    sim.script("supervisor:evaluate", next_step("release", "障碍已排除，申请重试同一交付"))
+    await sim.drain()
+    assert (await sim.task(task_id))["stage"] == "release"
+    retry = await sim.item("p1", task_id)
+    assert retry["item_id"] != first["item_id"]
+    await confirm_simulated_publisher_stopped(kernel, task_id)
+    with pytest.raises(StaleItem):
+        await kernel.act("p1", first["item_id"], "approve")
+    await kernel.act("p1", retry["item_id"], "approve")
+    sim.script("publish", {"outcome": "published"})
+    await sim.drain()
+    task = await sim.task(task_id)
+    assert task["state"] == "completed" and rules.approval_valid(task, "release")
+
+
+async def test_legacy_release_stage_can_stop_after_preserving_work_and_start_followup(kernel, sim, monkeypatch):
+    from psycopg.types.json import Jsonb
+    task_id = await review_ready(kernel, sim)
+    sim.script("pm_turn", reviewed_result(await sim.task(task_id)))
+    sim.script("supervisor:evaluate", next_step("release"))
+    await sim.drain()
+    await kernel.act("p1", (await sim.item("p1", task_id))["item_id"], "approve")
+    task = await sim.task(task_id)
+    task["documents"]["review_report"].pop("review_baseline")
+    async with kernel.db.tx() as c:
+        await c.execute("UPDATE core.tasks SET documents=%s WHERE task_id=%s", (Jsonb(task["documents"]), task_id))
+    sim.script("publish", {"outcome": "failed", "error": "requires rework"})
+    sim.script("supervisor:evaluate", next_step("release"))
+    with monkeypatch.context() as prior:
+        prior.setattr(rules, "review_error", lambda task: None)
+        await sim.drain()  # an old retry card, left in release by the previous version
+    retry = await sim.item("p1", task_id)
+    with pytest.raises(ValueError, match="尚未确认停止"):
+        await kernel.cancel_task(task_id)
+    await confirm_simulated_publisher_stopped(kernel, task_id)  # maintenance confirmed the legacy worker exited
+    with pytest.raises(ValueError, match="release 阶段不能直接返回 Review"):
+        await kernel.act("p1", retry["item_id"], "approve")
+    await kernel.act("p1", retry["item_id"], "reject")
+    sim.script("supervisor:evaluate", {"decision": "propose_cancel", "message": "已保留工作，请确认停止后另建任务"})
+    await sim.drain()
+    failed = await sim.task(task_id)
+    assert failed["stage"] == "release" and rules.move_error(failed, "review") and rules.move_error(failed, "release")
+    await kernel.act("p1", (await sim.item("p1", task_id))["item_id"], "approve")
+    old = await sim.task(task_id)
+    assert old["state"] == "cancelled" and old["documents"] == failed["documents"]
+    followup = await kernel.create_task("p1", goal="承接已保存的返工材料", origin="user", parent_task_id=task_id)
+    assert followup["stage"] == "requirements" and followup["parent_task_id"] == old["task_id"]
+    await sim.assert_consistent()
 phase2 = pytest.mark.skip(reason="rebuild phase 2: executors + dispatcher")
 phase3 = pytest.mark.skip(reason="rebuild phase 3: ingress + Discord cards")
 
@@ -74,7 +273,8 @@ async def test_s01_mainline_to_completion(kernel, sim):
     await execute_next(kernel, sim, task_id, "review", "独立 Review")
     task = await sim.task(task_id)
     assert task["stage"] == "review"
-    sim.script("pm_turn", pm("completed", report=report("review_report", "rv1", verdict="pass", bundle_sha="b1")))
+    sim.script("pm_turn", pm("completed", report=report("review_report", "rv1", verdict="pass", bundle_sha="b1",
+                                                       review_baseline=rules.review_baseline(await sim.task(task_id)))))
     sim.script("supervisor:evaluate", next_step("release"))
     await sim.drain()
     release = await sim.item("p1", task_id)
@@ -339,10 +539,11 @@ async def test_s16_two_projects_run_in_parallel(kernel, sim):
 async def test_s17_publish_crash_goes_to_reconciliation(kernel, sim):
     task_id = await start_task(kernel, sim)
     await to_build(kernel, sim, task_id)
-    sim.script("pm_turn", pm("ready_for_validation", report=report("implementation_report", "i1", bundle_sha="b1")))
+    sim.script("pm_turn", pm("ready_for_validation", report=report("implementation_report", "i1", bundle_sha="no-files:i1")))
     sim.script("validation", {"passed": True})
     await execute_next(kernel, sim, task_id, "review")
-    sim.script("pm_turn", pm("completed", report=report("review_report", "rv1", verdict="pass", bundle_sha="b1")))
+    sim.script("pm_turn", pm("completed", report=report("review_report", "rv1", verdict="pass", bundle_sha="no-files:i1",
+                                                       review_baseline=rules.review_baseline(await sim.task(task_id)))))
     sim.script("supervisor:evaluate", next_step("release"))
     await sim.drain()
     await kernel.act("p1", (await sim.item("p1", task_id))["item_id"], "approve")

@@ -5,6 +5,7 @@ A new PM session reads it instead of relying on an earlier conversation; it is a
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,11 @@ def render_state(task: dict[str, Any], ledger: dict[str, Any], stage_names: dict
     lines = ["### 任务", f"- 目标：{task['goal']}"]
     if task.get("reason"):
         lines.append(f"- 发起原因：{task['reason']}")
+    if task.get("parent_task_id") or task.get("source_ref"):
+        lines.append(f"- 来源任务：{task.get('parent_task_id') or '未记录'}；建议引用：{task.get('source_ref') or '未记录'}")
+    if ledger.get("source_proposal"):
+        lines.append("- 来源复盘工件（用 read_project_document 读取，不等于需求已批准）：" +
+                     json.dumps(ledger["source_proposal"], ensure_ascii=False))
     lines.append(f"- 当前阶段：{stage_names.get(task['stage'], task['stage'])}；流程：{'轻量' if task.get('track') == 'quick' else '完整'}；"
                  f"已完成 PM 回合：{len(ledger['turns'])}")
     approvals = [f"{APPROVAL_NAMES.get(k, k)}（{'有效' if rules.approval_valid(task, k) else '已失效：文档在批准后改过'}）"

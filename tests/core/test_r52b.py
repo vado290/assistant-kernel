@@ -81,16 +81,21 @@ def test_a_repository_map_can_name_project_folder_files(tmp_path):
     assert check_repo_map(code, "t1", vault) == ["地图 project:knowledge/charter.md 指向的文件不存在"]
 
 
-def test_rollout_gives_new_skills_refreshes_unedited_and_respects_removals(tmp_path):
-    vault = tmp_path
+def test_rollout_gives_new_skills_refreshes_unedited_and_respects_removals(tmp_path, monkeypatch):
+    import shutil
+    templates = tmp_path / "templates"
+    shutil.copytree(skills.TEMPLATE_SKILLS, templates)
+    monkeypatch.setattr(skills, "TEMPLATE_SKILLS", templates)
+    vault = tmp_path / "vault"
     skills.install_templates(vault, frozenset())
     credentials_skill = skills.agent_skill_dir(vault, "pm") / "assistant-credentials"
-    import shutil
     shutil.rmtree(credentials_skill)                                            # missing, never offered (old project)
-    old = skills.agent_skill_dir(vault, "pm") / "assistant-implementation" / "SKILL.md"
+    old = templates / "assistant-implementation" / "SKILL.md"
     old.write_text(old.read_text("utf-8").replace('\n  version: "', '\n  version: "0.', 1), "utf-8")
     edited = skills.agent_skill_dir(vault, "pm") / "assistant-requirements" / "SKILL.md"
-    edited.write_text(edited.read_text("utf-8").replace('\n  version: "', '\n  version: "0.', 1) + "\n本项目补充。\n", "utf-8")
+    edited.write_text(edited.read_text("utf-8") + "\n本项目补充。\n", "utf-8")
+    template = templates / "assistant-requirements" / "SKILL.md"
+    template.write_text(template.read_text("utf-8").replace('\n  version: "', '\n  version: "99.', 1), "utf-8")
     result = skills.sync_templates(vault, frozenset(), "9.9.9")
     assert "pm/assistant-credentials" in result["installed"] and "assistant-implementation" in result["refreshed"]
     assert result["kept"] == ["assistant-requirements"] and "本项目补充" in edited.read_text("utf-8")
@@ -100,7 +105,7 @@ def test_rollout_gives_new_skills_refreshes_unedited_and_respects_removals(tmp_p
     assert skills.offered(vault)["kernel_version"] == "9.9.10"
 
 
-async def test_rollout_runs_once_per_version_and_commits_only_skills(kernel, kernel_settings, project_files):
+async def test_existing_rollout_does_not_bypass_adoption_policy(kernel, kernel_settings, project_files):
     await kernel.ensure_project("p1")
     shutil_target = skills.agent_skill_dir(project_files, "pm") / "assistant-credentials"
     import shutil
@@ -108,10 +113,10 @@ async def test_rollout_runs_once_per_version_and_commits_only_skills(kernel, ker
     projectgit.ensure_repo(project_files)
     projectgit.commit_all(project_files, "start")
     (project_files / "notes.md").write_text("an unrelated edit", "utf-8")
-    assert await vault_sync._sync_templates(kernel, kernel_settings) >= 1
-    assert shutil_target.exists() and log(project_files)[0].startswith("同步技能模板")
+    assert await vault_sync._sync_templates(kernel, kernel_settings) == 0
+    assert not shutil_target.exists() and log(project_files)[0] == "start"
     assert "notes.md" in projectgit.git("status", "--porcelain", cwd=project_files)   # not swept into that commit
-    assert await vault_sync._sync_templates(kernel, kernel_settings) == 0          # same Kernel version: once
+    assert await vault_sync._sync_templates(kernel, kernel_settings) == 0          # disabled until exact policy authorization
 
 
 def test_release_commits_name_the_task_and_carry_external_changes(tmp_path):

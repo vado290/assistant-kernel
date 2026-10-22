@@ -11,7 +11,7 @@ from typing import Any
 import yaml
 
 from assistant_kernel.harness.base import AgentTurnRequest, AgentTurnResult
-from assistant_kernel.core import drafts, skills as skill_rules
+from assistant_kernel.core import drafts, rules, skills as skill_rules
 from assistant_kernel.core.agents import AgentConfig, AgentLoader
 from assistant_kernel.services.document_runtime import TaskDocumentService
 from assistant_kernel.storage import ProjectRuntimeManager
@@ -27,7 +27,7 @@ MVP_TOOLS = frozenset({
     "vault_list", "vault_read_text",
     "volcengine_model_status", "volcengine_generate", "volcengine_ocr",
     "read_task_document", "edit_task_document", "list_iterations", "map_lookup", "list_credentials",
-    "get_credential",
+    "get_credential", "list_skill_updates",
 })
 CANDIDATE_TOOLS = frozenset({"write_candidate_file", "delete_candidate_file"})
 # Kernel's own document protocol for PM turns: granted whenever offered, a project's tool list does not narrow it.
@@ -36,7 +36,7 @@ DOCUMENT_TOOLS = frozenset({"read_task_document", "edit_task_document"})
 # the initialising tool (every other tool needs it called first), recent conversation, the change stream (ROUND4),
 # the map and the credentials (ROUND5). An empty tool list (Supervisor) therefore means "platform tools only".
 PLATFORM_TOOLS = DOCUMENT_TOOLS | {"get_authorized_workspace", "list_recent_history", "list_iterations", "map_lookup",
-                                   "list_credentials", "get_credential"}
+                                   "list_credentials", "get_credential", "list_skill_updates"}
 READ_ONLY_TOOLS = MVP_TOOLS - CANDIDATE_TOOLS - DOCUMENT_TOOLS - {"volcengine_generate", "volcengine_ocr"}
 
 
@@ -191,11 +191,28 @@ def document_sections(settings, task: dict[str, Any]) -> list[tuple[str, str, st
                 body += f"\n\n> Kernel 检查：迭代记录有误（发布不受影响，但记录会不完整），请修正：{document['iteration_error']}"
             elif document.get("iteration"):
                 body += "\n\n> Kernel 检查：迭代记录有效，将随发布批准一起入库。"
+            if document.get("effect_review_error"):
+                body += "\n\n> Kernel 检查：效果复核未通过，需补正：" + document["effect_review_error"]
             sections.append((kind, document["sha256"], f"### {title}（sha {document['sha256'][:12]}）\n\n{body}"))
     validation = task["documents"].get("validation")
     if validation:   # written by Kernel, it has no revision sha of its own
         text = f"### Kernel 验证结果\n\n{'通过' if validation.get('passed') else '未通过'}\n\n{validation.get('report') or ''}"
-        sections.append(("validation", drafts.text_sha(json.dumps(validation, sort_keys=True, default=str)), text))
+        sections.append(("validation", rules.validation_fingerprint(task), text))
+    if task.get("kind", "delivery") == "delivery" and task.get("track") != "quick" and task.get("stage") in ("review", "release"):
+        basis = rules.review_baseline(task)
+        text = "### Kernel 审查基线（文档版本 SHA，不是正文 SHA；由 Kernel 绑定，不由模型填写）\n\n"
+        text += json.dumps(basis, ensure_ascii=False, sort_keys=True) if basis else "输入不完整，不能通过审查。"
+        text += "\n当前审查状态：" + (rules.review_error(task) or "基线匹配且审查通过；发布仍需用户批准")
+        bundle = rules.validated_bundle(task) or ""
+        if bundle.startswith("git:"):
+            text += f"\n审查 Git 提交：{bundle[4:]}。读取该提交的内容；工作目录不一致时不能用它的检查结果替代。"
+        elif bundle.startswith("no-files:"):
+            text += "\n无文件交付：核对当前实施报告所引用的实际成果、交付位置和验收证据。"
+        elif bundle:
+            text += (f"\n固定交付清单：workspace://project/runtime/candidate-snapshots/{bundle}/bundle.json"
+                     "（用 read_authorized_file 读取；files 含增改删和内容 SHA。"
+                     "artifact_uri 的 vault://本项目/ 前缀对应 workspace://project/；只读该快照，不重新封存候选。）")
+        sections.append(("review_context", drafts.text_sha(text), text))
     return sections
 
 

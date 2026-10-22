@@ -450,36 +450,53 @@ class WorkspaceScopeService:
             "schema_version": "project-resource-guide.v1",
             "layout_version": int(project.get("layout_version") or 1),
             "resources": [
-                {"path": "project.yaml", "purpose": "Project identity and active layout"},
+                {"path": "project.yaml", "purpose": "Vault project identity, active layout and delivery configuration. "
+                 "Use authorized roots and actual files to resolve paths; this guide grants no access, creates no "
+                 "directories and requires no migration of existing layouts. Business paths below are defaults "
+                 "only when no project/framework convention exists: vault for file delivery, configured repository "
+                 "for Git delivery. Git build edits only its assigned worktree; it cannot update vault resources."},
                 {
                     "path": "agents/<agent-id>/",
-                    "purpose": "Published Agent",
+                    "purpose": "Kernel-loaded Agent in the vault, including for Git delivery; a same-named repository "
+                               "folder does not update this Agent",
                     "required": ["config.yaml", "role.md"],
                 },
                 {
                     "path": "knowledge/map.yaml",
-                    "purpose": "The project map: one index entry per file or directory (path, name, kind, purpose, "
-                               "summary, related); every Python file of the product must be listed. Code-delivery "
+                    "purpose": "Current resource index, not approval or execution evidence. Use directory entries "
+                               "for recurring outputs/data, not every generated file. Existing automatic Python "
+                               "coverage is product/ for file delivery, repository for Git delivery, with existing "
+                               "exclusions; build/review check other changed business scripts and key entries. Code-delivery "
                                "projects keep it in their repository (default docs/map.yaml). Query with map_lookup; "
                                "when a file changed comes from git, why from list_iterations",
                 },
                 {
                     "path": "agents/<agent-id>/.agents/skills/<skill>/",
-                    "purpose": "A skill of that agent, in the agent's own folder (one copy per agent that uses it; "
+                    "purpose": "A skill of that vault agent, in the agent's own folder (one copy per agent that uses it; "
                                "no .agents/skills at the project root or the agents/ level)",
                     "required": ["SKILL.md"],
                     "optional": ["scripts/", "references/", "templates/", "evals/"],
                 },
-                {"path": "schemas/", "purpose": "Project-local input and output Schemas"},
-                {"path": "scripts/", "purpose": "Scripts shared by multiple Project capabilities"},
+                {"path": "schemas/", "purpose": "Optional default for business input/output Schemas; keep existing explicit references"},
+                {"path": "scripts/", "purpose": "Optional default for shared business scripts; src/, content/ or an existing "
+                 "framework layout may suit other resources. Do not require a product/ wrapper or empty directories"},
                 {
                     "path": "mcp/<server-id>/",
-                    "purpose": "Project MCP Server",
+                    "purpose": "Project MCP definition; requires a supported loading/delivery path and explicit Agent tool configuration",
                     "required": ["mcp-manifest.yaml", "Python entrypoint"],
                 },
-                {"path": "artifacts/", "purpose": "Published business artifacts"},
-                {"path": "workflows/, services/, schedules/", "purpose": "Optional resource definitions; require a runtime before activation"},
-                {"path": "runs/ and runtime/", "purpose": "Kernel-generated evidence and snapshots; do not scaffold"},
+                {"path": "data/", "purpose": "Optional default for persistent business data. Explicitly resolve its root, "
+                 "retention and version-control boundary; never keep its only copy in a disposable worktree/candidate area. "
+                 "Code rollback does not delete or roll back business data"},
+                {"path": "artifacts/", "purpose": "Optional default for user-facing deliverables. Static task deliverables "
+                 "use the existing delivery path; approved jobs produce recurring outputs under their runtime agreement. "
+                 "The folder name alone proves neither publication nor acceptance"},
+                {"path": "jobs.yaml", "purpose": "Runtime declaration: vault root for file delivery, repository root for "
+                 "Git delivery. Kernel syncs after publication; registration and successful execution are distinct"},
+                {"path": "workflows/, services/, schedules/", "purpose": "Optional or legacy resource definitions, not "
+                 "automatic execution. Existing files may remain; current Kernel runtime uses jobs.yaml, not Operate registration"},
+                {"path": "runs/ and runtime/", "purpose": "Kernel-generated evidence, internal state and snapshots; "
+                 "do not scaffold or use as default business data/template locations"},
             ],
         }
 

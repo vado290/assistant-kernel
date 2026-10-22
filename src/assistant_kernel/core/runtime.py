@@ -163,7 +163,7 @@ def program_conf(project_id: str, service: dict[str, Any], vault: Path, home: Pa
     logs = vault / "runs" / "services"
     command = " ".join(shlex.quote(part) for part in service["command"])
     return (f"[program:{program_name(project_id, service['id'])}]\n"
-            f"command={command}\ndirectory={vault}\nautostart=true\nautorestart=true\nstartsecs=5\n"
+            f"command={command}\ndirectory={home or vault}\nautostart=true\nautorestart=true\nstartsecs=5\n"
             "stopsignal=TERM\nstopwaitsecs=30\nstopasgroup=true\nkillasgroup=true\n"
             f"stdout_logfile={logs / (service['id'] + '.log')}\nstdout_logfile_maxbytes=5MB\nstdout_logfile_backups=2\n"
             f"stderr_logfile={logs / (service['id'] + '.err.log')}\nstderr_logfile_maxbytes=5MB\nstderr_logfile_backups=2\n"
@@ -178,11 +178,20 @@ class SupervisorControl:
                                  or "/home/v/AI/assistant-data/runtime/kernel-services/programs")
         self.conf = conf or os.environ.get("CORE_SUPERVISOR_CONF") or "/etc/supervisor/conf.d/assistant.conf"
 
-    def _ctl(self, *args: str) -> str:
+    def _ctl(self, *args: str, missing_ok: bool = False) -> str:
         if args and args[0] in ("reload", "shutdown") or any(a in ("all",) for a in args):
             raise PermissionError("Kernel only manages its own proj-* programs")
         done = subprocess.run(["supervisorctl", "-c", self.conf, *args], capture_output=True, text=True, timeout=120)
-        return (done.stdout + done.stderr).strip()
+        output = (done.stdout + done.stderr).strip()
+        if missing_ok and len(args) == 2 and args[0] == "update" and output == f"ERROR: no such group: {args[1]}":
+            return output   # retrying an already removed owned service is a successful retirement
+        if done.returncode and args and args[0] != "status":
+            raise RuntimeError(f"supervisorctl {' '.join(args)} 失败：{output[-500:]}")
+        return output
+
+    def needs_update(self, project_id: str, vault: Path, service: dict, home: Path | None = None) -> bool:
+        path = self.programs_dir / f"{program_name(project_id, service['id'])}.conf"
+        return not path.is_file() or path.read_text("utf-8") != program_conf(project_id, service, vault, home)
 
     def apply(self, project_id: str, vault: Path, services: list[dict[str, Any]], removed: list[str],
               home: Path | None = None) -> list[str]:
@@ -201,7 +210,8 @@ class SupervisorControl:
         if not names:
             return []
         self._ctl("reread")
-        return [self._ctl("update", name) for name in names]
+        removed_names = {program_name(project_id, service_id) for service_id in removed}
+        return [self._ctl("update", name, missing_ok=name in removed_names) for name in names]
 
     def restart(self, project_id: str, service_id: str) -> str:
         return self._ctl("restart", program_name(project_id, service_id))

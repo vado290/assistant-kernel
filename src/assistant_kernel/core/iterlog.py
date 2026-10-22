@@ -1,5 +1,5 @@
 """Change stream helpers (docs/ROUND4_PLAN.md section 2): parse what the PM writes, derive artifacts and significance,
-render rows for reviews, tools and the /iterations command. Pure functions; the state machine does the writes.
+render rows for reviews, tools and the /iterations command. Reference resolution only reads; the state machine writes.
 """
 from __future__ import annotations
 
@@ -61,18 +61,52 @@ def parse_record(markdown: str) -> dict[str, Any]:
             **{key: _text(data.get(key)) for key in ("verification", "expected_effect", "measure", "followups")}}
 
 
-def parse_effect_reviews(markdown: str) -> list[dict[str, str]]:
-    """The review's verdicts on earlier iterations: [{iteration: <id prefix>, status, note}]; empty when absent."""
+def parse_effect_reviews(markdown: str, *, strict: bool = True) -> list[dict[str, str]]:
+    """An explicit empty list is different from missing or malformed evidence."""
     try:
         data = _yaml_block(markdown, EFFECT_SECTION)
     except ValueError:
+        if strict: raise
+        return []
+    if not isinstance(data, list):
+        if strict: raise ValueError("上期效果复核必须是 YAML 列表；没有需复核的记录时写 []")
         return []
     reviews = []
-    for item in data if isinstance(data, list) else []:
-        if isinstance(item, dict) and item.get("iteration") and item.get("status") in EFFECTS:
-            reviews.append({"iteration": str(item["iteration"])[:36], "status": item["status"],
-                            "note": _text(item.get("note"), 400)})
+    for item in data:
+        prefix = str(item.get("iteration") or "").lower() if isinstance(item, dict) else ""
+        if not valid_iteration_prefix(prefix) or str(item.get("status")) not in EFFECTS or not _text(item.get("note")):
+            if strict: raise ValueError("效果复核需要合法记录编号（至少 8 位 UUID 前缀）、status 和有证据的 note")
+            continue
+        if strict and any(r["iteration"] == prefix for r in reviews):
+            raise ValueError("同一效果记录不能重复复核")
+        reviews.append({"iteration": prefix, "status": item["status"], "note": _text(item["note"], 400)})
     return reviews
+
+
+def valid_iteration_prefix(value: str) -> bool:
+    shape = "00000000-0000-0000-0000-000000000000"
+    return 8 <= len(value) <= len(shape) and all(
+        c == "-" if shape[i] == "-" else c in "0123456789abcdef" for i, c in enumerate(value))
+
+
+async def resolve_effect_reviews(c, project_id, reviews):
+    """Resolve only unique, legal references inside one project; conflicting duplicates update neither verdict."""
+    from assistant_kernel.core.db import all_rows
+    resolved, problems, duplicates = {}, [], set()
+    for review in reviews or []:
+        review = review if isinstance(review, dict) else {}
+        prefix = str(review.get("iteration") or "").lower()
+        matches = await all_rows(c, "SELECT iteration_id FROM core.iterations WHERE project_id=%s AND iteration_id::text LIKE %s",
+                                 (project_id, prefix + "%")) if valid_iteration_prefix(prefix) else []
+        if len(matches) != 1 or str(review.get("status")) not in EFFECTS or not str(review.get("note") or "").strip():
+            problems.append(prefix or "（缺少编号）")
+            continue
+        ident = matches[0]["iteration_id"]
+        if ident in resolved:
+            duplicates.add(ident)
+            problems.append(prefix)
+        resolved[ident] = review
+    return {i: r for i, r in resolved.items() if i not in duplicates}, problems
 
 
 def artifact_of(path: str) -> str:

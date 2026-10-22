@@ -12,6 +12,7 @@ import hashlib
 import json
 import logging
 import os
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Literal
@@ -259,15 +260,33 @@ def build_server(scope: Scope) -> MCPServer:
 
     @tool(READ_ONLY)
     async def list_iterations(days: int = 28, artifact: str | None = None, major_only: bool = False,
-                              query: str | None = None, limit: int = 20) -> dict:
+                              query: str | None = None, limit: int = 20, pending_only: bool = False,
+                              needs_measure: bool = False, oldest_first: bool = False,
+                              cursor: str | None = None) -> dict:
         """This project's change stream (what changed, why, expected effect, effect review), newest first.
         artifact filters by e.g. "skill:assistant-requirements", "map", "charter", "jobs", "file:<path>" (a trailing *
-        matches a prefix); query matches words in titles, reasons and change notes. Read only what the question needs."""
+        matches a prefix); query matches words in titles, reasons and change notes. pending_only includes unreviewed
+        or pending effects with a measure regardless of age; needs_measure finds explicit effects lacking a measure.
+        oldest_first helps review older backlog. Follow next_cursor with the same filters; new records need a fresh
+        first page. These are live states, not an immutable snapshot. Read only what the question needs."""
         from assistant_kernel.core import iterlog
         from assistant_kernel.core.kernel import Kernel
-        rows = await Kernel(settings).iterations(project_id, days=days, artifact=artifact, major_only=major_only,
-                                                 query=query, limit=min(max(limit, 1), 50))
-        return {"count": len(rows), "text": iterlog.render(rows)}
+        page = await Kernel(settings).iteration_page(project_id, days=days, artifact=artifact, major_only=major_only,
+                    query=query, limit=limit, pending_only=pending_only, needs_measure=needs_measure,
+                    oldest_first=oldest_first, cursor=cursor)
+        rows = page.pop("items")
+        return {**page, "text": iterlog.render(rows),
+                "references": [{"iteration_id": str(r["iteration_id"]), "task_id": str(r["task_id"]) if r["task_id"] else None,
+                                "outcome": r["outcome"], "source_ref": r["source_ref"]} for r in rows]}
+
+    @tool(READ_ONLY)
+    async def list_skill_updates(update_id: str | None = None, limit: int = 20) -> dict:
+        """Read this project's skill adoption evidence; this never authorizes, applies or rolls back a batch."""
+        from assistant_kernel.core.kernel import Kernel
+        from assistant_kernel.core.skill_updates import list_updates
+        rows = await list_updates(Kernel(settings), project_id, min(max(limit, 1), 50),
+                                  uuid.UUID(update_id) if update_id else None)
+        return {"count": len(rows), "updates": rows}
 
     @tool(READ_ONLY)
     def map_lookup(query: str = "", limit: int = 20) -> dict:
@@ -300,16 +319,10 @@ def build_server(scope: Scope) -> MCPServer:
     @tool(READ_ONLY)
     async def list_recent_history(lookback_days: int = 365, limit: int = 50, cursor: str | None = None,
                                   scope: Literal["current_conversation", "project"] = "project") -> dict:
-        """List recent messages in this Project (both channels, oldest first); cursor and scope are accepted
-        for compatibility, every call returns the latest page of the whole Project."""
-        async with Database(settings).tx() as c:
-            rows = await (await c.execute(
-                """SELECT message_id, created_at, direction, role, body->>'text' AS text FROM core.messages
-                   WHERE project_id=%s AND body ? 'text' AND created_at > now() - make_interval(days => %s)
-                   ORDER BY created_at DESC LIMIT %s""",
-                (project_id, min(max(lookback_days, 1), 365), min(max(limit, 1), 200)))).fetchall()
-        return {"items": [{**r, "message_id": str(r["message_id"]), "created_at": r["created_at"].isoformat()}
-                          for r in reversed(rows)], "next_cursor": None}
+        """Project messages from both channels, oldest first within each page. Follow next_cursor with the same
+        lookback_days for older pages; new messages need a fresh first page. scope retains whole-Project semantics."""
+        from assistant_kernel.core.kernel import Kernel
+        return await Kernel(settings).history_page(project_id, lookback_days=lookback_days, limit=limit, cursor=cursor)
 
     @tool(READ_ONLY)
     def vault_list(relative_path: str = "", limit: int = 200) -> dict:

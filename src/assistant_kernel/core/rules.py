@@ -4,6 +4,8 @@ Nothing here touches the database, so every rule is unit-testable on plain dicts
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from typing import Any
 
@@ -133,10 +135,38 @@ def validated_bundle(task: dict[str, Any]) -> str | None:
     return None
 
 
-def review_passed(task: dict[str, Any]) -> bool:
+def validation_fingerprint(task: dict[str, Any]) -> str:
+    return hashlib.sha256(json.dumps(task["documents"].get("validation") or {},
+                                    sort_keys=True, default=str).encode("utf-8")).hexdigest()
+
+
+def review_baseline(task: dict[str, Any]) -> dict[str, str] | None:
+    """The exact inputs given to Review; stored in its immutable document payload by the executor."""
+    baseline = {kind: doc_sha(task, kind) for kind in
+                ("task_contract", "solution_design", "implementation_report")}
+    baseline.update(bundle_sha=validated_bundle(task), validation_sha=validation_fingerprint(task))
+    return baseline if all(baseline.values()) else None
+
+
+def review_error(task: dict[str, Any]) -> str | None:
+    """Full-delivery release eligibility, not the historical validity of a release approval."""
+    if not approval_valid(task, "design"):
+        return "需求或设计批准缺失／已失效，请按现有阶段重新确认"
+    baseline = review_baseline(task)
+    if not baseline:
+        return "审查输入不完整或当前交付尚未通过验证"
     review = task["documents"].get("review_report") or {}
-    return bool(review.get("verdict") == "pass" and review.get("bundle_sha")
-                and review.get("bundle_sha") == validated_bundle(task))
+    if not review.get("review_baseline"):
+        return "Review 报告缺少审查基线，需重新审查；不能为旧报告自动补签"
+    if review["review_baseline"] != baseline or review.get("bundle_sha") != baseline["bundle_sha"]:
+        return "审查依据或交付对象已变化，需按当前版本重新审查"
+    if review.get("verdict") != "pass":
+        return "当前 Review 尚未通过"
+    return None
+
+
+def review_passed(task: dict[str, Any]) -> bool:
+    return review_error(task) is None
 
 
 def approvals_needed(task: dict[str, Any], target: str) -> list[str]:
@@ -161,8 +191,10 @@ def move_error(task: dict[str, Any], target: str, *, approving: tuple[str, ...] 
             return f"{kind} approval is missing or outdated"
     if (stage, target) == ("build", "review") and not validated_bundle(task):
         return "the current implementation has not passed validation"
-    if (stage, target) == ("review", "release") and not review_passed(task):
-        return "review has not passed for the validated bundle"
+    if target == "release" and task.get("kind", "delivery") == "delivery" and task.get("track") != "quick":
+        error = review_error(task)   # also covers release → release after a publication failure
+        if error:
+            return error
     if (stage, target) == ("build", "release") and not validated_bundle(task):   # quick track
         return "the current implementation has not passed validation"
     return None

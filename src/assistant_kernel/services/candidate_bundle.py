@@ -4,10 +4,15 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+import stat
 from typing import Any
 
 from assistant_kernel.config import KernelSettings
 from assistant_kernel.storage import ProjectRuntimeManager
+
+
+class CandidateManifestMissing(FileNotFoundError):
+    """No manifest was created; distinct from an incomplete or unreadable candidate."""
 
 
 class CandidateBundleService:
@@ -22,8 +27,12 @@ class CandidateBundleService:
         vault = self.runtime.ensure(project_id).vault_root
         candidate_root = vault / "runs" / task_id / "candidate"
         manifest_path = candidate_root / "manifest.json"
-        if not manifest_path.is_file():
-            raise FileNotFoundError("Task candidate manifest is missing")
+        try:
+            mode = manifest_path.stat().st_mode
+        except FileNotFoundError as exc:
+            raise CandidateManifestMissing("Task candidate manifest is missing") from exc
+        if not stat.S_ISREG(mode):
+            raise ValueError("Task candidate manifest is not a regular file")
         manifest_bytes = manifest_path.read_bytes()
         manifest = json.loads(manifest_bytes.decode("utf-8"))
         if manifest.get("schema_version") != "candidate-manifest.v2":

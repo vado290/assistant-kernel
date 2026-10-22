@@ -216,6 +216,162 @@ async def test_build_without_candidate_files_gets_a_bound_marker(kernel, sim, di
     assert seal_candidates(kernel_settings, "p1", "00000000-0000-0000-0000-000000000000", "abc") == "no-files:abc"
 
 
+async def test_review_baseline_is_kernel_owned_hashed_and_renewed_with_same_prose(
+        kernel, sim, dispatcher, fake_harness, kernel_settings):
+    from psycopg.types.json import Jsonb
+    from assistant_kernel.services.document_runtime import TaskDocumentService
+    from .test_scenarios import review_ready, execute_next
+
+    task_id = await review_ready(kernel, sim)
+    expected = rules.review_baseline(await sim.task(task_id))
+    reply = {"outcome": "completed", "summary": "核对完成", "document": {
+        "kind": "review_report", "markdown": "# Review\n验收通过", "verdict": "pass",
+        "review_baseline": {"untrusted": "model cannot set the baseline"}}}
+    fake_harness.script("pm", reply)
+    dispatcher.scripts.add("supervisor:evaluate", next_step("release"))
+    await settle(dispatcher)
+    first = (await sim.task(task_id))["documents"]["review_report"]
+    service = TaskDocumentService(kernel_settings)
+    stored = service.read("p1", first["ref"])["payload"]
+    assert stored["review_baseline"] == first["review_baseline"] == expected
+    assert "审查基线" in fake_harness.calls[-1].prompt and "candidate-snapshots/b1/bundle.json" in fake_harness.calls[-1].prompt
+    first_seen = (await sim.task(task_id))["pm_session"]["seen"]["review_context"]
+
+    await kernel.act("p1", (await sim.item("p1", task_id))["item_id"], "reject")
+    task = await sim.task(task_id)
+    task["documents"]["implementation_report"]["sha256"] = "i2"
+    async with kernel.db.tx() as c:
+        await c.execute("UPDATE core.tasks SET documents=%s WHERE task_id=%s", (Jsonb(task["documents"]), task_id))
+    await execute_next(kernel, sim, task_id, "review", "重新核对")
+    fake_harness.script("pm", reply)
+    dispatcher.scripts.add("supervisor:evaluate", next_step("release"))
+    await settle(dispatcher)
+    task = await sim.task(task_id)
+    second = task["documents"]["review_report"]
+    assert second["sha256"] != first["sha256"]  # same prose, different reviewed version → different approval target
+    assert service.read("p1", first["ref"])["payload"] == stored
+    assert second["review_baseline"]["implementation_report"] == "i2"
+    assert task["pm_session"]["seen"]["review_context"] != first_seen
+    assert "i2" in fake_harness.calls[-1].prompt and "审查依据或交付对象已变化" in fake_harness.calls[-1].prompt
+
+
+def test_review_context_is_scoped_and_distinguishes_delivery_types(monkeypatch):
+    from assistant_kernel.core.executors import common
+    from .test_scenarios import reviewed_task
+    monkeypatch.setattr(common, "read_document", lambda *args: "body")
+    task = reviewed_task()
+    task["project_id"] = "p1"
+    for bundle, expected in (("b1", "candidate-snapshots/b1/bundle.json"), ("git:abc123", "Git 提交：abc123"),
+                             ("no-files:i1", "无文件交付")):
+        task["documents"]["implementation_report"]["bundle_sha"] = bundle
+        task["documents"]["validation"]["bundle_sha"] = bundle
+        sections = dict((key, text) for key, _, text in common.document_sections(None, task))
+        assert expected in sections["review_context"]
+    for kind, track, stage in (("delivery", "quick", "build"), ("delivery", "full", "design"),
+                               ("bootstrap", "full", "requirements"), ("evolution", "full", "operate")):
+        task.update(kind=kind, track=track, stage=stage)
+        assert "review_context" not in [key for key, _, _ in common.document_sections(None, task)]
+
+
+async def test_review_cannot_stamp_a_version_changed_during_the_model_turn(
+        kernel, sim, dispatcher, fake_harness, monkeypatch):
+    from psycopg.types.json import Jsonb
+    from assistant_kernel.core.executors import pm as pm_executor
+    from .test_scenarios import review_ready
+    task_id = await review_ready(kernel, sim)
+    original = pm_executor.call_for_json
+
+    async def changed_during_call(*args, **kwargs):
+        result = await original(*args, **kwargs)
+        task = await sim.task(task_id)
+        task["documents"]["implementation_report"]["sha256"] = "i2"
+        async with kernel.db.tx() as c:
+            await c.execute("UPDATE core.tasks SET documents=%s WHERE task_id=%s", (Jsonb(task["documents"]), task_id))
+        return result
+
+    monkeypatch.setattr(pm_executor, "call_for_json", changed_during_call)
+    fake_harness.script("pm", {"outcome": "completed", "document": {
+        "kind": "review_report", "markdown": "核对完成", "verdict": "pass"}})
+    dispatcher.scripts.add("supervisor:evaluate", next_step("review"))
+    await settle(dispatcher)
+    task = await sim.task(task_id)
+    assert task["documents"]["review_report"]["review_baseline"]["implementation_report"] == "i1"
+    assert rules.review_baseline(task)["implementation_report"] == "i2"
+    assert not rules.review_passed(task)
+
+
+def test_git_review_workspace_must_match_without_changing_it(tmp_path):
+    import subprocess
+    from assistant_kernel.core.executors.pm import review_worktree_error
+
+    def git(*args):
+        return subprocess.check_output(["git", *args], cwd=tmp_path, text=True).strip()
+
+    git("init", "-q")
+    (tmp_path / "a.txt").write_text("first", "utf-8")
+    git("add", "a.txt")
+    git("-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-qm", "first")
+    sha = git("rev-parse", "HEAD")
+    basis = {"bundle_sha": "git:" + sha}
+    assert review_worktree_error(tmp_path, basis) is None
+    (tmp_path / "a.txt").write_text("local work", "utf-8")
+    assert review_worktree_error(tmp_path, basis)
+    assert (tmp_path / "a.txt").read_text("utf-8") == "local work"
+    assert git("rev-parse", "HEAD") == sha
+    assert review_worktree_error(tmp_path / "absent", basis)
+
+
+async def test_missing_candidate_fails_build_before_validation_and_can_retry(
+        kernel, sim, dispatcher, fake_harness, kernel_settings, project_files):
+    from assistant_kernel.core.executors.delivery import execute_validation
+    from .test_delivery_executors import write_candidate
+
+    dispatcher.executors["validation"] = execute_validation
+    task_id = await start_requirements_turn(kernel, sim, dispatcher)
+    for kind, target in (("task_contract", "design"), ("solution_design", "build")):
+        fake_harness.script("pm", editing(
+            kernel_settings,
+            {"outcome": "completed", "summary": kind, "questions": [], "document": {"kind": kind}},
+            content=f"# {kind}\n交付 docs/hello.md", kind=kind))
+        dispatcher.scripts.add("supervisor:evaluate", next_step(target))
+        await settle(dispatcher)
+        await kernel.act("p1", (await sim.item("p1", task_id))["item_id"], "execute")
+
+    write_candidate(kernel_settings, str(task_id))
+    source = project_files / "runs" / str(task_id) / "candidate" / "project" / "docs" / "hello.md"
+    source.unlink()
+    reply = {"outcome": "ready_for_validation", "summary": "提交",
+             "questions": [], "document": {"kind": "implementation_report", "markdown": "# 实施报告\n已写 hello.md"}}
+    fake_harness.script("pm", reply, reply, reply)
+    await settle(dispatcher)
+
+    task = await sim.task(task_id)
+    item = await sim.item("p1", task_id)
+    assert item["content"]["decision"] == "run_failed"
+    assert "workspace://candidate/project/docs/hello.md" in item["content"]["message"]
+    assert "implementation_report" not in task["documents"]
+    assert "validation" not in task["documents"]
+    async with kernel.db.tx() as c:
+        row = await (await c.execute(
+            "SELECT count(*) AS n FROM core.runs WHERE task_id=%s AND run_type='validation'",
+            (task_id,))).fetchone()
+    assert row["n"] == 0
+    await sim.assert_consistent()
+
+    # Restore the registered file, then use the existing failure card and real validation executor.
+    expected = write_candidate(kernel_settings, str(task_id))
+    await kernel.act("p1", item["item_id"], "retry")
+    fake_harness.script("pm", reply)
+    dispatcher.scripts.add("supervisor:evaluate", next_step("review"))
+    await settle(dispatcher)
+    task = await sim.task(task_id)
+    assert task["documents"]["implementation_report"]["bundle_sha"] == expected
+    assert task["documents"]["validation"]["passed"]
+    assert task["documents"]["validation"]["bundle_sha"] == expected
+    assert (await sim.item("p1", task_id))["content"]["target_stage"] == "review"
+    await sim.assert_consistent()
+
+
 @pytest.mark.parametrize("stage,kind,sandbox", [
     ("requirements", "work", "read-only"), ("design", "work", "read-only"), ("review", "work", "read-only"),
     ("operate", "work", "read-only"), ("operate", "evolution", "read-only"), ("build", "work", "danger-full-access"),

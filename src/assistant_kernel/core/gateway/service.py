@@ -335,6 +335,11 @@ class GatewayService:
             return "当前没有进行中的任务。"
         if task["state"] in ("publishing", "bootstrapping"):   # its effects are being applied right now
             return "任务正在发布（或创建项目），这一步无法中途取消；完成后会通知你，届时再决定是否需要撤回。"
-        await self.kernel.cancel_task(task["task_id"])
+        try:
+            result = await self.kernel.cancel_task(task["task_id"])
+        except ValueError as exc:
+            return str(exc)
+        if result["state"] == "publishing":
+            return "任务已进入发布，无法中途取消；请等待结果后核对，已发生的发布不会因取消而撤销。"
         await self.sync_cards(route[0])
         return f"已取消任务：{task['goal'][:100]}"

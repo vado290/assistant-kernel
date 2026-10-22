@@ -583,6 +583,8 @@ class CapabilityBundleService:
                     backup.replace(target)
                 elif target.exists():
                     target.unlink()
+            journal["status"] = "rolled_back"
+            journal_path.write_text(json.dumps(journal, ensure_ascii=False, indent=2), encoding="utf-8")
             raise
 
         try:
@@ -602,6 +604,8 @@ class CapabilityBundleService:
                     backup.replace(target)
                 elif target.exists():
                     target.unlink()
+            journal["status"] = "rolled_back"
+            journal_path.write_text(json.dumps(journal, ensure_ascii=False, indent=2), encoding="utf-8")
             raise
         diff_path = publication_root / "changes.patch"
         diff_path.write_text("".join(patch_parts), encoding="utf-8")

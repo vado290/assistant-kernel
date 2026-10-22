@@ -105,7 +105,8 @@ async def execute_job(run: dict[str, Any], ctx) -> dict[str, Any]:
                "MANUAL_RUN": "1" if run["input"].get("manual") else "0",
                "STARTED_AT": datetime.now(timezone.utc).isoformat()}
         code = gitdelivery.config(settings, project_id)   # code delivery: scripts live in the repository
-        return await run_script(vault, job, env, log, code["repo"] if code else None)
+        home = await asyncio.to_thread(gitdelivery.runtime_home, code) if code else None
+        return await run_script(vault, job, env, log, home)
     if job["type"] == "agent":
         return await run_agent(run, ctx, vault, job, log)
     output = await asyncio.to_thread(runtime.CONTROL.restart, project_id, job["entry"])

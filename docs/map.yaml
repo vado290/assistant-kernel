@@ -1,5 +1,11 @@
 schema_version: project-map.v1
 entries:
+- path: src/assistant_kernel/core/skill_updates.py
+  kind: module
+  purpose: 技能采用批次、可信基线、完整目录核对、写入互斥与中断恢复；默认关闭
+- path: tests/core/test_skill_updates.py
+  kind: test
+  purpose: 技能采用的定制保护、并发领取、回退、中断及旧任务兼容验证
 - path: project:knowledge/charter.md
   kind: doc
   purpose: kernel 项目的章程（在项目目录，不在源码仓库）

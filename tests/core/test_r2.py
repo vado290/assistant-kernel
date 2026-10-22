@@ -124,15 +124,82 @@ def test_quick_track_rules():
     assert not rules.move_error(build, "release") and rules.move_error({**build, "track": "full"}, "release")
 
 
-def test_refresh_replaces_only_unmodified_copies(tmp_path):
+def test_refresh_replaces_only_unmodified_copies(tmp_path, monkeypatch):
+    import shutil
+    templates = tmp_path / "templates"
+    shutil.copytree(skills.TEMPLATE_SKILLS, templates)
+    monkeypatch.setattr(skills, "TEMPLATE_SKILLS", templates)
     vault = tmp_path / "vault"
     skills.install_templates(vault, frozenset())
     edited = vault / "agents/pm/.agents/skills/assistant-operation/SKILL.md"
     edited.write_text(edited.read_text("utf-8") + "\n本项目补充：每周一汇报。\n", "utf-8")
-    for name in ("assistant-operation", "assistant-requirements"):   # pretend both are an older template version
-        path = vault / "agents/pm/.agents/skills" / name / "SKILL.md"
-        path.write_text(path.read_text("utf-8").replace('\n  version: "', '\n  version: "0.', 1), "utf-8")
+    for name in ("assistant-operation", "assistant-requirements"):   # upgrade templates, leaving installed baselines intact
+        path = templates / name / "SKILL.md"
+        path.write_text(path.read_text("utf-8").replace('\n  version: "', '\n  version: "99.', 1), "utf-8")
     refreshed, kept = skills.refresh_unmodified(vault)
     assert refreshed == ["assistant-requirements"] and kept == ["assistant-operation"]
     assert "每周一汇报" in edited.read_text("utf-8")
     assert skills.refresh_unmodified(vault) == ([], ["assistant-operation"])
+
+
+@pytest.fixture
+def skill_upgrade(tmp_path, monkeypatch):
+    templates = tmp_path / "templates"
+    source = templates / "example" / "SKILL.md"
+    source.parent.mkdir(parents=True)
+    source.write_text('---\nname: example\ndescription: original purpose\nmetadata:\n'
+                      '  version: "1.0.0"\n  load: {roles: [pm], stages: [build]}\n---\n\nOriginal method.\n', "utf-8")
+    monkeypatch.setattr(skills, "TEMPLATE_SKILLS", templates)
+    vault = tmp_path / "vault"
+    skills.install_templates(vault, frozenset())
+    copy = skills.agent_skill_dir(vault, "pm") / "example" / "SKILL.md"
+    source.write_text(source.read_text("utf-8").replace('"1.0.0"', '"2.0.0"').replace('Original method.', 'Improved method.'), "utf-8")
+    return vault, source, copy
+
+
+@pytest.mark.parametrize("customization", ["description", "load", "body", "io", "extra_metadata", "none"])
+def test_refresh_preserves_custom_metadata_and_body(skill_upgrade, customization):
+    vault, source, copy = skill_upgrade
+    text = copy.read_text("utf-8")
+    if customization == "description":
+        text = text.replace("description: original purpose", "description: project-specific purpose")
+    elif customization == "load":
+        text = text.replace("stages: [build]", "stages: [design], on_demand: true")
+    elif customization == "body":
+        text += "\nProject-specific method.\n"
+    elif customization == "io":
+        text = text.replace("metadata:\n", "metadata:\n  io: {reads: [project_data]}\n")
+    elif customization == "extra_metadata":
+        text = text.replace("metadata:\n", "metadata:\n  local_note: keep this project preference\n")
+    copy.write_text(text, "utf-8")
+    before = copy.read_bytes()
+    result = skills.refresh_unmodified(vault)
+    if customization != "none":
+        assert result == ([], ["example"])
+        assert copy.read_bytes() == before
+        assert skills.refresh_unmodified(vault) == ([], ["example"])
+    else:
+        assert result == (["example"], [])
+        assert skills.parse(copy).version == "2.0.0" and skills.parse(copy).body == "Improved method."
+        assert skills.refresh_unmodified(vault) == ([], [])
+        source.write_text(source.read_text("utf-8").replace('"2.0.0"', '"3.0.0"'), "utf-8")
+        assert skills.refresh_unmodified(vault) == (["example"], [])  # replacement saved a usable new baseline
+        assert skills.parse(copy).version == "3.0.0"
+
+
+@pytest.mark.parametrize("baseline", ["body_only", "missing", "legacy_known", "invalid_content_hash"])
+def test_refresh_keeps_legacy_copies_without_reliable_metadata_baseline(skill_upgrade, baseline):
+    import re
+    vault, _, copy = skill_upgrade
+    text = copy.read_text("utf-8")
+    if baseline == "missing":
+        text = re.sub(r"^  template:.*\n", "", text, flags=re.M)
+    elif baseline == "invalid_content_hash":
+        text = re.sub(r'content_sha: "[0-9a-f]+"', 'content_sha: "unknown"', text)
+    else:
+        text = re.sub(r', content_sha: "[0-9a-f]+"', '', text)
+    copy.write_text(text, "utf-8")
+    before = copy.read_bytes()
+    known = {"example": skills.body_sha(skills.parse(copy).body)} if baseline == "legacy_known" else None
+    assert skills.refresh_unmodified(vault, known) == ([], ["example"])
+    assert copy.read_bytes() == before  # do not stamp the current custom metadata as a trusted old baseline

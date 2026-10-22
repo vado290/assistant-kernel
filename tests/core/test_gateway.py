@@ -197,6 +197,23 @@ async def test_evolve_command_queues_one_review(gateway, sim):
     assert task["kind"] == "evolution" and task["state"] == "pm" and task["origin"] == "user"
 
 
+async def test_cancel_rechecks_publishing_after_stale_channel_read(gateway, kernel, sim, monkeypatch):
+    from .test_scenarios import review_ready, reviewed_result
+    task_id = await review_ready(kernel, sim)
+    sim.script("pm_turn", reviewed_result(await sim.task(task_id)))
+    sim.script("supervisor:evaluate", next_step("release"))
+    await sim.drain()
+    stale = await sim.task(task_id)
+    await kernel.act("p1", (await sim.item("p1"))["item_id"], "approve")
+    async def old_read(*args): return stale
+    monkeypatch.setattr(kernel, "active_task", old_read)
+    text = await gateway.cancel_active(PM_CH, USER)
+    assert "无法中途取消" in text
+    assert (await sim.task(task_id))["state"] == "publishing"
+    assert (await kernel.cancel_task(task_id))["state"] == "publishing"
+    await sim.assert_consistent()
+
+
 async def test_status_and_cancel_commands(gateway, sim):
     await say(gateway, "做日报工具")
     sim.script("supervisor:evaluate", next_step("requirements"))

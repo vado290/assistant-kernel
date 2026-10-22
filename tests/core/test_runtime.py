@@ -53,6 +53,27 @@ def control(monkeypatch):
     return fake
 
 
+@pytest.mark.parametrize("known", [False, True])
+async def test_service_last_at_is_change_time_not_a_health_heartbeat(
+        kernel, kernel_settings, project_files, control, known):
+    from assistant_kernel.core.executors.digest import evolution_material
+    old = datetime(2020, 1, 1, tzinfo=timezone.utc) if known else None
+    async with kernel.db.tx() as c:
+        await c.execute("""INSERT INTO core.jobs(project_id,job_id,kind,spec,manifest_sha,last_status,last_at)
+            VALUES ('p1','stable','service','{}','x',%s,%s)""", ("RUNNING" if known else None, old))
+    control.states[runtime.program_name("p1", "stable")] = "RUNNING"
+    assert await jobs.check_services(kernel) == 0
+    assert await jobs.check_services(kernel) == 0
+    context = await kernel.evolution_context("p1")
+    assert context["runtime"][0]["last_at"] == old
+    assert context["runtime"][0]["last_status"] == ("RUNNING" if known else None)
+    text = await evolution_material(kernel, kernel_settings, "p1")
+    assert "observed_at 是本次数据库资料读取时间，不是健康检查时间" in text
+    assert "kind=job 的 last_at 是最后执行结果时间" in text
+    assert "kind=service 的 last_at 是最后状态变化时间" in text
+    assert "不能仅据此认定检查过期或服务异常" in text
+
+
 @pytest.fixture
 def vault(kernel_settings):
     root = kernel_settings.data_root / "vaults" / "p1"
@@ -72,6 +93,117 @@ async def release(kernel, vault, text: str, project_id: str = "p1") -> None:
 
 def exists_in(root):
     return lambda path: (root / path).exists()
+
+
+def test_service_home_and_control_failure_semantics(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    service = {"id": "listener", "command": ["python3", "scripts/listen.py"], "timezone": "Asia/Shanghai"}
+    conf = runtime.program_conf("p1", service, tmp_path / "vault", tmp_path / "repo")
+    assert f"directory={tmp_path / 'repo'}" in conf and f"{tmp_path / 'vault'}/runs/services" in conf
+    monkeypatch.setattr(runtime.subprocess, "run", lambda *a, **kw: SimpleNamespace(returncode=3, stdout="proj-p1-listener FATAL", stderr=""))
+    ctl = runtime.SupervisorControl(tmp_path)
+    assert "FATAL" in ctl._ctl("status")
+    with pytest.raises(RuntimeError):
+        ctl._ctl("update", "proj-p1-listener")
+
+
+def test_retirement_retry_accepts_only_the_exact_missing_group(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    ctl = runtime.SupervisorControl(tmp_path)
+    monkeypatch.setattr(runtime.subprocess, "run", lambda args, **kw: SimpleNamespace(
+        returncode=1 if args[-2] == "update" else 0,
+        stdout="ERROR: no such group: proj-p1-listener" if args[-2] == "update" else "", stderr=""))
+    assert ctl.apply("p1", tmp_path, [], ["listener"])
+    with pytest.raises(RuntimeError):
+        ctl._ctl("update", "proj-p1-listener")
+    with pytest.raises(RuntimeError):
+        ctl._ctl("update", "proj-p1-other", missing_ok=True)
+
+
+async def test_legacy_retired_service_gets_one_confirmed_cleanup(kernel, kernel_settings, vault, control):
+    await release(kernel, vault, MANIFEST)
+    await jobs.sync_runtime(kernel, kernel_settings)
+    async with kernel.db.tx() as c:
+        await c.execute("UPDATE core.jobs SET status='retired' WHERE project_id='p1'")  # old release retained the old hash
+    (vault / "jobs.yaml").unlink()
+    assert await jobs.sync_runtime(kernel, kernel_settings) == 0  # missing file alone is not deletion approval
+    assert len(control.applied) == 1
+    async with kernel.db.tx() as c:
+        await event(c, "p1", "runtime_manifest_published", manifest_sha=None)
+    assert await jobs.sync_runtime(kernel, kernel_settings) == 1
+    assert control.applied[-1][2] == ["listener"]
+    assert await jobs.sync_runtime(kernel, kernel_settings) == 0
+    assert len(control.applied) == 2
+
+
+async def test_git_manifest_read_failure_never_retires_services(kernel, kernel_settings, vault, control, monkeypatch):
+    from assistant_kernel.core import gitdelivery
+    await release(kernel, vault, MANIFEST)
+    await jobs.sync_runtime(kernel, kernel_settings)
+    monkeypatch.setattr(gitdelivery, "config", lambda *a: {"main": "main", "repo": vault})
+    def git(*args, **kw):
+        if args[0] == "show": raise gitdelivery.GitError("cannot read object")
+        return "jobs.yaml" if args[0] == "ls-tree" else "abc"
+    monkeypatch.setattr(gitdelivery, "git", git)
+    with pytest.raises(gitdelivery.GitError):
+        await jobs._sync_project(kernel, kernel_settings, "p1")
+    assert len(await jobs.list_jobs(kernel, "p1")) == 3 and len(control.applied) == 1
+    monkeypatch.setattr(gitdelivery, "git", lambda *a, **kw: "")
+    assert jobs.released_manifest(kernel_settings, "p1")[0] is None  # genuinely absent tree entry
+
+
+async def test_missing_manifest_requires_an_explicit_published_deletion(kernel, kernel_settings, vault, control):
+    await release(kernel, vault, MANIFEST)
+    await jobs.sync_runtime(kernel, kernel_settings)
+    (vault / "jobs.yaml").unlink()
+    assert await jobs.sync_runtime(kernel, kernel_settings) == 0
+    assert len(await jobs.list_jobs(kernel, "p1")) == 3
+    assert len(control.applied) == 1
+    async with kernel.db.tx() as c:
+        await event(c, "p1", "runtime_manifest_published", manifest_sha=None)
+    assert await jobs.sync_runtime(kernel, kernel_settings) == 1
+    assert not await jobs.list_jobs(kernel, "p1")
+    assert control.applied[-1][2] == ["listener"]
+
+
+async def test_service_retirement_failure_is_retried_and_reported_once(kernel, sim, kernel_settings, vault, control, monkeypatch):
+    await release(kernel, vault, MANIFEST)
+    await jobs.sync_runtime(kernel, kernel_settings)
+    await jobs.set_status(kernel, "p1", "daily-report", "paused")
+    await release(kernel, vault, MANIFEST.split("services:")[0])
+    original = control.apply
+    def failure(*a, **kw): raise OSError("removal failed")
+    monkeypatch.setattr(control, "apply", failure)
+    for _ in range(2):
+        with pytest.raises(OSError):
+            await jobs._sync_project(kernel, kernel_settings, "p1")
+    async with kernel.db.tx() as c:
+        row = await (await c.execute("SELECT status,manifest_sha FROM core.jobs WHERE project_id='p1' AND job_id='listener'")).fetchone()
+    assert row == {"status": "retired", "manifest_sha": ""}
+    alerts = [m for m in await sim.outbound("p1") if "保留待重试" in m["body"]["text"]]
+    assert len(alerts) == 1
+    monkeypatch.setattr(control, "apply", original)
+    assert await jobs.sync_runtime(kernel, kernel_settings) == 1
+    assert control.applied[-1][2] == ["listener"]
+    assert await jobs.sync_runtime(kernel, kernel_settings) == 0
+    assert len([m for m in await sim.outbound("p1") if "检查已恢复" in m["body"]["text"]]) == 1
+    assert next(r for r in await jobs.list_jobs(kernel, "p1") if r["job_id"] == "daily-report")["status"] == "paused"
+
+
+async def test_changed_service_config_is_repaired_without_restarting_unchanged_ones(kernel, kernel_settings, vault, control, monkeypatch):
+    await release(kernel, vault, MANIFEST)
+    await jobs.sync_runtime(kernel, kernel_settings)
+    drift = [True]
+    monkeypatch.setattr(control, "needs_update", lambda *a: drift[0], raising=False)
+    original = control.apply
+    def apply(*args):
+        drift[0] = False
+        return original(*args)
+    monkeypatch.setattr(control, "apply", apply)
+    assert await jobs.sync_runtime(kernel, kernel_settings) == 1
+    assert len(control.applied) == 2
+    assert await jobs.sync_runtime(kernel, kernel_settings) == 0
+    assert len(control.applied) == 2
 
 
 def test_manifest_validation(vault):

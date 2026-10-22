@@ -15,7 +15,8 @@ The Kernel runs every project of the personal super assistant. A project has a v
 4. **Approvals are derived, never cleared by hand.** An approval stores the sha of what was approved
    (document revision, commit); it is valid only while the current sha still matches (`rules.approval_valid`).
 5. **Claim in one statement.** `Kernel.claim` checks every execution condition in a single SQL statement;
-   leases expire and are recovered; a stale result (not the task's current cursor) is discarded.
+   it first locks the candidate project, then rechecks all conditions in the claiming UPDATE so skill adoption cannot race a new Run.
+   Leases expire and are recovered; a stale result (not the task's current cursor) is discarded.
 6. **Contracts vs skills.** What Kernel code parses or relies on lives in `prompts/core/` and changes with the code.
    Skills are project-owned templates and can change freely.
 7. **Kernel writes what follows from state.** Files that mirror database state (charter archive, iteration log,
@@ -51,6 +52,7 @@ A project-creation task (`bootstrap`) only drafts its charter; approval creates 
 | `tools.py` | the MCP tool server for model turns; every call checks the run's lease |
 | `drafts.py` | task documents as drafts edited through tools, saved as immutable revisions at turn end |
 | `skills.py` / `agents.py` | skill loading by `metadata.load` rules; agent config loading |
+| `skill_updates.py` | project skill-adoption batches, verified full-directory baselines, guarded writes and recovery; disabled without an approved policy; see SKILL_ADOPTION.md |
 | `gitdelivery.py` | code delivery: worktrees, Kernel commits, tests on the commit, fast-forward publish |
 | `runtime.py` / `jobs.py` | released `jobs.yaml` (vault top level; code delivery: repository root on main) → scheduled jobs and supervisord services of projects |
 | `vault_sync.py` | Kernel's idempotent file writes that follow from state; pushes project history to GitHub |

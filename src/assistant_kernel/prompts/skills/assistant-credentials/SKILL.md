@@ -2,9 +2,10 @@
 name: assistant-credentials
 description: 项目凭据（登录账号、API 密钥等）怎么查、怎么向用户要、怎么命名和使用：先查后问，存进项目凭据库，不写进任何文档。
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
   load: {roles: [pm, supervisor], on_demand: true}
   changelog:
+    - "1.0.1 2026-10-20 澄清 jobs.yaml 作业的凭据提供边界，不再承诺 product.yaml 自动环境注入"
     - "1.0.0 2026-10-18 新增（ROUND5 R5.2）：每个项目一个凭据库 runtime/credentials.json，先查后问"
 ---
 
@@ -28,6 +29,8 @@ metadata:
 
 ## 使用规则
 - 凭据的值不写进需求、设计、报告、地图、代码、日志或任何消息；文档里只写 key。
-- 产物的脚本和服务不要把值写死在代码里：在 `product.yaml` 声明需要哪些 key，运行时由 Kernel 以环境变量提供。
+- 产物的脚本和服务不要把值写死在代码里。当前 jobs.yaml 的 script/service 路径没有根据 product.yaml 自动注入凭据的机制；
+  设计和实施要说明并验证所用执行器实际支持的凭据提供方式，只写 key/非敏感引用。尚无支持路径时报告能力缺口，
+  不把配置声明当作已接入，也不自行复制凭据值到项目文件来绕过。
 - 发现凭据失效（登录失败、被拒绝），在报告里说明是哪个 key，由用户更新；不要猜测或尝试别的账号。
 - Supervisor：用户问"保存了哪些凭据"时用 `list_credentials` 回答；用户要删除时提示发送 `/secrets delete <key>`。

@@ -45,7 +45,7 @@
     - {type: map, target: knowledge/map.yaml, action: modify, note: 登记日报脚本}
   verification: 怎样验证的、结果
   expected_effect: 预期效果
-  measure: 下次复盘怎样衡量（只能用这些数据：各阶段 PM 回合数、卡片修改/拒绝/"不确定"次数、执行失败或重试次数、作业成功/失败次数、用户发言次数）
+  measure: 下次复盘怎样衡量（运行统计或授权范围内可复核的业务证据；写明来源、比较基线、口径和观察时点，缺数据不编造）
   followups: 遗留问题和后续工作（没有写"无"）
   ```
   保存时 Kernel 会检查格式，结果显示在文档末尾。

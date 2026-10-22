@@ -15,6 +15,7 @@ OWNERS = {
     "core.jobs": {"core/jobs.py", "core/machine.py"},   # ROUND3 S3: manifest sync and job results
     "core.iterations": {"core/machine.py"},             # ROUND4: the change stream
     "core.project_grants": {"core/machine.py"},         # ROUND4: directory grants
+    "core.skill_updates": {"core/skill_updates.py"},   # only adoption operations, never task stages/approvals
 }
 
 

@@ -59,14 +59,14 @@ async def apply_manifest(kernel, project_id: str, sha: str | None, parsed: dict[
                                    ON CONFLICT (project_id, job_id) DO UPDATE SET kind=EXCLUDED.kind, spec=EXCLUDED.spec,
                                      status='enabled', next_at=EXCLUDED.next_at, failures=0,
                                      manifest_sha=EXCLUDED.manifest_sha, updated_at=now()""",
-                                (project_id, job_id, kind, Jsonb(spec), due, sha))
+                                (project_id, job_id, kind, Jsonb(spec), due, "" if kind == "service" else sha))
                 changes["added"].append(job_id)
                 if kind == "service":
                     changes["services"].append(job_id)
             elif row["spec"] != spec or row["kind"] != kind or (kind == "service" and not row["manifest_sha"]):
                 keep = row["next_at"] if kind == "job" and row["spec"].get("schedule") == spec.get("schedule") else due
                 await c.execute("""UPDATE core.jobs SET kind=%s, spec=%s, next_at=%s, manifest_sha=%s, updated_at=now()
-                                   WHERE project_id=%s AND job_id=%s""", (kind, Jsonb(spec), keep, sha, project_id, job_id))
+                                   WHERE project_id=%s AND job_id=%s""", (kind, Jsonb(spec), keep, "" if kind == "service" else sha, project_id, job_id))
                 changes["updated"].append(job_id)
                 if kind == "service":
                     changes["services"].append(job_id)
@@ -75,11 +75,14 @@ async def apply_manifest(kernel, project_id: str, sha: str | None, parsed: dict[
                                 (sha, project_id, job_id))
         for job_id, row in rows.items():
             if job_id not in wanted and row["status"] != "retired":
-                await c.execute("""UPDATE core.jobs SET status='retired', next_at=NULL, updated_at=now()
+                await c.execute("""UPDATE core.jobs SET status='retired', next_at=NULL,
+                                   manifest_sha=CASE WHEN kind='service' THEN '' ELSE manifest_sha END, updated_at=now()
                                    WHERE project_id=%s AND job_id=%s""", (project_id, job_id))
                 changes["retired"].append(job_id)
                 if row["kind"] == "service":
                     changes["services_removed"].append(job_id)
+            elif job_id not in wanted and row["kind"] == "service" and row["manifest_sha"] != runtime.manifest_sha(""):
+                changes["services_removed"].append(job_id)   # includes legacy retirement without an apply acknowledgment
         if any(changes.values()):
             await event(c, project_id, "runtime_synced", manifest_sha=sha, **changes)
     return changes
@@ -115,10 +118,10 @@ def released_manifest(settings, project_id: str) -> tuple[str | None, Callable[[
         except gitdelivery.GitError:
             return False
 
-    try:
-        text = gitdelivery.git("show", f"{code['main']}:{runtime.MANIFEST}", cwd=code["repo"])
-    except gitdelivery.GitError:
-        text = None
+    # A read failure is not an approved deletion. Resolve the ref and distinguish an absent tree entry first.
+    gitdelivery.git("rev-parse", "--verify", code["main"], cwd=code["repo"])
+    present = gitdelivery.git("ls-tree", "--name-only", code["main"], "--", runtime.MANIFEST, cwd=code["repo"])
+    text = gitdelivery.git("show", f"{code['main']}:{runtime.MANIFEST}", cwd=code["repo"]) if present.strip() else None
     return text, on_main, code["repo"]
 
 
@@ -127,12 +130,17 @@ async def _sync_project(kernel, settings, project_id: str) -> int:
     text, exists, home = await asyncio.to_thread(released_manifest, settings, project_id)
     sha = runtime.manifest_sha(text) if text is not None else None
     async with kernel.db.tx() as c:
-        stored = await one(c, """SELECT count(*) AS n, count(*) FILTER (WHERE manifest_sha IS DISTINCT FROM %s) AS stale
-                                 FROM core.jobs WHERE project_id=%s AND status <> 'retired'""", (sha, project_id))
+        stored = await one(c, """SELECT count(*) AS n, count(*) FILTER (WHERE manifest_sha IS DISTINCT FROM %s) AS stale,
+                                 count(*) FILTER (WHERE kind='service') AS services FROM core.jobs WHERE project_id=%s
+                                 AND (status <> 'retired' OR (kind='service' AND manifest_sha<>%s))""",
+                           (sha, project_id, runtime.manifest_sha("")))
+        publication = await one(c, """SELECT payload->>'manifest_sha' AS sha FROM core.task_events
+                                      WHERE project_id=%s AND kind='runtime_manifest_published' ORDER BY event_id DESC LIMIT 1""",
+                                (project_id,))
         seen = {r["kind"] for r in await all_rows(c, """SELECT DISTINCT kind FROM core.task_events WHERE project_id=%s
-                    AND kind LIKE 'runtime_manifest_%%' AND payload->>'manifest_sha' = %s""", (project_id, sha))}             if sha else set()
-    released = home is not None or sha is None or "runtime_manifest_published" in seen
-    if "runtime_manifest_invalid" in seen or (sha is None and not stored["n"])             or (sha is not None and stored["n"] and not stored["stale"]):
+                    AND kind LIKE 'runtime_manifest_%%' AND payload->>'manifest_sha' IS NOT DISTINCT FROM %s""", (project_id, sha))}
+    released = home is not None or bool(publication and publication["sha"] == sha)
+    if sha is None and not stored["n"]:
         return 0
     if not released:   # written outside a release (e.g. straight from a build turn's shell): never registered
         if "runtime_manifest_unreleased" in seen:   # already said
@@ -142,6 +150,8 @@ async def _sync_project(kernel, settings, project_id: str) -> int:
             await notify(c, project_id, "supervisor", f"⚠ {runtime.MANIFEST} 被直接修改过，与发布的版本不同，Kernel 没有登记"
                          "这些变化。作业和服务的改动请通过任务发布（批准发布即登记）。")
         return 0
+    if "runtime_manifest_invalid" in seen or (sha is not None and stored["n"] and not stored["stale"] and not stored["services"]):
+        return 0
     try:
         parsed = runtime.parse_manifest(text, exists) if text is not None else {"jobs": [], "services": []}
     except runtime.ManifestError as exc:   # published but broken (validation should have caught it): say so once
@@ -149,23 +159,56 @@ async def _sync_project(kernel, settings, project_id: str) -> int:
             await event(c, project_id, "runtime_manifest_invalid", manifest_sha=sha, error=str(exc)[:1000])
             await notify(c, project_id, "supervisor", f"⚠ {runtime.MANIFEST} 有误，未登记任何变化：{str(exc)[:500]}")
         return 0
+    if home is not None and (parsed["services"] or any(j["type"] == "script" for j in parsed["jobs"])):
+        try:
+            await asyncio.to_thread(gitdelivery.runtime_home, gitdelivery.config(settings, project_id))
+        except gitdelivery.GitError as exc:
+            async with kernel.db.tx() as c:
+                await _apply_notice(c, project_id, sha, "runtime_apply_failed", str(exc))
+            return 0
     changes = await apply_manifest(kernel, project_id, sha, parsed)
+    # A code fix to program generation must also repair existing configuration without restarting unchanged services.
+    needs_update = getattr(runtime.CONTROL, "needs_update", None)
+    for service in parsed["services"] if needs_update else []:
+        if service["id"] not in changes["services"] and await asyncio.to_thread(needs_update, project_id, vault, service, home):
+            changes["services"].append(service["id"])
+            changes["updated"].append(service["id"])
     if changes["services"] or changes["services_removed"]:
         services = [s for s in parsed["services"] if s["id"] in changes["services"]]
+        pending = changes["services"] + changes["services_removed"]
+        async with kernel.db.tx() as c:
+            await c.execute("UPDATE core.jobs SET manifest_sha='' WHERE project_id=%s AND job_id = ANY(%s)", (project_id, pending))
         try:
             await asyncio.to_thread(runtime.CONTROL.apply, project_id, vault, services, changes["services_removed"], home)
-        except Exception:   # forget the registration of these services, so the next sync tries again
+        except Exception as exc:   # pending marker survives for both active and retired services
             async with kernel.db.tx() as c:
-                await c.execute("UPDATE core.jobs SET manifest_sha='' WHERE project_id=%s AND job_id = ANY(%s)",
-                                (project_id, changes["services"]))
+                await _apply_notice(c, project_id, sha, "runtime_apply_failed", "服务配置尚未应用，保留待重试：" + str(exc)[:300])
             raise
+        else:
+            async with kernel.db.tx() as c:
+                # manifest_sha is NOT NULL; retired rows use the empty-content digest to acknowledge deletion.
+                await c.execute("""UPDATE core.jobs SET manifest_sha=CASE WHEN status='retired' THEN %s ELSE %s END
+                                   WHERE project_id=%s AND job_id = ANY(%s)""",
+                                (runtime.manifest_sha(""), sha, project_id, pending))
+    async with kernel.db.tx() as c:
+        await _apply_notice(c, project_id, sha, "runtime_apply_recovered", "运行配置及工作区检查已恢复；业务效果仍需核对。")
     shown = [f"{label}：{'、'.join(changes[key])}" for key, label in (("added", "新增"), ("updated", "修改"),
                                                                     ("retired", "退役")) if changes[key]]
     if shown:
         async with kernel.db.tx() as c:
             await notify(c, project_id, "supervisor", "⚙ 运行时已按发布的 jobs.yaml 更新（" + "；".join(shown)
                          + "）。发送 /jobs 查看。")
-    return 1
+    return int(any(changes.values()))
+
+
+async def _apply_notice(c, project_id, sha, kind, text):
+    previous = await one(c, """SELECT kind FROM core.task_events WHERE project_id=%s
+                              AND kind IN ('runtime_apply_failed','runtime_apply_recovered')
+                              AND payload->>'manifest_sha' IS NOT DISTINCT FROM %s ORDER BY event_id DESC LIMIT 1""", (project_id, sha))
+    if (previous or {}).get("kind") == kind or (kind == "runtime_apply_recovered" and not previous):
+        return
+    await event(c, project_id, kind, manifest_sha=sha)
+    await notify(c, project_id, "supervisor", text)
 
 
 # ------------------------------------------------------------------ scheduling

@@ -25,7 +25,7 @@
   "questions": [{"id": "c1", "text": "问题", "required": true, "options": ["A", "B"], "recommended": "A", "covers": ["q1"]}],
   "suggested": {"q2": {"answer": "建议答案", "basis": "依据"}},
   "instruction": "给 PM 的完整指令",
-  "target_stage": "requirements | design | build | review | release",
+  "target_stage": "requirements | design | build | review | release | operate",
   "track": "quick | full",
   "inferred_intent": [{"text": "推测的用意", "basis": "依据：状态簿回合、用户原话、卡片操作或画像"}],
   "tasks": [{"goal": "新任务目标", "reason": "为什么做", "ref": "P2"}],

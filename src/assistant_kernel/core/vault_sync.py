@@ -348,25 +348,7 @@ async def _push_repositories(kernel, settings) -> int:
 # ------------------------------------------------------------------ template skills → each project (ROUND5 R5.2 fix)
 
 async def _sync_templates(kernel, settings) -> int:
-    """Once per Kernel version: give every project the template skills new to it and refresh the copies it never
-    edited (skills.sync_templates), committing just the agents' folders."""
-    from assistant_kernel import __version__
-    from assistant_kernel.core import projectgit
-    changed = 0
-    for project_id in await kernel.active_projects():
-        vault = _vault(settings, project_id)
-        if (skills.offered(vault) or {}).get("kernel_version") == __version__:
-            continue
-        result = await asyncio.to_thread(skills.sync_templates, vault, skills.project_config(vault)["capabilities"],
-                                         __version__)
-        if result["installed"] or result["refreshed"]:
-            changed += 1
-            try:
-                await asyncio.to_thread(projectgit.commit_paths, vault, ["agents"],
-                                        f"同步技能模板（Kernel {__version__}）")
-            except (projectgit.GitError, OSError) as exc:
-                log.warning("committing synced skills of %s failed: %s", project_id, exc)
-        async with kernel.db.tx() as c:
-            await event(c, project_id, "skills_synced", kernel_version=__version__, **result)
-    return changed
+    """One guarded adoption path; existing project copies are never refreshed merely by a version bump."""
+    from assistant_kernel.core.skill_updates import maintain
+    return await maintain(kernel)
 

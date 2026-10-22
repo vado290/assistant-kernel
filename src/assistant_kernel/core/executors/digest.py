@@ -1,6 +1,7 @@
 """Render a project digest (Kernel.project_digest) as Markdown evidence for an evolution review."""
 from __future__ import annotations
 
+import json
 from typing import Any
 
 RECENT_LIMIT, MAJOR_LIMIT = 30, 20   # hard caps on the change stream in a review (ROUND4)
@@ -41,9 +42,42 @@ async def evolution_material(kernel, settings, project_id: str) -> str:
     vault = runtime.ensure(project_id).vault_root
     from assistant_kernel.core import iterlog
     parts = [render_digest(await kernel.project_digest(project_id))]
-    recent = await kernel.iterations(project_id, days=28, limit=RECENT_LIMIT)
-    parts.append("### 近 4 周的变更流水（含预期效果和衡量方法；用来复核上期改进的效果，记录编号用于'上期效果复核'）\n"
-                 + iterlog.render(recent))
+    context = await kernel.evolution_context(project_id)
+    parts.append("### 运营与后续任务入口（有界只读；登记状态不等于实时健康，截断不等于没有其他对象）\n"
+                 + json.dumps(context, ensure_ascii=False, default=str)
+                 + "\n时间口径：observed_at 是本次数据库资料读取时间，不是健康检查时间；"
+                   "kind=job 的 last_at 是最后执行结果时间，kind=service 的 last_at 是最后状态变化时间。"
+                   "服务状态不变时 last_at 不刷新，长期稳定运行也可能为旧值或空值；不能仅据此认定检查过期或服务异常。"
+                   "缺少实时健康证据时说明尚未核实，结合已有日志/回执判断，不补造检查时间。"
+                 + "\n已运行任务可读已生成的 runs/<task_id>/state.md，排队任务先用上面的状态与原因；历史复盘按 proposal_ref 读取；"
+                   "先核对重复提案、覆盖与继续入口。若列表截断，结合地图/配置定向查证并注明无法取得的状态，不宣称全覆盖。")
+    parts.append("运行版本仅列最近至多 12 条有 skills/config_sha256 的成功记录：技能标签包含按需可发现项，"
+                 "不证明全文已读或实际遵循；配置指纹不保存旧 role 内容，缺可靠基线标未知。")
+    from assistant_kernel.core.skill_updates import list_updates
+    adoption = await list_updates(kernel, project_id)
+    if adoption:
+        parts.append("### 技能采用记录（文件已应用不代表已加载或效果通过；受阻项交后续任务，引用 update_id）\n"
+                     + json.dumps(adoption, ensure_ascii=False, default=str))
+    baseline = await kernel.operational_baseline(project_id)
+    if baseline:
+        released = await kernel.get_task(baseline["task_id"])
+        refs = {k: v.get("ref") for k, v in (released or {}).get("documents", {}).items()
+                if k in ("task_contract", "solution_design", "implementation_report", "review_report")}
+        parts.append("### 已发布变更入口（最近增量，不代表全部运营要求；用 read_project_document 按 ref 核实）\n"
+                     + json.dumps({**baseline, "document_refs": refs}, ensure_ascii=False, default=str))
+    else:
+        parts.append("### 发布依据\n尚无 Kernel 发布基线；核实实际产物及人工/外部发布证据，不补造批准或推断没有运营对象。")
+    recent = await kernel.iterations(project_id, days=28, limit=RECENT_LIMIT + 1)
+    parts.append("### 近 4 周的变更流水（有界显示；记录编号用于上期效果复核）\n" + iterlog.render(recent[:RECENT_LIMIT])
+                 + ("\n另有记录未显示，需用 list_iterations 定向查询。" if len(recent) > RECENT_LIMIT else ""))
+    recent = recent[:RECENT_LIMIT]
+    for label, filters in (("尚待效果复核（含超过默认窗口的记录，pending 不算关闭）", {"pending_only": True}),
+                           ("有预期效果但缺衡量方法（补证，不补造历史指标）", {"needs_measure": True})):
+        page = await kernel.iteration_page(project_id, **filters, oldest_first=True, limit=RECENT_LIMIT)
+        parts.append("### " + label + "\n" + iterlog.render(page["items"])
+                     + "\n分页入口：" + json.dumps({"filters": {**filters, "oldest_first": True},
+                         "as_of": page["as_of"], "truncated": page["truncated"], "next_cursor": page["next_cursor"]})
+                     + "\n本轮纳入项逐条结论或暂缓；未覆盖项写继续入口，[] 不证明无待办。状态可变化，下轮重新核对。")
     shown = {r["iteration_id"] for r in recent}
     majors = [r for r in await kernel.iterations(project_id, days=180, major_only=True, limit=MAJOR_LIMIT + len(shown))
               if r["iteration_id"] not in shown][:MAJOR_LIMIT]
@@ -102,6 +136,8 @@ def render_digest(digest: dict[str, Any]) -> str:
     for t in digest["tasks"]:
         lines.append(f"  - [{t['state']}/{t['stage']}] {t['goal']}（PM 回合 {t['turn_count']}"
                      + (f"，结束原因 {t['close_reason']}" if t["close_reason"] else "") + "）")
+        if t.get("task_id"):
+            lines.append(f"    状态簿：runs/{t['task_id']}/state.md")
     actions = digest["card_actions"]
     revises = [a for a in actions if a.get("action") == "revise" and a.get("text")]
     negative = [a for a in actions if a.get("action") in ("stop", "reject")]
@@ -113,6 +149,8 @@ def render_digest(digest: dict[str, Any]) -> str:
         lines.append(f"  - 用户{('停止' if a['action'] == 'stop' else '拒绝')}：{a.get('message', '')[:150]}")
     for a in unsure[:5]:
         lines.append(f"  - 用户难以回答的问题：{a.get('message', '')[:150]} → {str(a.get('answers'))[:150]}")
+    if len(revises) > 10 or len(negative) > 10 or len(unsure) > 5:
+        lines.append("- 卡片例子已截断，不能代表全部反馈；需读相关任务状态簿，消息可用 list_recent_history 分页补查。")
     counts = digest["event_counts"]
     lines.append(f"- 卡片因新输入被改写 {counts.get('card_upgraded', 0)} 次；Supervisor 因新消息重新评估 "
                  f"{counts.get('supervisor_reevaluate', 0)} 次；作废的过期结果 {counts.get('stale_result', 0)} 次")

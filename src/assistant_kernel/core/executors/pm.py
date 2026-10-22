@@ -69,6 +69,7 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
     task = await kernel.get_task(run["task_id"])
     run_input = run["input"]
     stage = run_input["stage"]
+    review_basis = rules.review_baseline(task) if stage == "review" else None
     matched = skill_stage(task, stage)
     code = await asyncio.to_thread(gitdelivery.config, settings, run["project_id"])   # None: file delivery
     in_worktree = bool(code) and stage in ("build", "review")   # then Codex cannot find the PM's skills itself
@@ -94,7 +95,12 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
         await external_snapshot(ctx, settings, run["project_id"], task_id)
     workspace = None
     if in_worktree:   # the task's own worktree, cut from main
-        workspace = await asyncio.to_thread(gitdelivery.ensure_worktree, code, task_id)
+        workspace = (gitdelivery.worktree_path(code, task_id) if stage == "review" else
+                     await asyncio.to_thread(gitdelivery.ensure_worktree, code, task_id))
+        if stage == "review":
+            problem = await asyncio.to_thread(review_worktree_error, workspace, review_basis)
+            if problem:
+                return {"outcome": "failed", "summary": problem}
     map_text = ""
     if matched in MAP_STAGES:   # the project map: where things are (ROUND4 R4.2)
         where, text = await asyncio.to_thread(project_map, settings, run["project_id"])
@@ -172,11 +178,19 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
             seen[kind] = saved["sha256"]   # the PM wrote it, so a resumed turn need not resend it
     if free:
         result["free_documents"] = free
+    if in_worktree and stage == "review":
+        problem = await asyncio.to_thread(review_worktree_error, workspace, review_basis)
+        if problem:
+            # Keep notes and run metadata for recovery, but never submit a review of a drifting workspace.
+            result.update(outcome="failed", questions=[],
+                          summary=problem + " 本轮审查结论未采纳，工作笔记仅保留为待复核线索。")
+            return result
     if markdown:
         kind = stage_kind
         payload = {"markdown": markdown}
         if kind == "review_report":
             payload["verdict"] = document.get("verdict")
+            payload["review_baseline"] = review_basis
         report = await asyncio.to_thread(write_document, settings, run["project_id"], task_id,
                                          str(run["run_id"]), kind, payload, "pm")
         await asyncio.to_thread(drafts.save, settings, run["project_id"], task_id, kind, markdown, report["sha256"])
@@ -187,7 +201,15 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
             except ValueError as exc:
                 report["iteration_error"] = str(exc)
         if kind == "improvement_proposal":
-            report["effect_reviews"] = iterlog.parse_effect_reviews(markdown)
+            try:
+                report["effect_reviews"] = iterlog.parse_effect_reviews(markdown)
+            except ValueError as exc:
+                report["effect_review_error"] = str(exc)
+                report["effect_reviews"] = iterlog.parse_effect_reviews(markdown, strict=False)
+            errors = await kernel.effect_review_errors(run["project_id"], report["effect_reviews"])
+            if errors:
+                report["effect_review_error"] = "; ".join(filter(None, [report.get("effect_review_error"),
+                    "记录编号不能唯一匹配或重复：" + ", ".join(errors)]))
         if kind == "task_contract" and task["kind"] == "bootstrap":   # the charter: Kernel creates the project from it
             try:
                 spec = rules.charter_spec(markdown)
@@ -204,6 +226,7 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
                                                            str(task["task_id"]), report["sha256"])
         if kind == "review_report":
             report["verdict"] = payload["verdict"]
+            report["review_baseline"] = review_basis
             report["bundle_sha"] = (task["documents"].get("validation") or {}).get("bundle_sha")
         result["report"] = report
     return result
@@ -282,10 +305,24 @@ def render_prompt(header: str, context: list[tuple[str, str, str]], documents: l
     ])
 
 
+def review_worktree_error(workspace, baseline) -> str | None:
+    """Check the existing review workspace without creating, resetting or committing it."""
+    bundle = (baseline or {}).get("bundle_sha", "")
+    if not bundle.startswith(gitdelivery.PREFIX):
+        return None   # no-files deliveries are reviewed through their document evidence
+    try:
+        if gitdelivery.git("rev-parse", "HEAD", cwd=workspace) == bundle[len(gitdelivery.PREFIX):] \
+                and not gitdelivery.git("status", "--porcelain", cwd=workspace):
+            return None
+    except (gitdelivery.GitError, OSError):
+        pass
+    return "Review 工作区缺失或与被验证的提交不一致，本轮不能给出通过结论；请保留改动并恢复对应工作区，或回 build 重新提交验证。"
+
+
 def seal_candidates(settings, project_id: str, task_id: str, report_sha: str) -> str:
     """Kernel seals the candidate files itself; a build with no files gets a report-bound marker."""
-    from assistant_kernel.services.candidate_bundle import CandidateBundleService
+    from assistant_kernel.services.candidate_bundle import CandidateBundleService, CandidateManifestMissing
     try:
         return CandidateBundleService(settings).seal(project_id, task_id)["bundle_sha256"]
-    except FileNotFoundError:
+    except CandidateManifestMissing:
         return f"no-files:{report_sha}"

@@ -288,13 +288,15 @@ async def _record_review(c, task, common: dict[str, Any]) -> None:
         followups="；".join(f"{q['source_ref'] or ''} {q['goal']}".strip() for q in queued) or "无后续任务",
         changes=[{"type": "doc", "target": "improvement_proposal", "action": "add",
                   "note": f"采纳 {len(queued)} 条建议"}] if proposal else [])
-    for review in proposal.get("effect_reviews") or []:
-        if len(review["iteration"]) < 8:   # a short prefix could match several rows
-            continue
+    resolved, problems = await iterlog.resolve_effect_reviews(c, task["project_id"], proposal.get("effect_reviews"))
+    if problems or proposal.get("effect_review_error"):
+        await event(c, task["project_id"], "effect_review_invalid", task_id=task["task_id"], references=problems)
+        await notify(c, task["project_id"], "supervisor", "部分效果条目无效、歧义或重复，未写回这些条目；合法且唯一的结论仍按原规则写回，其余保留待核对。")
+    for iteration_id, review in resolved.items():
         await c.execute("""UPDATE core.iterations SET effect_status=%s, effect_note=%s, effect_reviewed_in=%s
-                           WHERE project_id=%s AND iteration_id::text LIKE %s""",
-                        (review["status"], review["note"], row["iteration_id"] if row else None, task["project_id"],
-                         review["iteration"].lower() + "%"))
+                           WHERE project_id=%s AND iteration_id=%s""",
+                        (review["status"], str(review.get("note") or "")[:400], row["iteration_id"] if row else None,
+                         task["project_id"], iteration_id))
 
 
 def _now():
@@ -437,6 +439,10 @@ def _inferred(items) -> list[dict[str, str]]:
 
 
 def _supervisor_item(task, run_input: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+    if task["kind"] == "evolution" and result.get("decision") in ("propose_complete", "propose_followups"):
+        problem = (task["documents"].get("improvement_proposal") or {}).get("effect_review_error")
+        if problem:
+            raise InvalidResult("效果复核需在 operate 补正：" + problem)
     """Turn a Supervisor decision into the task's card item, enforcing Kernel rules."""
     decision = result.get("decision")
     message = result.get("message", "")
@@ -559,17 +565,21 @@ async def _validation_result(c, task, run, result) -> None:
 async def _publish_result(c, task, run, result) -> None:
     outcome = result.get("outcome")
     if outcome == "published":
-        if "manifest_sha" in result:   # only a released jobs.yaml is registered (jobs.sync_runtime)
-            await event(c, task["project_id"], "runtime_manifest_published", task_id=task["task_id"],
-                        manifest_sha=result["manifest_sha"])
-        await close(c, task, "completed", "published", published_files=result.get("files"),
-                    commits=result.get("commits"))
-        if result.get("note"):   # the project's own release note, e.g. kernel: "ready to deploy"
-            await notify(c, task["project_id"], "pm", str(result["note"])[:1000], task_id=task["task_id"])
+        await _finish_publish(c, task, result, "published")
     elif outcome == "failed":
         await to_supervising(c, task, "publish_failed", error=result.get("error"))
     else:
         await to_awaiting(c, task, _decision(task, "reconcile", "发布结果不确定，请核对后选择实际结果。"))
+
+
+async def _finish_publish(c, task, result, reason):
+    if "manifest_sha" in result:
+        await event(c, task["project_id"], "runtime_manifest_published", task_id=task["task_id"],
+                    manifest_sha=result["manifest_sha"])
+    closed = await close(c, task, "completed", reason, published_files=result.get("files"), commits=result.get("commits"))
+    if result.get("note"):
+        await notify(c, task["project_id"], "pm", str(result["note"])[:1000], task_id=task["task_id"])
+    return closed
 
 
 async def _bootstrap_result(c, task, run, result) -> None:
@@ -814,7 +824,7 @@ async def on_exhausted(c, run: dict[str, Any]) -> None:
 # ---------------------------------------------------------------- card actions
 
 async def on_action(c, project_id: str, item_id: str, action: str, values: dict[str, Any],
-                    source_message_id=None) -> dict[str, Any]:
+                    source_message_id=None, *, settings=None) -> dict[str, Any]:
     card, item = await cards.take_item(c, project_id, item_id)
     # Feedback for weekly evolution: what was shown, what the user did and what they wrote.
     await event(c, project_id, "card_action", interaction_id=card["interaction_id"],
@@ -827,8 +837,12 @@ async def on_action(c, project_id: str, item_id: str, action: str, values: dict[
     task = await load_task(c, item["target"]["id"])
     if not task or task["state"] != "awaiting_user":
         raise cards.StaleItem("the task is no longer waiting for this item")
+    from assistant_kernel.core.executors.delivery import require_publication_stopped
+    await require_publication_stopped(c, settings, task)
     await cards.clear_task_extras(c, project_id, task["task_id"])
     handler = {"questions": _questions_action, "next_step": _next_step_action, "decision": _decision_action}
+    if item["kind"] == "decision":
+        return await _decision_action(c, task, item, action, values, source_message_id, settings=settings)
     return await handler[item["kind"]](c, task, item, action, values, source_message_id)
 
 
@@ -885,7 +899,7 @@ async def _next_step_action(c, task, item, action, values, source_message_id):
                                  "note": values.get("text", "")}, stage=content["target_stage"])
 
 
-async def _decision_action(c, task, item, action, values, source_message_id):
+async def _decision_action(c, task, item, action, values, source_message_id, *, settings=None):
     decision, data = item["content"]["decision"], item["content"]["data"]
     if action not in DECISION_ACTIONS[decision]:
         raise ValueError(f"{decision} accepts {DECISION_ACTIONS[decision]}")
@@ -893,6 +907,14 @@ async def _decision_action(c, task, item, action, values, source_message_id):
     if decision == "release":
         if action == "reject":
             return await to_supervising(c, task, "release_rejected", text=note)
+        if task.get("kind", "delivery") == "delivery" and task.get("track") != "quick":
+            error = rules.review_error(task)
+            if error or rules.doc_sha(task, "review_report") != data["review_sha"] or rules.validated_bundle(task) != data["bundle_sha"]:
+                # Keep this current card (transaction rollback), including its usable reject button.
+                # StaleItem would incorrectly tell the user that a replacement card already exists.
+                recovery = ("请点‘不同意’，由 Supervisor 重新安排审查。" if task["stage"] == "review" else
+                            "请点‘不同意’并核对发布实际结果；release 阶段不能直接返回 Review。")
+                raise ValueError(f"本次未批准：{error or '发布卡片引用已过期'}。{recovery}")
         if rules.validated_bundle(task) != data["bundle_sha"] or rules.doc_sha(task, "review_report") != data["review_sha"]:
             raise cards.StaleItem("the reviewed bundle changed after this card was shown")
         approvals = {**task["approvals"], "release": {"bundle_sha": data["bundle_sha"], "review_sha": data["review_sha"],
@@ -941,7 +963,12 @@ async def _decision_action(c, task, item, action, values, source_message_id):
                                                 "source_project": task["project_id"], "task_id": str(task["task_id"])})
     if decision == "reconcile":
         if action == "published":
-            return await close(c, task, "completed", "published_after_reconcile")
+            import asyncio
+            from assistant_kernel.core.executors.delivery import reconcile_publication
+            run = await one(c, "SELECT * FROM core.runs WHERE task_id=%s AND run_type='publish' ORDER BY created_at DESC LIMIT 1",
+                            (task["task_id"],))
+            result = await asyncio.to_thread(reconcile_publication, settings, task, run)
+            return await _finish_publish(c, task, result, "published_after_reconcile")
         return await to_supervising(c, task, "publish_failed", error="user reported failure")
     if decision == "run_failed":
         if action == "stop":

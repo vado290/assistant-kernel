@@ -88,3 +88,98 @@ async def test_supervisor_knows_time_user_and_the_project_situation(kernel, sim,
 def test_supervisor_runs_get_five_minutes():
     data = yaml.safe_load((TEMPLATE / "supervisor" / "config.yaml").read_text("utf-8"))
     assert data["harness"]["timeout_seconds"] == 300
+
+
+async def test_evolution_supervisor_reads_queued_basis_and_original_report_without_ledger(
+        kernel, dispatcher, fake_harness, kernel_settings, project_files):
+    from psycopg.types.json import Jsonb
+    from assistant_kernel.core.executors.common import write_document
+    from assistant_kernel.core.executors.supervisor import project_situation
+    from assistant_kernel.services.document_runtime import TaskDocumentService
+
+    parent = await kernel.start_evolution("p1")
+    proposal = write_document(kernel_settings, "p1", str(parent["task_id"]), "source", "improvement_proposal",
+        {"markdown": "# ORIGINAL_PROPOSAL_EVIDENCE\nP1 保留定制，只修加载\nP2 只审角色，不改加载"}, "pm")
+    async with kernel.db.tx() as c:
+        await c.execute("UPDATE core.tasks SET documents=%s WHERE task_id=%s",
+                        (Jsonb({"improvement_proposal": proposal}), parent["task_id"]))
+    await kernel.cancel_task(parent["task_id"])
+    current = await kernel.start_evolution("p1")
+    basis = "P1 原批准边界：" + "必须保留定制；" * 150 + "BASIS_END_MUST_SURVIVE"
+    children = []
+    for goal, reason, ref in (("优化运营技能", basis, "P1"),
+                              ("优化运营技能", "P2_SCOPE_ONLY_REVIEW_ROLE", "P2"),
+                              ("加载故障修复", "同一 P1 已有任务，先核对", "P1")):
+        children.append(await kernel.create_task("p1", goal=goal, reason=reason, origin="evolution",
+                        parent_task_id=parent["task_id"], source_ref=f"review:{str(parent['task_id'])[:8]}:{ref}"))
+    legacy = await kernel.create_task("p1", goal="legacy no basis", origin="user")
+    assert all(t["state"] == "queued" for t in [*children, legacy])
+    assert all(not (project_files / "runs" / str(t["task_id"]) / "state.md").exists() for t in children)
+    fake_harness.script("pm", {"outcome": "completed", "summary": "核对已有任务",
+        "document": {"kind": "improvement_proposal", "markdown": "## 上期效果复核\n[]"}})
+    fake_harness.script("supervisor", {"decision": "propose_complete", "message": "已有任务承接"})
+    await settle(dispatcher)
+    call = next(c for c in reversed(fake_harness.calls) if "· Supervisor" in c.prompt)
+    assert "BASIS_END_MUST_SURVIVE" in call.prompt and "P2_SCOPE_ONLY_REVIEW_ROLE" in call.prompt
+    assert call.prompt.count("ORIGINAL_PROPOSAL_EVIDENCE") == 1  # shared parent read once
+    assert f"review:{str(parent['task_id'])[:8]}:P1" in call.prompt
+    assert "排队中，不依赖 state.md" in call.prompt and '"source_proposal_ref": null' in call.prompt
+    assert "read_project_document" not in call.scoped_tools  # default Supervisor tools were not widened
+    rows = await kernel.recent_tasks("p1", exclude=current["task_id"], include_basis=True)
+    row = next(r for r in rows if r["task_id"] == children[0]["task_id"])
+    assert TaskDocumentService(kernel_settings).read("p1", row["source_proposal_ref"])["payload"]["markdown"].startswith("# ORIGINAL")
+    for child in children:
+        assert (await kernel.get_task(child["task_id"]))["state"] == "queued"  # evidence does not merge/change tasks
+    normal = await project_situation(kernel, kernel_settings, "p1", {**current, "kind": "delivery"})
+    assert "BASIS_END_MUST_SURVIVE" not in normal and "ORIGINAL_PROPOSAL_EVIDENCE" not in normal
+    defaults = await kernel.recent_tasks("p1", exclude=current["task_id"])
+    assert all("source_proposal_ref" not in row and "reason" not in row for row in defaults)
+
+
+@pytest.mark.parametrize("fault", ["missing", "bad_hash", "foreign", "foreign_parent"])
+async def test_evolution_parent_report_failure_is_explicit_and_project_scoped(
+        kernel, kernel_settings, project_files, fault):
+    from psycopg.types.json import Jsonb
+    from assistant_kernel.core.executors.common import write_document
+    from assistant_kernel.core.executors.supervisor import project_situation
+    parent = await kernel.start_evolution("p2" if fault == "foreign_parent" else "p1")
+    doc = write_document(kernel_settings, "p2" if fault in {"foreign", "foreign_parent"} else "p1", str(parent["task_id"]),
+                         "r", "improvement_proposal", {"markdown": "UNREADABLE_SOURCE_MUST_NOT_LEAK"}, "pm")
+    if fault == "missing":
+        (kernel_settings.data_root / "vaults" / "p1" / doc["ref"]["uri"].split("vault://p1/", 1)[1]).unlink()
+    elif fault == "bad_hash":
+        doc["ref"]["sha256"] = "0" * 64
+    async with kernel.db.tx() as c:
+        await c.execute("UPDATE core.tasks SET documents=%s WHERE task_id=%s", (Jsonb({"improvement_proposal": doc}), parent["task_id"]))
+    await kernel.cancel_task(parent["task_id"])
+    current = await kernel.start_evolution("p1")
+    await kernel.create_task("p1", goal="queued", origin="evolution", parent_task_id=parent["task_id"], source_ref="P1")
+    prompt = await project_situation(kernel, kernel_settings, "p1", current)
+    assert "UNREADABLE_SOURCE_MUST_NOT_LEAK" not in prompt
+    assert "安排 PM 在 operate 定向补证" in prompt
+    assert ('"source_proposal_ref": null' if fault == "foreign_parent" else "缺失、校验失败或无正文：尚未核实") in prompt
+
+
+async def test_evolution_original_report_expansion_is_bounded_with_continuation(kernel, kernel_settings, project_files):
+    from psycopg.types.json import Jsonb
+    from assistant_kernel.core.executors.common import write_document
+    from assistant_kernel.core.executors.supervisor import project_situation
+    parents = []
+    for index in range(6):
+        task = await kernel.start_evolution("p1")
+        doc = write_document(kernel_settings, "p1", str(task["task_id"]), f"r{index}", "improvement_proposal",
+                             {"markdown": f"REPORT_BODY_{index}\n" + "x" * 8100 + "UNSHOWN_END"}, "pm")
+        async with kernel.db.tx() as c:
+            await c.execute("UPDATE core.tasks SET documents=%s WHERE task_id=%s",
+                            (Jsonb({"improvement_proposal": doc}), task["task_id"]))
+        await kernel.cancel_task(task["task_id"])
+        parents.append((task, doc))
+    current = await kernel.start_evolution("p1")
+    for parent, doc in parents:
+        await kernel.create_task("p1", goal="queued", reason="retained basis", origin="evolution",
+                                 parent_task_id=parent["task_id"], source_ref="P1")
+    prompt = await project_situation(kernel, kernel_settings, "p1", current)
+    assert prompt.count("REPORT_BODY_") == 5 and "UNSHOWN_END" not in prompt
+    assert prompt.count("正文超过 8000 字符，已截断") == 5
+    assert "原报告正文入口超过 5 份" in prompt and "安排 PM 在 operate 定向补证" in prompt
+    assert all(doc["ref"]["sha256"] in prompt for _, doc in parents)

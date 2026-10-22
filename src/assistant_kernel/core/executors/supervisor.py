@@ -12,7 +12,7 @@ from assistant_kernel.core.runtime import DEFAULT_TZ
 from assistant_kernel.core import skills as skill_rules
 from assistant_kernel.core.executors.common import (
     DOMAIN_BRIEF, PROFILE_HEADING, READ_ONLY_TOOLS, USER_PROFILE, call_for_json, capabilities, charter, knowledge_text, load_agent,
-    project_catalog, prompt_text, render_documents,
+    project_catalog, prompt_text, read_document, render_documents,
 )
 from assistant_kernel.core.executors.digest import SHARED_CANDIDATES_HEADING, shared_candidates
 
@@ -103,11 +103,39 @@ async def project_situation(kernel, settings, project_id: str, task: dict[str, A
     """What else is going on in the project: other tasks (queued, recently ended, with their ledgers), the latest
     changes, and the industry brief's opening — material for reading what the user meant but has not said."""
     lines = ["## 项目近况（Kernel 汇总）"]
-    others = await kernel.recent_tasks(project_id, exclude=(task or {}).get("task_id"))
-    lines.append("### 其他任务（排队中的和最近结束的；需要细节时在只读沙箱里读它的状态簿）")
+    evolution = (task or {}).get("kind") == "evolution"
+    others = await kernel.recent_tasks(project_id, exclude=(task or {}).get("task_id"),
+                                      **({"include_basis": True} if evolution else {}))
+    lines.append("### 其他任务（排队任务可能尚无状态簿；以下依据与原建议引用来自当前数据库）" if evolution else
+                 "### 其他任务（排队中的和最近结束的；需要细节时在只读沙箱里读它的状态簿）")
     lines += [f"- [{TASK_STATES.get(t['state'], t['state'])}] {t['goal']}（{t['kind']}"
               + (f"，结束原因 {t['close_reason']}" if t.get("close_reason") else "")
-              + f"，{t['updated_at']:%m-%d}）· `runs/{t['task_id']}/state.md`" for t in others] or ["（无）"]
+              + f"，{t['updated_at']:%m-%d}）· "
+              + (f"任务 {t['task_id']}（排队中，不依赖 state.md）" if evolution and t["state"] == "queued" else
+                 f"`runs/{t['task_id']}/state.md`")
+              + ("\n  依据：" + json.dumps({"reason": t.get("reason"), "parent_task_id": t.get("parent_task_id"),
+                    "source_ref": t.get("source_ref"), "source_proposal_ref": t.get("source_proposal_ref")},
+                    ensure_ascii=False, default=str) if evolution else "") for t in others] or ["（无）"]
+    if evolution:
+        lines.append("相似目标不等于重复：核对原因、原 P 和范围，不自动合并或改写既有批准。"
+                     "缺引用/依据标未知，不猜编号；原报告缺失或截断时用已启用的读取工具补查，"
+                     "没有读取能力则安排 PM 在 operate 定向补证，不以缺证推断没有重复。")
+        seen = set()
+        for t in others:
+            ref = t.get("source_proposal_ref")
+            if not ref:
+                continue
+            key = json.dumps(ref, sort_keys=True)
+            if key in seen:
+                continue
+            if len(seen) >= 5:
+                lines.append("原报告正文入口超过 5 份，本轮材料未全部展开；其余保留上方引用，按相关性定向补证。")
+                break
+            seen.add(key)
+            body = await asyncio.to_thread(read_document, settings, project_id, {"ref": ref})
+            lines.append(f"### 来源复盘原报告（父任务 {t.get('parent_task_id')}；按引用校验读取）\n"
+                         + (body[:8000] if body else "（缺失、校验失败或无正文：尚未核实）")
+                         + ("\n…（正文超过 8000 字符，已截断；不能据此宣称完整核对）" if len(body) > 8000 else ""))
     changes = await kernel.iterations(project_id, days=180, limit=5)
     lines.append("### 最近的变更流水（细节用 list_iterations 查）\n" + (iterlog.render(changes, brief=True) or "（无）"))
     brief = await asyncio.to_thread(knowledge_text, settings, project_id, DOMAIN_BRIEF)

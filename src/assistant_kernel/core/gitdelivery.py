@@ -145,6 +145,14 @@ def fast_forward(cfg: dict[str, Any], sha: str) -> list[str]:
     return files
 
 
+def runtime_home(cfg: dict[str, Any]) -> Path:
+    """Runtime executes a clean main working copy; never switch or reset the user's checkout."""
+    if git("rev-parse", "HEAD", cwd=cfg["repo"]) != git("rev-parse", cfg["main"], cwd=cfg["repo"]) \
+            or git("status", "--porcelain", "--untracked-files=no", cwd=cfg["repo"]):
+        raise GitError("运行工作区不对应干净的已发布主分支；请保留改动并核对运行目录，Kernel 不自动切换或重置")
+    return cfg["repo"]
+
+
 def remove_worktree(cfg: dict[str, Any], task_id: str) -> bool:
     """Remove a closed task's worktree; delete its branch only when it is merged into main."""
     path = worktree_path(cfg, task_id)

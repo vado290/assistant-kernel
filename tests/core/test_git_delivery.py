@@ -124,6 +124,82 @@ async def test_code_delivery_end_to_end(kernel, sim, dispatcher, fake_harness, k
     assert not worktree.exists() and not git(repo, "branch", "--list", gitdelivery.branch(str(task_id)))
 
 
+@pytest.mark.parametrize("drift,fresh", [("before", False), ("during", False), ("during", True)])
+async def test_full_git_review_refuses_drift_then_recovers_without_reset(
+        kernel, sim, dispatcher, fake_harness, kernel_settings, repo, drift, fresh, monkeypatch):
+    from assistant_kernel.core import drafts, machine
+    from assistant_kernel.core.executors.common import read_document
+    from .sim import next_step
+    from .test_scenarios import to_build as full_build
+
+    task_id = (await kernel.receive("p1", role="pm", text="full git review"))["task_id"]
+    await full_build(kernel, sim, task_id)
+    final_content = "print('hello')\n"
+    fake_harness.script("pm", writing({"hello.py": final_content}, {
+        "outcome": "ready_for_validation", "document": {"kind": "implementation_report", "markdown": "已实现\n" + RECORD}}))
+    dispatcher.scripts.add("supervisor:evaluate", next_step("review"))
+    await settle(dispatcher)
+    await kernel.act("p1", (await sim.item("p1", task_id))["item_id"], "execute")
+    cfg = gitdelivery.config(kernel_settings, "p1")
+    worktree = gitdelivery.worktree_path(cfg, task_id)
+    reviewed_commit = rules.validated_bundle(await sim.task(task_id))[4:]
+    good_review = {"outcome": "completed", "document": {"kind": "review_report", "markdown": "核对通过", "verdict": "pass"}}
+    findings = "## 开放问题\n接口检查发现的证据位置：hello.py；恢复后需重新核对。"
+    if drift == "before":
+        (worktree / "hello.py").write_text("local uncommitted work", "utf-8")
+    else:
+        def drifting_review(request):
+            draft = drafts.load(kernel_settings, "p1", task_id, "working_notes")
+            drafts.save(kernel_settings, "p1", task_id, "working_notes", findings, draft["base_sha256"])
+            return writing({"hello.py": "local uncommitted work"}, good_review)(request)
+        fake_harness.script("pm", drifting_review)
+    dispatcher.scripts.add("supervisor:evaluate", next_step("review", "保留改动后恢复对应提交再审查"))
+    await settle(dispatcher)
+    assert "review_report" not in (await sim.task(task_id))["documents"]
+    assert (worktree / "hello.py").read_text("utf-8") == "local uncommitted work"
+    assert git(worktree, "rev-parse", "HEAD") == reviewed_commit
+    failed = await sim.task(task_id)
+    if drift == "during":
+        assert read_document(kernel_settings, "p1", failed["documents"].get("working_notes")) == findings
+        assert not rules.review_passed(failed)
+        async with kernel.db.tx() as c:
+            row = await (await c.execute("""SELECT result FROM core.runs WHERE task_id=%s AND run_type='pm_turn'
+                                         AND input->>'stage'='review' ORDER BY created_at DESC LIMIT 1""", (task_id,))).fetchone()
+        result = row["result"]
+        assert result["outcome"] == "failed" and "report" not in result
+        assert result["usage"]["input_tokens"] == 100 and result["usage"]["output_tokens"] == 50
+        assert result["session_id"] == failed["pm_session"]["native_session_id"]
+        assert result["session_id"] and result["config_sha256"] and result["skills"]
+        assert "待复核" in result["summary"]
+
+    # The test operator preserves the uncommitted material outside the managed worktree before restoring it.
+    saved = kernel_settings.data_root / "saved-review-work.txt"
+    saved.write_text((worktree / "hello.py").read_text("utf-8"), "utf-8")
+    (worktree / "hello.py").write_text(final_content, "utf-8")
+    if fresh:
+        monkeypatch.setattr(machine, "SESSION_TURNS", 1)  # exercise the existing session-rotation path
+    await kernel.act("p1", (await sim.item("p1", task_id))["item_id"], "execute")
+    def rereview(request):
+        if drift == "during":
+            assert drafts.load(kernel_settings, "p1", task_id, "working_notes")["markdown"] == findings
+            if fresh:
+                assert request.physical_session_id is None and findings in request.prompt
+            else:
+                assert request.physical_session_id == failed["pm_session"]["native_session_id"]
+        return good_review
+    fake_harness.script("pm", rereview)
+    dispatcher.scripts.add("supervisor:evaluate", next_step("release"))
+    await settle(dispatcher)
+    reviewed = (await sim.task(task_id))["documents"]["review_report"]
+    assert reviewed["review_baseline"]["bundle_sha"] == "git:" + reviewed_commit
+    await kernel.act("p1", (await sim.item("p1", task_id))["item_id"], "approve")
+    await settle(dispatcher)
+    assert (await sim.task(task_id))["close_reason"] == "published"
+    assert git(repo, "rev-parse", "main") == reviewed_commit
+    await sync_vaults(kernel, kernel_settings)
+    assert not worktree.exists() and saved.read_text("utf-8") == "local uncommitted work"
+
+
 def test_validation_runs_the_tests_on_the_commit(tmp_path, kernel_settings, repo):
     cfg = gitdelivery.config(kernel_settings, "p1")
     path = gitdelivery.ensure_worktree(cfg, "t-fail")
