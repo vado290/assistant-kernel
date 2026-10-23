@@ -71,7 +71,7 @@ async def test_supervisor_records_what_the_user_states_and_sees_the_ledger(kerne
     fake_harness.script("supervisor", {"decision": "ask_user", "message": "还有吗？",
                                        "questions": [{"id": "c2", "text": "还有别的要求吗？"}]})
     await settle(dispatcher)
-    assert "用户回答：日报给谁看？ → 门店店长们" in fake_harness.calls[-1].prompt   # Supervisor sees earlier answers
+    assert "问：日报给谁看？ → 答：门店店长们" in fake_harness.calls[-1].prompt   # Supervisor sees earlier answers
 
     await kernel.receive("p1", role="supervisor", text="以后每次只问我一个问题", user_id="u-7")
     fake_harness.script("supervisor", {"reply": "好的，以后每次只问一个。",

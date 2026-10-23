@@ -267,6 +267,7 @@ kernel 项目公开（0.45.6，2026-10-20，用户确认）：kernel 项目是�
 Supervisor 下一轮指令改进（0.45.7，2026-10-20，用户确认）：propose_next 可附 `inferred_intent`（推测的用意，最多 3 条、每条带依据），单独显示在卡片上、作为"假设"交给 PM、记进状态簿；PM 把推测转成确认式问题或待定事项，不直接实施；推测力度跟随用户画像；Supervisor 的 prompt 增加当前时间与当前用户、项目近况（排队和最近结束的任务及其状态簿、最近 5 条变更、行业速写开头）；状态簿中的指令保留到 1200 字；Supervisor 每轮最多 5 分钟（模板与 `scripts/r0457_supervisor_timeout.py`）；技能 assistant-goal-supervisor 6.6.0、assistant-user-insight 1.2.0、assistant-project-agent 2.2.0、assistant-requirements 3.2.4。
 0.45.8–0.45.10（2026-10-21/22，另一会话）：技能采用批次（`core/skill_updates.py`、迁移 0008、`docs/SKILL_ADOPTION.md`）、Review 基线与发布准入（`docs/REVIEW_STAGE_RELEASE_CHECKLIST.md`）及相应技能更新；已部署但当时未提交，2026-10-22 原样补提交（`075de09`）。其中“版本变化不再刷新副本”与 D24 冲突。
 kernel 职能与地图分析后修复（0.45.11，2026-10-22，用户确认）：恢复 D24（没改过的副本随版本自动刷新，技能采用批次只用于改过的副本等特殊情况、默认关闭），先用 `scripts/r04511_stamp_fingerprints.py` 给已有副本补内容指纹；任务之外的提交（手工、其他工具、Kernel 维护）导入变更流水（`vault_sync._import_commits`，按提交时间、每个提交一次，发布提交不重复）；`deploy.ps1` 要求工作区已提交；kernel 章程按新职能重写；技能 assistant-capability-maintenance 2.6.0、assistant-task-continuity 2.13.0。
+协作数据评估后修复（0.45.12，2026-10-23，用户确认 O1，不加表）：任务卡片项出现或被替换时完整记入 `task_events`（card_item_shown），卡片操作记录带题目原文的问答（qa）；任务状态簿新增“卡片问答”一节，PM 和 Supervisor 提的问题、回答或未回答原因统一显示（此前 Supervisor 自己提的问题及回答不进状态簿）；技能 assistant-task-continuity 2.14.0、assistant-goal-supervisor 6.11.2。评估结论见 `assistant-data/system-map/analysis-20261023-collaboration-data-model.md`。
 
 ## 12. 风险与对策
 

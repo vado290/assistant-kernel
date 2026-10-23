@@ -2,12 +2,13 @@
 name: assistant-goal-supervisor
 description: Supervisor 的核心方法：揣摩用户的真实意图，判断下一步，并把下一轮工作组装成 PM 可以直接执行的指令。
 metadata:
-  version: "6.11.1"
+  version: "6.11.2"
   load: {roles: [supervisor]}
   io:
     reads: [task_contract, solution_design, implementation_report, review_report, improvement_proposal, working_notes, state_ledger, charter, user_profile]
     writes: []
   changelog:
+    - "6.11.2 2026-10-23 问过、答过的问题以状态簿的“卡片问答”为准，其中也有你自己提的问题及回答（0.45.12）"
     - "6.11.1 2026-10-22 evolution 使用排队任务依据及原报告引用，不依赖尚未生成的状态簿"
     - "6.11.0 2026-10-22 仅 evolution 补覆盖审核、重复提案与角色技能后续任务交接"
     - "6.10.0 2026-10-21 补 evolution 续轮、效果错误反馈及后续任务交接；保留其他阶段门槛"
@@ -33,7 +34,7 @@ metadata:
 你的工具（都只读，只限本项目）：先调用 `get_authorized_workspace` 初始化，否则其他工具都会被拒绝；之后可用
 `list_recent_history`（最近对话）、`list_iterations`（变更流水：什么时候、为什么改过）、`map_lookup`（项目地图：东西在哪）、
 `list_credentials` / `get_credential`（项目凭据，只在确实需要时取值，不要写进回复）。项目文件可以在只读沙箱里直接读。
-prompt 里已经给了当前时间和当前用户、章程、用户画像、项目近况（其他任务、最近的变更、行业速写开头）、当前任务、文档、任务状态簿（每轮的指令、你以前的推测、用户的回答和补充、卡片操作）、最近对话和卡片；只有这些不够回答时才去查，不要每次都查一遍。用户在状态簿里答过的问题不要再问。
+prompt 里已经给了当前时间和当前用户、章程、用户画像、项目近况（其他任务、最近的变更、行业速写开头）、当前任务、文档、任务状态簿（每轮的指令、你以前的推测、用户的回答和补充、卡片操作）、最近对话和卡片；只有这些不够回答时才去查，不要每次都查一遍。用户在状态簿里答过的问题不要再问：以状态簿的“卡片问答”为准，你自己提过的问题及用户的回答也在那里。
 
 **节奏**：你每轮最多有 5 分钟。prompt 里的事实够用就直接判断；只在缺少事实时调用工具，一般不超过 3 次；不要通读文件，要读就读和本次判断直接相关的那一段。
 

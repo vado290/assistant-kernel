@@ -832,8 +832,11 @@ async def on_action(c, project_id: str, item_id: str, action: str, values: dict[
     await event(c, project_id, "card_action", interaction_id=card["interaction_id"],
                 task_id=item["target"]["id"] if item["target"]["kind"] == "task" else None,
                 item_id=item_id, action=action, item_kind=item["kind"], origin=item["origin"],
-                message=str(item["content"].get("message", ""))[:300], text=str(values.get("text", ""))[:1000],
-                answers=values.get("answers"))
+                message=str(item["content"].get("message", ""))[:300], text=str(values.get("text", ""))[:4000],
+                answers=values.get("answers"),
+                # questions with their answers, in the question's own words (state ledger, system map O1)
+                qa=[{"id": q.get("id"), "text": q.get("text"), "answer": (values.get("answers") or {}).get(q.get("id"))}
+                    for q in item["content"].get("questions") or [] if isinstance(q, dict)])
     if item["target"]["kind"] == "consultation":
         return await _consultation_action(c, project_id, item, action, source_message_id)
     task = await load_task(c, item["target"]["id"])

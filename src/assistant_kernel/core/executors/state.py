@@ -43,6 +43,7 @@ def render_state(task: dict[str, Any], ledger: dict[str, Any], stage_names: dict
     lines.append("- 已有文档：" + ("、".join(docs) if docs else "暂无") + "（全文用 read_task_document 读取）")
 
     lines.append("\n### 讨论记录（按回合，Kernel 记录的事实）")
+    cards = ledger.get("cards") or []   # card items recorded since 0.45.12; older tasks render as before
     turns = ledger["turns"]
     if not turns:
         lines.append("（还没有完成的 PM 回合）")
@@ -60,21 +61,30 @@ def render_state(task: dict[str, Any], ledger: dict[str, Any], stage_names: dict
             for guess in given.get("inferred_intent") or []:
                 lines.append(f"  - Supervisor 推测（假设）：{_cut(guess.get('text'), 300)}"
                              + (f"（依据：{_cut(guess.get('basis'), 150)}）" if guess.get("basis") else ""))
-        elif given.get("kind") == "answers":
+        elif given.get("kind") == "answers" and cards:
+            lines.append("  - 依据用户对卡片问题的回答（问题与回答见“卡片问答”）")
+        elif given.get("kind") == "answers":   # a task from before card records: the answers as the turn got them
             asked = {q["id"]: q["text"] for q in given.get("questions") or []}
             for qid, value in (given.get("answers") or {}).items():
                 lines.append(f"  - 用户回答：{_cut(asked.get(qid, qid), 120)} → {_cut(value, 300)}")
-        if given.get("note"):
+        if given.get("note") and not (cards and given.get("kind") == "answers"):
             lines.append(f"  - 用户附言：{_cut(given['note'], 400)}")
         for text in turn["supplements"]:
             lines.append(f"  - 用户补充：{_cut(text, 400)}")
         lines.append(f"  - PM 结果（{result.get('outcome', '')}）：{_cut(result.get('summary'), 500)}")
-        for q in result.get("questions") or []:
-            lines.append(f"  - PM 提问：{_cut(q.get('text'), 200)}")
+        if cards and result.get("questions"):
+            lines.append(f"  - PM 提出了 {len(result['questions'])} 个问题（见“卡片问答”）")
+        elif not cards:
+            for q in result.get("questions") or []:
+                lines.append(f"  - PM 提问：{_cut(q.get('text'), 200)}")
         for d in result.get("delegations") or []:
             lines.append(f"  - 子 agent「{_cut(d.get('name'), 40)}」：{_cut(d.get('goal'), 150)} → {_cut(d.get('result'), 200)}")
 
-    others = [a for a in ledger["actions"] if a.get("action") != "submit"][-ACTION_LIMIT:]
+    if cards:
+        lines += render_questions(task, cards, ledger["actions"])
+    # Question cards are in "卡片问答" when recorded; the rest (execute, approve, stop…) stay listed here.
+    others = [a for a in ledger["actions"] if a.get("action") != "submit"
+              and not (cards and a.get("item_kind") == "questions")][-ACTION_LIMIT:]
     if others:
         lines.append("\n### 卡片操作（最近）")
         for a in others:
@@ -82,6 +92,56 @@ def render_state(task: dict[str, Any], ledger: dict[str, Any], stage_names: dict
             lines.append(f"- {a['at']:%m-%d %H:%M} {ACTION_NAMES.get(a.get('action'), a.get('action'))}"
                          f"「{_cut(a.get('message'), 120)}」{text}")
     return "\n".join(lines)
+
+
+QA_FULL = 15   # the latest question cards in full; earlier ones as one line each
+
+
+def render_questions(task: dict[str, Any], cards: list[dict[str, Any]], actions: list[dict[str, Any]]) -> list[str]:
+    """Every question card of the task in time order, whoever asked, with the user's answers or why there are none.
+    The status follows from the records: an action on the item, a later item replacing it, or the task's state."""
+    acted = {a.get("item_id"): a for a in actions}
+    replaced = {c.get("replaces") for c in cards if c.get("replaces")}
+    latest = cards[-1].get("item_id") if cards else None
+    asked = [c for c in cards if c.get("item_kind") == "questions"]
+    lines = ["\n### 卡片问答（Kernel 记录，PM 和 Supervisor 提的问题都在这里）"]
+    if not asked:
+        return lines + ["（本任务还没有经卡片提问）"]
+    early = len(asked) - QA_FULL
+    for number, card in enumerate(asked, 1):
+        content = card.get("content") or {}
+        who = "PM 提问，经 Supervisor 转述" if card.get("deliver_to") == "pm" else "Supervisor 提问"
+        action = acted.get(card.get("item_id"))
+        if action and action.get("action") == "submit":
+            status = "已回答"
+        elif action and action.get("action") == "revise":
+            status = f"未回答：用户改为提出修改「{_cut(action.get('text'), 300)}」"
+        elif action and action.get("action") == "stop":
+            status = "未回答：用户停止了任务"
+        elif card.get("item_id") in replaced:
+            status = "已被新卡片替换"
+        elif task.get("state") in rules.TERMINAL_STATES:
+            status = "未回答：任务已结束"
+        elif card.get("item_id") == latest and task.get("state") == "awaiting_user":
+            status = "等待回答"
+        else:
+            status = "未回答"
+        questions = [q for q in content.get("questions") or [] if isinstance(q, dict)]
+        head = f"- {card['at']:%m-%d %H:%M} {who}（{status}）"
+        if number <= early:
+            lines.append(f"{head}：{_cut('；'.join(str(q.get('text')) for q in questions), 150)}")
+            continue
+        lines.append(head)
+        answers = {qa.get("id"): qa.get("answer") for qa in (action or {}).get("qa") or []} \
+            if action and action.get("action") == "submit" else {}
+        if action and action.get("action") == "submit" and not answers:   # recorded before answers had texts
+            answers = (action.get("answers") or {})
+        for q in questions:
+            answer = answers.get(q.get("id"))
+            lines.append(f"  - 问：{_cut(q.get('text'), 600)}" + (f" → 答：{_cut(answer, 600)}" if answer else ""))
+        if action and action.get("action") == "submit" and action.get("text"):
+            lines.append(f"  - 用户附言：{_cut(action['text'], 600)}")
+    return lines
 
 
 def state_path(settings, project_id: str, task_id: str) -> Path:

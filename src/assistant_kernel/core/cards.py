@@ -86,12 +86,31 @@ async def take_item(c, project_id: str, item_id: str) -> tuple[dict[str, Any], d
     return card, item
 
 
+RECORD_TEXT = 4000   # long texts (instructions, messages) in the card record; question texts are kept whole
+
+
+def _record(value: Any) -> Any:
+    if isinstance(value, str):
+        return value if len(value) <= RECORD_TEXT else value[:RECORD_TEXT] + "…"
+    if isinstance(value, dict):
+        return {k: (v if k == "text" else _record(v)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_record(v) for v in value]
+    return value
+
+
 async def replace_task_item(c, project_id: str, task_id: str, item: dict[str, Any]) -> dict[str, Any]:
+    """The task's item on the card (every task item goes through here). The whole item is recorded as a
+    `card_item_shown` event, so what was asked and proposed stays readable after the item leaves the card."""
     card = await open_card(c, project_id)
-    items = [i for i in (card or {}).get("items", []) if i["target"] != {"kind": "task", "id": str(task_id)}]
-    if card is None:
-        return await add_item(c, project_id, item)
-    return await _write(c, card, items + [item])
+    target = {"kind": "task", "id": str(task_id)}
+    old = next((i["item_id"] for i in (card or {}).get("items", []) if i["target"] == target), None)
+    items = [i for i in (card or {}).get("items", []) if i["target"] != target]
+    row = await add_item(c, project_id, item) if card is None else await _write(c, card, items + [item])
+    await event(c, project_id, "card_item_shown", task_id=str(task_id), interaction_id=row["interaction_id"],
+                item_id=item["item_id"], item_kind=item["kind"], origin=item["origin"], deliver_to=item["deliver_to"],
+                replaces=old, content=_record(item["content"]))
+    return row
 
 
 async def save_draft(c, project_id: str, task_id: str, answers: dict[str, Any]) -> None:

@@ -38,10 +38,11 @@ async def test_a_new_session_takes_over_from_ledger_and_notes(kernel, sim, dispa
     await settle(dispatcher)
     third = fake_harness.calls[-1]
     assert third.physical_session_id is None
-    assert "用户回答：日报给谁看？ → 团队" in third.prompt and "PM 工作笔记" in third.prompt and "问清发送时间" in third.prompt
+    assert "问：日报给谁看？ → 答：团队" in third.prompt   # "卡片问答" (0.45.12)
+    assert "PM 工作笔记" in third.prompt and "问清发送时间" in third.prompt
     assert (await sim.task(task_id))["pm_session"]["turns"] == 1
     ledger = state_path(kernel_settings, "p1", task_id).read_text("utf-8")   # written at the start of the turn
-    assert "已完成 PM 回合：2" in ledger and "PM 提问：日报给谁看？" in ledger and "working_notes" in ledger
+    assert "已完成 PM 回合：2" in ledger and "卡片问答" in ledger and "日报给谁看？" in ledger and "working_notes" in ledger
 
 
 def test_notes_are_editable_in_every_stage():

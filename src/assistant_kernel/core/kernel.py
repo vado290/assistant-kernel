@@ -411,6 +411,8 @@ class Kernel:
                                             ORDER BY created_at""", (task_id,))
             actions = await all_rows(c, """SELECT payload, created_at FROM core.task_events
                                            WHERE task_id=%s AND kind='card_action' ORDER BY event_id""", (task_id,))
+            shown = await all_rows(c, """SELECT payload, created_at FROM core.task_events
+                                         WHERE task_id=%s AND kind='card_item_shown' ORDER BY event_id""", (task_id,))
             source = await one(c, """SELECT p.documents->'improvement_proposal'->'ref' AS proposal
                                      FROM core.tasks t JOIN core.tasks p ON p.task_id=t.parent_task_id
                                      AND p.project_id=t.project_id WHERE t.task_id=%s AND t.origin='evolution'""", (task_id,))
@@ -420,6 +422,7 @@ class Kernel:
                 supplements.setdefault(str(m["consumed_by_run_id"]), []).append(m["text"])
         return {"turns": [{**t, "supplements": supplements.get(str(t["run_id"]), [])} for t in turns],
                 "actions": [{**a["payload"], "at": a["created_at"]} for a in actions],
+                "cards": [{**s["payload"], "at": s["created_at"]} for s in shown],
                 "source_proposal": (source or {}).get("proposal")}
 
     async def project_digest(self, project_id: str, days: int = 7) -> dict[str, Any]:
