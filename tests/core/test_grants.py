@@ -51,11 +51,11 @@ async def test_grant_card_from_consultation_then_revoke(kernel, sim, root, kerne
     assert record["kind"] == "grant" and record["significance"] == "major" and "crypto" in record["title"]
 
     assert "crypto" in await gateway.grants_command("p1", [])
-    assert "确认" in await gateway.grants_command("p1", ["revoke", "crypto"])          # asks first
+    assert "confirm" in await gateway.grants_command("p1", ["revoke", "crypto"])          # asks first
     assert await kernel.grants("p1")
-    assert "已撤销" in await gateway.grants_command("p1", ["revoke", "crypto", "确认"])
+    assert "revoked" in await gateway.grants_command("p1", ["revoke", "crypto", "确认"])
     assert await kernel.grants("p1") == []
-    assert [r["title"] for r in await kernel.iterations("p1")][0] == "撤销目录授权 crypto"
+    assert [r["title"] for r in await kernel.iterations("p1")][0] == "Directory access crypto revoked"
 
 
 async def test_supervisor_proposes_a_grant_during_a_task(kernel, sim, root, kernel_settings):

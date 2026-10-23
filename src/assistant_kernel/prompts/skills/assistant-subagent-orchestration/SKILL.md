@@ -1,157 +1,211 @@
 ---
 name: assistant-subagent-orchestration
-description: 把独立、阅读量大或可并行的临时工作派给子 agent：何时派、怎样写子 agent 的任务说明、怎样处理子 agent 提出的问题、怎样核对和汇总结果。
+description: Hand independent, reading-heavy or parallelisable temporary work to subagents — when to send one, how to write its brief, how to handle the questions it raises, how to check and combine the results.
 metadata:
-  version: "2.6.0"
+  version: "2.7.0"
   load: {roles: [pm], stages: [requirements, design, build, review, evolution]}
   changelog:
-    - "2.6.0 2026-10-22 仅 evolution 补自足上下文、只读调研覆盖、角色技能审查及结果验收"
-    - "2.5.0 2026-10-21 增加仅 evolution 适用的风险与收益委派条件"
-    - "2.4.0 2026-10-21 增加仅 Review 适用的委派条件、共同基线和汇总责任"
-    - "2.3.0 2026-10-20 补 build 分工：文件候选由 PM 串行登记，Git 按写集实施；明确集成和失败交接"
-    - "2.2.0 2026-10-20 仅补 design 的委派条件、只读调查与结果验收；其他阶段沿用原定义"
-    - "2.1.1 2026-10-18 技能改为每个 agent 一个平级目录 agents/<agent>/.agents/skills/（ROUND5 R5.1）"
-    - "2.1.0 2026-10-16 增加事先固定的子 agent 定义（行业调研、现有系统盘点、反例审查、并行实施）；不设 fork_turns；在 delegations 中登记（ROUND3 S2）"
-    - "2.0.0 2026-10-16 按核心 v6 就地重写（旧版使用已废弃的协议用语和输出字段）：子 agent 不能与用户交互，任务说明和问题回流必须由主 agent 负责"
+    - "2.7.0 2026-10-23 Written in English, the skills' source language; charter sections are named by heading, not number (ROUND6, 0.46.0)"
+    - "2.6.0 2026-10-22 Evolution only: self-contained context, coverage of read-only research, reviews of roles and skills, and acceptance of results"
+    - "2.5.0 2026-10-21 Added risk- and benefit-based delegation conditions for evolution only"
+    - "2.4.0 2026-10-21 Added delegation conditions, a common baseline and responsibility for combining results for review only"
+    - "2.3.0 2026-10-20 Added the build division of work: the PM registers file candidates one at a time, Git works by write sets; integration and failure hand-over made explicit"
+    - "2.2.0 2026-10-20 Design only: delegation conditions, read-only investigations and acceptance of results; other stages keep the original definitions"
+    - "2.1.1 2026-10-18 Skills moved to one flat folder per agent, agents/<agent>/.agents/skills/ (ROUND5 R5.1)"
+    - "2.1.0 2026-10-16 Added predefined subagents (industry research, codebase survey, counter-example review, parallel implementer); no fork_turns; registered in delegations (ROUND3 S2)"
+    - "2.0.0 2026-10-16 Rewritten in place for core v6 (the old version used retired protocol terms and output fields): subagents cannot talk to the user, so the main agent owns briefs and the return of questions"
 ---
 
-# 委派给子 agent
+# Delegating to subagents
 
-## 子 agent 的特点（决定了你该怎么用它）
-- 它是本轮内的临时帮手，本轮结束就消失，**下一轮不存在**。
-- 它**不能与用户交互**：看不到卡片，收不到用户的回答。它提出的问题只会回到你这里。
-- 它只知道你在任务说明里写给它的内容，看不到你的对话和工件，除非你写明文件路径让它去读。
-  派发时**不要设 fork_turns**（设了会把你的整段对话复制给它，既费 token，上下文也不可控）；需要的背景写进"必读输入"。
-- 它可以使用联网搜索和 Kernel 的工具（读项目文件、read_task_document，以及 edit_task_document 编辑本阶段允许的文档），
-  用的是你这一轮的权限。
-- 最多同时 3 个，子 agent 不能再派子 agent。
-- Kernel 看不到子 agent 的过程：派过子 agent 的回合，在输出 JSON 的 `delegations` 中逐个登记（名称、目标、一句话结果）。
+## What a subagent is (and therefore how to use it)
+- It is a temporary helper within this turn; it disappears when the turn ends and **does not exist next turn**.
+- It **cannot talk to the user**: it sees no cards and gets no answers from the user. Its questions come back only to you.
+- It knows only what your brief tells it; it cannot see your conversation or the artifacts unless you give it file paths
+  to read. Do **not set fork_turns** when sending one (that copies your whole conversation to it — costly in tokens and an
+  uncontrolled context); write the background it needs into "required inputs".
+- It can search the web and use Kernel's tools (read project files, read_task_document, and edit_task_document for the
+  documents this stage allows), with your permissions for this turn.
+- At most 3 at a time; a subagent cannot send subagents.
+- Kernel cannot see a subagent's work: in a turn where you used subagents, register each one in the `delegations` of the
+  output JSON (name, goal, one-line result).
 
-## 子 agent 定义（事先固定）
-下面的定义规定了何时派、读什么、能做什么、交回什么。派发时按定义写任务说明（格式见下一节），"必读输入"照抄并填上具体路径。
-`runs/<任务>/state.md` 是 Kernel 维护的任务状态簿，每个子 agent 都可以读。
+## Predefined subagents
+These definitions fix when to send, what to read, what it may do and what it returns. Write the brief by the definition
+(format in the next section), copying "required inputs" with the concrete paths filled in. `runs/<task>/state.md` is the
+task ledger Kernel maintains; every subagent may read it.
 
-### 行业调研（industry-research）
-- **何时派**：需求阶段，assistant-domain-research 判断需要调研时**必须派**；其他阶段遇到不熟悉的业务领域时可以派。
-- **必读输入**：`agents/pm/.agents/skills/assistant-domain-research/SKILL.md`（方法）· `knowledge/charter.md` 第 4、9 节 ·
-  `knowledge/user-profile.md`（如有）· `knowledge/domain-brief.md`（如有，作为旧版参考）· `runs/<任务>/state.md`。
-- **能做**：联网搜索；读项目文件；用 edit_task_document 写 `domain_brief`。不得写其他文档，不得联系用户。
-- **交回**：domain_brief 已写入；回复中给出定位参数、最关键的 5 个候选问题和需要你决定的事项。
+### Industry research (industry-research)
+- **When**: in the requirements stage it **must** be sent when assistant-domain-research says research is needed; in other
+  stages it may be sent for an unfamiliar business area.
+- **Required inputs**: `agents/pm/.agents/skills/assistant-domain-research/SKILL.md` (the method) · the
+  organisation-and-industry-background and background-archive sections of `knowledge/charter.md` (by heading) ·
+  `knowledge/user-profile.md` (if any) · `knowledge/domain-brief.md` (if any, as an old reference) ·
+  `runs/<task>/state.md`.
+- **May**: search the web; read project files; write `domain_brief` with edit_task_document. It must not write other
+  documents or contact the user.
+- **Returns**: domain_brief written; the reply gives the locating parameters, the 5 most important candidate questions and
+  what you need to decide.
 
-### 现有系统盘点（codebase-survey）
-- **何时派**：设计或实施前需要了解大量现有文件、代码或数据，而你只需要结论时。
-- **必读输入**：要盘点的目录或文件清单 · 要回答的具体问题 · `runs/<任务>/state.md`。
-- **能做**：只读。
-- **交回**：结论、证据（文件路径和行号）、不确定之处。
+### Codebase survey (codebase-survey)
+- **When**: before design or build you need to understand many existing files, code or data and only need the conclusion.
+- **Required inputs**: the folders or files to survey · the specific questions to answer · `runs/<task>/state.md`.
+- **May**: read only.
+- **Returns**: conclusions, evidence (file paths and line numbers), uncertainties.
 
-### 反例审查（counterexample-review）
-- **何时派**：需求或设计文档写完、提交之前，想找出遗漏和矛盾时；Review 阶段独立核对时。
-- **必读输入**：用 read_task_document 读要审查的文档 · `runs/<任务>/state.md` · 审查重点。
-- **能做**：只读。
-- **交回**：按严重程度列出问题（引用编号 R/A/D）、每个问题的反例或场景、建议的改法。
+### Counter-example review (counterexample-review)
+- **When**: when a requirements or design document is written, before submitting, to find omissions and contradictions;
+  for independent checks in the review stage.
+- **Required inputs**: the document to review, read with read_task_document · `runs/<task>/state.md` · what to focus on.
+- **May**: read only.
+- **Returns**: problems by severity (citing R/A/D ids), a counter-example or scenario for each, a suggested fix.
 
-### 并行实施（parallel-implementer）
-- **何时派**：实施阶段，设计文档第 8 节列出的、写集互不重叠的子任务。
-- **必读输入**：设计文档中对应的 D 编号和文件清单 · 允许写的文件（写集）· 测试方法。
-- **能做**：按下方 build 分支和本任务交付模式准备内容或修改工作区，运行允许的测试；不得自行发布。
-- **交回**：完成情况（逐条 D）、写了哪些文件、自测命令和真实结果。
+### Parallel implementer (parallel-implementer)
+- **When**: in the build stage, for subtasks listed in section 8 of the design whose write sets do not overlap.
+- **Required inputs**: the matching D ids and file list from the design · the files it may write (its write set) · how to
+  test.
+- **May**: prepare content or change the workspace by the build branch below and this task's delivery mode, run the
+  allowed tests; never release on its own.
+- **Returns**: completion per D, which files it wrote, the self-test commands and real results.
 
-没有合适的定义时，可以按"任务说明的写法"临时派发；同一类临时派发反复出现时，在复盘中提议把它加进这个目录。
+Without a fitting definition you may send one ad hoc by "writing a brief"; when the same kind of ad-hoc delegation keeps
+coming back, propose adding it to this catalogue in a review.
 
-## design 阶段的委派与验收
-仅 design 使用本节；其行业调研输入输出和反例审查触发条件以本节为准，其他阶段保留上面的定义。
-沿用最多同时 3 个、不再向下委派、用户交互由 PM 负责的边界。
+## Delegation and acceptance in design
+This section is for design only; its industry-research inputs and outputs and the counter-example review trigger take
+precedence there, and other stages keep the definitions above. The limits stay: at most 3 at a time, no further
+delegation, the PM handles all user interaction.
 
-- **定向调研**：复用 industry-research。外部事实影响方案，且工作量较大、可独立调查时委派；小问题 PM 自查。
-  必读 assistant-domain-research 的 design 分支、PM 提供的 R/A/D 与约束、相关资料和状态簿；章程按标题读取。
-  只读调查并返回结论、证据、限制和未知项，不能在 design 写 domain_brief；PM 负责写设计。
-- **现状盘点**：相关实现、资料或数据较多，需要独立梳理时复用 codebase-survey，交回可复用能力、约束、影响与证据位置。
-- **反例审查**：按 assistant-task-continuity 的“设计完成标准”第 8 条判断是否必须委派；需要时，在提交完成前交给
-  未参与方案编写的子 agent，普通小方案 PM 自查即可。
-  交给审查者有效需求、设计及证据位置，要求找出 R/A/D 的遗漏、矛盾和实际失败场景，不预设通过结论。
+- **Targeted research**: reuse industry-research. Delegate when outside facts affect the solution and the work is
+  substantial and can be investigated independently; small questions the PM checks itself. Required reading: the design
+  branch of assistant-domain-research, the R/A/D and constraints the PM gives, the relevant material and the ledger; the
+  charter is read by heading. It investigates read-only and returns conclusions, evidence, limits and unknowns — it cannot
+  write domain_brief in design; the PM writes the design.
+- **Inventory of the current state**: when there are many related implementations, materials or data to sort out
+  independently, reuse codebase-survey and get back reusable capabilities, constraints, impacts and where the evidence is.
+- **Counter-example review**: whether it must be delegated follows item 8 of the "design completion standard" in
+  assistant-task-continuity; when needed, hand it before completion to a subagent that did not write the solution —
+  ordinary small solutions the PM checks itself. Give the reviewer the requirements and design in effect and where the
+  evidence is, and ask for omissions, contradictions and real failure scenarios of R/A/D — no presumed pass.
 
-派发时补齐输入的版本/sha、要回答的问题、允许的只读范围和完成标准。结果返回后，PM 核对影响方案成立的关键证据，
-处理互相矛盾的结论；设计文档第 8 节记录关键发现及采纳、驳回或待解决的理由，进行中事项记入 working_notes。
-沿用 delegations 的 name/goal/result，result 简述实际结果并指向工件位置，不添加输出字段或把自报当成独立执行证明。
-普通调查失败可由 PM 接手；必须的独立审查失败或不可用时，写清未完成并交 Supervisor 安排后续回合，
-不能把 PM 自查算成独立通过，也不能报告设计完成。当前确因执行能力不可用而无法继续时，PM 用已有 failed，
-说明原因和恢复条件；仅确需用户信息时用 needs_input，不为取得续轮编造问题或新 outcome。
-没有新证据、权限或任务拆分变化时，不重复派发同一失败任务。所有子 agent 都不得替用户补定需求或扩大范围。
+When sending, complete the inputs with versions/shas, the questions to answer, the allowed read-only scope and the
+completion standard. When results come back, the PM checks the key evidence the solution depends on and resolves
+contradicting conclusions; section 8 of the design records key findings and why they were adopted, rejected or left open,
+with items in progress in working_notes. Keep delegations' name/goal/result, with result briefly stating the actual result
+and pointing to where it is in the artifacts — no new output fields, and self-reports are not proof of independent
+execution. An ordinary failed investigation can be taken over by the PM; when a required independent review fails or is
+unavailable, state it as unfinished and leave the next turns to the Supervisor — the PM's own check never counts as an
+independent pass, and the design cannot be reported complete. When execution capability is really unavailable now, the PM
+uses the existing failed with the reason and recovery condition; needs_input only when user information is truly needed —
+never invent questions or new outcomes to get another turn. Without new evidence, permissions or a changed split, do not
+send the same failed task again. No subagent settles requirements for the user or widens the scope.
 
-## build 阶段的分工与集成
-仅 build 使用本节，其他阶段的调查/审查规则保持；并行实施不以文件数量为触发条件。
-问题可独立说明、输入齐备、产出可核对，且并行或减轻阅读负担的收益值得派发和汇总成本时才委派。
-除文件写集外，还要检查公共接口、依赖清单、配置和测试数据；共享改动指定一个负责人，依赖未就绪的任务不抢先实施。
+## Division of work and integration in build
+This section is for build only; other stages keep their investigation and review rules; parallel implementation is not
+triggered by file counts. Delegate only when the problem can be stated independently, the inputs are complete, the output
+can be checked, and the benefit of parallel work or less reading is worth the cost of sending and combining. Besides
+file write sets, check public interfaces, dependency lists, configuration and test data; give shared changes one owner, and
+tasks whose dependencies are not ready do not start early.
 
-- **文件交付**：子 agent 准备内容或检查；需要临时文件时仅用 PM 明确给出的授权临时目录，各自分开。
-  只有 PM 串行调用 write_candidate_file / delete_candidate_file，统一维护共享 manifest；
-  子 agent 不直接写候选目录、manifest 或正式文件。无合适临时区、内容不适合通过回复交回时改为串行实施，不绕过登记。
-- **Git 交付**：把 Kernel 指定 worktree、批准 D、允许写集和测试方式写进任务说明；子 agent 只改自己的写集，
-  不使用候选工具、不执行 git 提交或发布命令，不修改 worktree 外目录。提交仍由 Kernel 完成。
-- **交回与验收**：逐条 D 交回实际改动、测试对象/命令/结果、证据位置和未解决事项。
-  PM 等待相关子任务结束后核对差异和接口，完成集成、候选登记及最终验证；此期间停止其他子任务对相关产物的写入。
-  登记或集成改变内容时重做受影响检查，不能直接沿用旧版本的局部测试。结果写入实施报告，续轮信息写入 working_notes。
-- **失败**：能在批准范围内解决的由 PM 接手或调整分工；需用户信息、设计/需求返工或当前无法继续时，
-  按 assistant-implementation 的既有 outcome 交回，不增加新状态、不用子任务自报替代整体完成。
+- **File delivery**: subagents prepare content or check things; temporary files go only into a granted temporary folder
+  the PM names, separate for each. Only the PM calls write_candidate_file / delete_candidate_file, one at a time, and keeps
+  the shared manifest; subagents never write the candidate folder, the manifest or released files directly. Without a
+  suitable temporary area, or when the content cannot come back in a reply, implement serially instead — never bypass
+  registration.
+- **Git delivery**: put the worktree Kernel names, the approved D, the allowed write set and how to test into the brief;
+  a subagent changes only its own write set, uses no candidate tools, runs no git commit or release commands and changes
+  nothing outside the worktree. Kernel still makes the commits.
+- **Return and acceptance**: per D, the actual changes, the test object/command/result, where the evidence is and
+  unresolved items. The PM waits for the related subtasks to finish, checks the diffs and interfaces, and completes
+  integration, candidate registration and final verification; meanwhile no other subtask writes the products concerned.
+  When registration or integration changes content, redo the affected checks — never reuse local tests of an old version.
+  Results go into the implementation report, information for later turns into working_notes.
+- **Failure**: what can be solved within the approved scope the PM takes over or re-splits; when user information,
+  design/requirements rework is needed or you cannot continue now, return by the existing outcomes of
+  assistant-implementation — no new states, and a subtask's self-report never stands in for overall completion.
 
-## 何时委派
-适合：彼此独立、可以并行的调查（行业资料、竞品、现有系统盘点）；阅读量大、会挤占你上下文的代码或文档阅读；
-独立的检查（反例审查、测试分析）；实施阶段中写集互不重叠的多个文件。
-不适合：需要用户决定的事；几步就能做完的小事；前后依赖、必须串行的步骤；目标还说不清的事。
+## When to delegate
+Good fits: independent investigations that can run in parallel (industry material, competitors, inventories of existing
+systems); heavy code or document reading that would crowd your context; independent checks (counter-example review, test
+analysis); several files with non-overlapping write sets in the build stage.
+Poor fits: anything the user must decide; small things done in a few steps; dependent steps that must run in order;
+things whose goal is still unclear.
 
-## Review 阶段的分工
-仅 Review 使用本节。存在可独立核对的专业领域、跨模块影响或需要独立复核的高风险项，且收益值得派发与汇总成本时委派；
-普通集中审查由 PM 完成，不按文件数量强制派发，也不复用参与该项实施的子 agent 充当独立审查者。
-复用 codebase-survey、counterexample-review 或临时只读任务。每份任务带同一 Kernel 审查基线、固定 bundle/commit、
-具体可读位置、R/A/D 范围、要核对的问题和证据标准；子 agent 只能交回发现、证据、限制与未覆盖项，不修改产物或批准发布。
-PM 核实关键证据，合并覆盖，检查跨模块接口并解决矛盾；多份“通过”不能代替整体验收。基线变化后重新核对受影响结论。
-普通委派失败可由 PM 接手；有效验收要求独立检查而未完成时不能算通过。缺证用 changes；执行能力阻断才用 failed，
-按 assistant-release-audit 记录恢复条件，不无条件重复派发，也不假设子 agent 会跨回合存活。
+## Division of work in review
+This section is for review only. Delegate when there are specialist areas that can be checked independently, cross-module
+effects or high-risk items needing independent re-checks, and the benefit is worth the cost of sending and combining;
+ordinary focused reviews are done by the PM — no forced delegation by file count, and a subagent that took part in
+implementing an item never acts as its independent reviewer. Reuse codebase-survey, counterexample-review or ad-hoc
+read-only tasks. Each brief carries the same Kernel review baseline, the fixed bundle/commit, concrete readable locations,
+the R/A/D scope, the questions to check and the standard of evidence; a subagent only returns findings, evidence, limits
+and what it did not cover — it changes no products and approves no release. The PM verifies key evidence, merges
+coverage, checks cross-module interfaces and resolves contradictions; several "passes" do not replace overall acceptance.
+After a baseline change, re-check the affected conclusions. An ordinary failed delegation can be taken over by the PM; when
+valid acceptance requires an independent check that was not completed, it does not count as passed. Missing evidence is
+changes; only a block of execution capability is failed, recording the recovery condition by assistant-release-audit —
+no unconditional re-sending, and never assume a subagent survives across turns.
 
-## evolution 阶段的分工
-仅 evolution 使用本节，其借用定义的输入输出以本节为准；不改变其他阶段。沿用最多同时 3 个、不再向下委派。
-问题能独立说明、输入足够，且证据量、专业性或独立检查收益值得派发与汇总成本时委派；不按任务数量硬派。
-普通小复盘 PM 自查；前置材料不足先补证，不让多个子 agent 重复摸索同一背景。
+## Division of work in evolution
+This section is for evolution only; the inputs and outputs of definitions it borrows follow this section; other stages are
+unchanged. The limits stay: at most 3 at a time, no further delegation. Delegate when a problem can be stated
+independently, the inputs suffice, and the amount of evidence, specialist knowledge or the benefit of an independent check
+is worth the cost of sending and combining — no forced delegation by task count. Ordinary small reviews the PM checks
+itself; when prerequisite material is missing, gather it first instead of letting several subagents grope through the
+same background.
 
-- **记录与效果分析**：核实运行、实际产物与上期效果；**角色技能审查**：核对相关 role、skills、加载与交接；
-  **反例审查**：重要建议成形后核对证据、兼容性、权限和衡量方法。独立审查者不能由该建议的编写者冒充。
-- **自足输入**：同一项目/复盘任务、对象及版本、观察窗口、具体问题、F/P/迭代编号、有效约定、必读文件/ref、
-  已知事实、未知项及截断范围。数据库摘要无可读文件时附相关原文片段，不说“参照我的上下文”，不整段转贴父对话。
-  不假定工具调用默认值保证上下文隔离；无论是否继承背景，都以明确任务包校准范围。需要外部事实时说明来源和时效要求。
-- **只读边界**：包括借用 industry-research 时也只返回证据，不沿用需求阶段写 domain_brief 的规则；
-  不编辑任务文档、业务文件、角色、技能、配置，不更新效果或替用户采纳建议，不补跑作业。
-- **返回与验收**：发现、证据位置及版本/时间、反证、覆盖范围、限制、下一步；PM 核实关键证据、消解冲突并汇总覆盖。
-  权限或输入不足须如实返回；普通失败可由 PM 接手，不能算独立通过。有效约定要求独立检查而未完成时，保留受阻项交 Supervisor。
-  同一失败没有新输入/能力变化不重复派发；续轮所需结果和剩余问题写入既有报告/working_notes，不依赖原子 agent 存活。
-  沿用 delegations 的 name/goal/result；自报不能当作平台独立执行证明，也不因委派而免除 PM 的最终责任。
+- **Record and effect analysis**: verify runs, actual products and last period's effects; **role and skill review**: check
+  the relevant roles, skills, loading and hand-overs; **counter-example review**: once important proposals take shape,
+  check evidence, compatibility, permissions and measures. The author of a proposal cannot pose as its independent
+  reviewer.
+- **Self-contained input**: the same project/review task, objects and versions, observation window, the concrete question,
+  F/P/iteration ids, agreements in effect, required files/refs, known facts, unknowns and the cut-off scope. When a
+  database summary has no readable file, attach the relevant original text — never say "see my context", and never paste
+  the parent conversation wholesale. Do not assume tool defaults guarantee context isolation; whether or not background is
+  inherited, an explicit task package sets the scope. When outside facts are needed, state the source and freshness
+  required.
+- **Read-only limits**: including when borrowing industry-research, it only returns evidence — the requirements-stage rule
+  of writing domain_brief does not apply; it edits no task documents, business files, roles, skills or configuration,
+  updates no effects, adopts no proposals for the user and re-runs no jobs.
+- **Return and acceptance**: findings, where the evidence is with versions/times, counter-evidence, coverage, limits, the
+  next step; the PM verifies key evidence, resolves conflicts and combines coverage. Missing permissions or input must be
+  reported honestly; an ordinary failure can be taken over by the PM and does not count as an independent pass. When valid
+  agreements require an independent check that was not completed, keep the blocked item for the Supervisor. Do not resend
+  the same failure without new input or capabilities; results and open questions needed later go into the existing report
+  or working_notes, not relying on the subagent surviving. Keep delegations' name/goal/result; a self-report is not proof of
+  independent execution by the platform, and delegation never relieves the PM of final responsibility.
 
-## 任务说明的写法（每个子 agent 一份，按此结构）
+## Writing a brief (one per subagent, in this structure)
 ```
-目标：一句话说明要得到什么结论或产物
-背景：完成任务必需的事实（不要整段转贴你的上下文）
-输入：要读的文件路径、资料来源、相关编号（R/D/A）
-边界：只读 / 只能写以下文件：……（写集不能与其他子 agent 重叠）；不得做的事
-产出格式：
-  1. 结论（直接回答目标）
-  2. 证据（文件路径和行号、链接、命令输出）
-  3. 不确定之处
-  4. 需要用户决定的问题（只列出，不要自行假设答案）
-完成标准：什么情况下算完成；超出范围的发现只记录、不展开
+Goal: one sentence on the conclusion or product wanted
+Background: the facts needed to do it (do not paste your whole context)
+Inputs: file paths to read, sources, related ids (R/D/A)
+Limits: read-only / may write only these files: … (write sets must not overlap other subagents'); what it must not do
+Output format:
+  1. Conclusion (answering the goal directly)
+  2. Evidence (file paths and line numbers, links, command output)
+  3. Uncertainties
+  4. Questions for the user (only list them; never assume answers)
+Done when: what counts as done; findings beyond the scope are only noted, not pursued
 ```
 
-## 子 agent 提出的问题怎么处理
-1. 先判断能否由你自己查清或用已有资料回答，能则直接补充。
-2. 确实需要用户决定的，并入你本轮的 needs_input 问题（按 assistant-user-questions 改写），本轮结束。
-3. 用户回答后，在下一轮重新派一个新的子 agent，把用户的回答写进它的"背景"。**不要承诺把答案"交还"给原来的子 agent**，它已经不存在了。
+## Handling a subagent's questions
+1. First judge whether you can find out yourself or answer from existing material; if so, add it directly.
+2. What the user really must decide goes into this turn's needs_input questions (reworded by assistant-user-questions), and
+   the turn ends.
+3. After the user answers, send a new subagent next turn with the answers in its "background". **Never promise to hand the
+   answer back to the original subagent** — it no longer exists.
 
-## 核对与汇总
-- 子 agent 的结论在你核对之前都只是线索：抽查关键证据，互相矛盾的结论由你判断或再查。
-- 把核对后的结论写进你的工件（标 `[调查:来源]`），不要整段粘贴子 agent 的原始输出。
-- 实施阶段：逐个检查子 agent 准备的内容或 worktree 差异，以及 PM 登记后的最终候选，确认没有超出写集；
-  在实施报告第 6 节汇总子任务结果。
-- 子任务结果写进 summary 和工件；输出 JSON 中只在 `delegations` 里登记派发情况，不要添加其他字段。
+## Checking and combining
+- A subagent's conclusions are only leads until you check them: spot-check key evidence; you judge or re-check
+  contradicting conclusions.
+- Write the checked conclusions into your artifacts (marked `[research:source]`); never paste a subagent's raw output
+  wholesale.
+- Build stage: check each subagent's prepared content or worktree diff, and the final candidates after the PM registered
+  them, confirming nothing went beyond the write set; summarise subtask results in section 6 of the implementation report.
+- Subtask results go into the summary and the artifacts; the output JSON registers delegations only in `delegations` — add
+  no other fields.
 
-## 常见错误
-- 任务说明只写一句"帮我调查一下 X"：子 agent 不知道背景和边界，结果不可用。
-- 两个子 agent 写同一个文件。
-- 把子 agent 的问题原样丢给用户，或干脆替用户假设答案。
+## Common mistakes
+- A brief that says only "look into X for me": the subagent has no background or limits, and the result is unusable.
+- Two subagents writing the same file.
+- Passing a subagent's questions to the user verbatim, or assuming the answers for the user.

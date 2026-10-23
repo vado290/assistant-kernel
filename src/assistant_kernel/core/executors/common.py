@@ -11,7 +11,7 @@ from typing import Any
 import yaml
 
 from assistant_kernel.harness.base import AgentTurnRequest, AgentTurnResult
-from assistant_kernel.core import drafts, rules, skills as skill_rules
+from assistant_kernel.core import drafts, i18n, rules, skills as skill_rules
 from assistant_kernel.core.agents import AgentConfig, AgentLoader
 from assistant_kernel.services.document_runtime import TaskDocumentService
 from assistant_kernel.storage import ProjectRuntimeManager
@@ -46,7 +46,8 @@ def effective_tools(offered: frozenset[str], configured) -> tuple[str, ...]:
 
 
 def prompt_text(name: str) -> str:
-    return (PROMPTS / f"{name}.md").read_text(encoding="utf-8").strip()
+    """A contract from prompts/core with its {{heading:key}} placeholders filled (the English headings Kernel parses)."""
+    return i18n.fill((PROMPTS / f"{name}.md").read_text(encoding="utf-8").strip())
 
 
 def agent_home(settings, project_id: str, agent: str) -> Path:
@@ -55,8 +56,9 @@ def agent_home(settings, project_id: str, agent: str) -> Path:
 
 
 def path_note(vault: Path, agent: str) -> str:
-    return (f"## 路径说明\n\n你的工作目录是 `agents/{agent}`（你的技能在其中，Codex 会列出）。项目根目录是 `{vault}`；"
-            "文中出现的相对路径（如 `runs/…`、`knowledge/…`）都相对项目根目录；读写项目文件优先用 Kernel 工具。")
+    return (f"## Paths\n\nYour working directory is `agents/{agent}` (your skills are in it; Codex lists them). The "
+            f"project root is `{vault}`; relative paths in this text (such as `runs/…`, `knowledge/…`) are relative to the "
+            "project root; prefer the Kernel tools for reading and writing project files.")
 
 
 def load_agent(settings, project_id: str, role: str, *, stage: str | None = None, purpose: str | None = None,
@@ -112,8 +114,9 @@ def read_document(settings, project_id: str, document: dict[str, Any]) -> str:
 
 USER_PROFILE = "user-profile.md"    # per project, one section per user; Kernel appends on requirements approval
 DOMAIN_BRIEF = "domain-brief.md"    # the latest approved industry research
-PROFILE_HEADING = "## 用户画像（本项目积累；[推断] 项未经用户确认，用户纠正优先）\n\n"
-BRIEF_HEADING = "## 行业速写（knowledge/domain-brief.md，注意其日期和有效期）\n\n"
+PROFILE_HEADING = ("## User profile (built up in this project; [inferred] items are not confirmed by the user, and the "
+                   "user's corrections win)\n\n")
+BRIEF_HEADING = "## Industry brief (knowledge/domain-brief.md; mind its dates and validity)\n\n"
 
 
 def knowledge_text(settings, project_id: str, name: str) -> str:
@@ -130,10 +133,10 @@ def project_map(settings, project_id: str) -> tuple[str, str]:
     try:
         return shown, projectmap.render(projectmap.load(path))
     except (ValueError, OSError) as exc:
-        return shown, f"（地图无法读取：{exc}；实施时按 assistant-task-continuity 的格式修正）"
+        return shown, f"(the map cannot be read: {exc}; fix it in the build stage in the format of assistant-task-continuity)"
 
 
-BACKGROUND_TITLE = "背景信息存档"
+BACKGROUND_TITLE = "archive"   # heading key (any language's heading is found, ROUND6)
 
 
 def charter(settings, project_id: str) -> str:
@@ -145,11 +148,12 @@ def charter(settings, project_id: str) -> str:
     background = knowledge_text(settings, project_id, "background.md")
     if background:
         body = background.split("\n", 1)[1].strip() if background.startswith("# ") else background   # drop its title
-        text = (text + "\n\n" if text else "") + f"## {BACKGROUND_TITLE}（Kernel 追加，knowledge/background.md）\n\n{body}"
+        text = (text + "\n\n" if text else "") + \
+            f"## {i18n.heading(BACKGROUND_TITLE)} (appended by Kernel, knowledge/background.md)\n\n{body}"
     return text
 
 
-CATALOG_SECTIONS = ("项目用途", "范围", "路由信息")
+CATALOG_SECTIONS = ("purpose", "scope", "routing")   # charter heading keys
 
 
 def project_catalog(settings, project_ids: list[str], *, exclude: str) -> str:
@@ -161,19 +165,19 @@ def project_catalog(settings, project_ids: list[str], *, exclude: str) -> str:
             continue
         vault = runtime.ensure(project_id).vault_root
         text = charter(settings, project_id)
-        sections = [f"**{title}**\n{skill_rules.section_text(text, title)}" for title in CATALOG_SECTIONS
-                    if skill_rules.section_text(text, title)]
+        sections = [f"**{i18n.heading(key)}**\n{skill_rules.section_text(text, key)}" for key in CATALOG_SECTIONS
+                    if skill_rules.section_text(text, key)]
         if not sections:   # no charter yet: name and purpose from project.yaml
             config = yaml.safe_load((vault / "project.yaml").read_text("utf-8")) if (vault / "project.yaml").is_file() else {}
-            sections = [f"**项目用途**\n{(config or {}).get('purpose') or '（未写明）'}"]
-        parts.append(f"### 项目 `{project_id}`\n\n" + "\n\n".join(sections))
-    return "\n\n".join(parts) or "（没有其他项目）"
+            sections = [f"**{i18n.heading('purpose')}**\n{(config or {}).get('purpose') or '(not given)'}"]
+        parts.append(f"### Project `{project_id}`\n\n" + "\n\n".join(sections))
+    return "\n\n".join(parts) or "(no other projects)"
 
 
-DOCUMENT_TITLES = {"task_contract": "需求文档", "solution_design": "设计文档",
-                   "implementation_report": "实施报告", "review_report": "Review 报告",
-                   "improvement_proposal": "改进建议", "working_notes": "PM 工作笔记",
-                   "domain_brief": "行业速写（本任务调研）"}
+DOCUMENT_TITLES = {"task_contract": "Requirements document", "solution_design": "Design document",
+                   "implementation_report": "Implementation report", "review_report": "Review report",
+                   "improvement_proposal": "Improvement proposal", "working_notes": "PM working notes",
+                   "domain_brief": "Industry brief (this task's research)"}
 
 
 def document_sections(settings, task: dict[str, Any]) -> list[tuple[str, str, str]]:
@@ -184,40 +188,46 @@ def document_sections(settings, task: dict[str, Any]) -> list[tuple[str, str, st
         if document:
             body = read_document(settings, task["project_id"], document)
             if document.get("spec_error"):
-                body += f"\n\n> Kernel 检查：创建参数有误，无法创建项目：{document['spec_error']}"
+                body += f"\n\n> Kernel check: the creation parameters are wrong, the project cannot be created: {document['spec_error']}"
             elif document.get("spec"):
-                body += "\n\n> Kernel 检查：创建参数有效，可以提议创建项目。"
+                body += "\n\n> Kernel check: the creation parameters are valid; creating the project can be proposed."
             if document.get("iteration_error"):
-                body += f"\n\n> Kernel 检查：迭代记录有误（发布不受影响，但记录会不完整），请修正：{document['iteration_error']}"
+                body += ("\n\n> Kernel check: the iteration record is wrong (the release is not affected, but the record "
+                         f"will be incomplete); please fix it: {document['iteration_error']}")
             elif document.get("iteration"):
-                body += "\n\n> Kernel 检查：迭代记录有效，将随发布批准一起入库。"
+                body += "\n\n> Kernel check: the iteration record is valid and is stored when the release is approved."
             if document.get("effect_review_error"):
-                body += "\n\n> Kernel 检查：效果复核未通过，需补正：" + document["effect_review_error"]
-            sections.append((kind, document["sha256"], f"### {title}（sha {document['sha256'][:12]}）\n\n{body}"))
+                body += "\n\n> Kernel check: the effect review did not pass and needs fixing: " + document["effect_review_error"]
+            sections.append((kind, document["sha256"], f"### {title} (sha {document['sha256'][:12]})\n\n{body}"))
     validation = task["documents"].get("validation")
     if validation:   # written by Kernel, it has no revision sha of its own
-        text = f"### Kernel 验证结果\n\n{'通过' if validation.get('passed') else '未通过'}\n\n{validation.get('report') or ''}"
+        text = f"### Kernel validation result\n\n{'passed' if validation.get('passed') else 'failed'}\n\n{validation.get('report') or ''}"
         sections.append(("validation", rules.validation_fingerprint(task), text))
     if task.get("kind", "delivery") == "delivery" and task.get("track") != "quick" and task.get("stage") in ("review", "release"):
         basis = rules.review_baseline(task)
-        text = "### Kernel 审查基线（文档版本 SHA，不是正文 SHA；由 Kernel 绑定，不由模型填写）\n\n"
-        text += json.dumps(basis, ensure_ascii=False, sort_keys=True) if basis else "输入不完整，不能通过审查。"
-        text += "\n当前审查状态：" + (rules.review_error(task) or "基线匹配且审查通过；发布仍需用户批准")
+        text = ("### Kernel review baseline (document revision SHAs, not content SHAs; bound by Kernel, never filled in "
+                "by the model)\n\n")
+        text += json.dumps(basis, ensure_ascii=False, sort_keys=True) if basis else "Input incomplete; the review cannot pass."
+        text += "\nCurrent review state: " + (rules.review_error(task) or
+                                               "baseline matches and the review passed; the release still needs the user's approval")
         bundle = rules.validated_bundle(task) or ""
         if bundle.startswith("git:"):
-            text += f"\n审查 Git 提交：{bundle[4:]}。读取该提交的内容；工作目录不一致时不能用它的检查结果替代。"
+            text += (f"\nReview the Git commit {bundle[4:]}. Read that commit's content; when the working directory "
+                     "differs, its check results do not stand in for it.")
         elif bundle.startswith("no-files:"):
-            text += "\n无文件交付：核对当前实施报告所引用的实际成果、交付位置和验收证据。"
+            text += ("\nDelivery without files: check the actual results, delivery location and acceptance evidence the "
+                     "current implementation report refers to.")
         elif bundle:
-            text += (f"\n固定交付清单：workspace://project/runtime/candidate-snapshots/{bundle}/bundle.json"
-                     "（用 read_authorized_file 读取；files 含增改删和内容 SHA。"
-                     "artifact_uri 的 vault://本项目/ 前缀对应 workspace://project/；只读该快照，不重新封存候选。）")
+            text += (f"\nFixed delivery list: workspace://project/runtime/candidate-snapshots/{bundle}/bundle.json "
+                     "(read it with read_authorized_file; files lists additions, changes and deletions with content SHAs. "
+                     "The vault://<this project>/ prefix of artifact_uri corresponds to workspace://project/; read only "
+                     "that snapshot and never re-seal the candidates.)")
         sections.append(("review_context", drafts.text_sha(text), text))
     return sections
 
 
 def render_documents(settings, task: dict[str, Any]) -> str:
-    return "\n\n".join(text for _, _, text in document_sections(settings, task)) or "（暂无已生效文档）"
+    return "\n\n".join(text for _, _, text in document_sections(settings, task)) or "(no documents in effect yet)"
 
 
 def workspace_snapshot(settings, project_id: str, task_id: str, variant: str, *,
@@ -282,7 +292,7 @@ async def call_model(ctx, run: dict[str, Any], config: AgentConfig, prompt: str,
     sharing = asyncio.create_task(share_refreshed_login())
     try:
         return await harness.run_turn(AgentTurnRequest(
-            project_id=project_id, prompt=prompt,
+            project_id=project_id, prompt=f"{prompt}\n\n{i18n.LANGUAGE_NOTE}",   # replies in the user's language (ROUND6)
             cwd=cwd or agent_home(settings, project_id, config.agent_id),
             physical_session_id=session_id, provider=config.provider, model=model, reasoning_effort=effort,
             context_policy=config.context_policy, model_context_window_tokens=window,
@@ -299,7 +309,8 @@ async def call_for_json(ctx, run, config, prompt, **kwargs) -> tuple[dict[str, A
     result = await call_model(ctx, run, config, prompt, **kwargs)
     parsed = parse_json_object(result.final_text)
     if parsed is None and result.physical_session_id:
-        fix = "你上一条消息不是一个合法的 JSON 对象。请严格按输出要求，只输出那个 JSON 对象，不要做任何新的工作。"
+        fix = ("Your last message was not a valid JSON object. Follow the output requirements exactly: output only that "
+               "JSON object and do no new work.")
         result = await call_model(ctx, run, config, fix, **{**kwargs, "session_id": result.physical_session_id})
         parsed = parse_json_object(result.final_text)
     return parsed, result

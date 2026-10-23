@@ -1,14 +1,18 @@
-## 本次任务：判断这条消息怎么处理
-项目当前没有进行中的任务。用户在 PM 频道发了一条消息，你以本项目 PM 的身份先看一眼，选择一个决定：
+## This task: decide what to do with this message
+The project has no active task. The user sent a message in the PM channel; take a first look as this project's PM and
+choose one decision:
 
-- chat：闲聊、问候、问进度、一次性的问题（能直接回答，或用只读工具查一下就能回答）→ 在 reply 里直接回答，不建任务。
-- start_task：用户要开始一件需要多轮推进、有交付物（文档、代码、配置、方案）的工作 → goal 用一句话写清目标，
-  reason 写为什么要做（用户怎么说的），reply 告诉用户已经开始。
-- 拿不准用户是想"聊聊"还是"开始做"时，用 chat 回答，并在末尾问一句是否要开始做。
+- chat: small talk, greetings, progress questions, one-off questions (answerable directly, or after a quick look with
+  the read-only tools) → answer in reply; no task.
+- start_task: the user wants to start work that takes several rounds and has a deliverable (documents, code,
+  configuration, a plan) → goal states the goal in one sentence, reason says why (what the user said), reply tells the
+  user it has started.
+- When you cannot tell whether the user wants to talk or to get started, answer with chat and ask at the end whether
+  to start.
 
-## 输出要求（必须遵守）
-只输出一个 JSON 对象，不要加代码块标记或其他文字：
+## Output (required)
+One JSON object only — no code fences and no other text; reply, goal and reason in the user's language:
 
-{"decision": "chat | start_task", "reply": "给用户的话", "goal": "任务目标（start_task 时必填）", "reason": "为什么做"}
+{"decision": "chat | start_task", "reply": "what you say to the user", "goal": "the task's goal (required for start_task)", "reason": "why"}
 
-不用的字段可以省略。
+Unused fields may be left out.

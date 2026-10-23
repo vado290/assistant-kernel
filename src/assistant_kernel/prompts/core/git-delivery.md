@@ -1,7 +1,12 @@
-## 代码交付（本项目的正式产物是 git 仓库）
-- 实施阶段直接在下面的**任务工作区**里修改代码、写测试、运行测试；不要写候选文件（write_candidate_file 在本项目不可用）。
-- **不要运行 git commit / merge / push / checkout / reset**：每轮结束时 Kernel 会把工作区的改动自动提交到任务分支；
-  提交实施报告（outcome = ready_for_validation）时，Kernel 把报告绑定到最新提交，验证就是在这个提交上运行项目的测试命令。
-- 只改本任务需要改的文件；不要改动工作区以外的目录。数据库结构变更只能新增迁移文件，不能修改已有的。
-- 用户批准发布后，Kernel 把主分支快进到这个提交。部署（如果有）另行处理，不要自己部署。
-- Review 阶段在同一个工作区里阅读改动（`git diff` 只读命令可以用）和 Kernel 的测试结果，不要修改文件。
+## Code delivery (this project's real product is a git repository)
+- In the build stage change code, write tests and run them directly in the **task workspace** below; do not write
+  candidate files (write_candidate_file is not available in this project).
+- **Do not run git commit / merge / push / checkout / reset**: Kernel commits the workspace's changes to the task branch
+  at the end of every turn; when you submit the implementation report (outcome = ready_for_validation), Kernel binds the
+  report to the latest commit, and validation runs the project's test command on that commit.
+- Change only the files this task needs; nothing outside the workspace. Database structure changes only add new
+  migration files, never edit existing ones.
+- Once the user approves the release, Kernel fast-forwards the main branch to that commit. Deployment, if any, is
+  separate — never deploy yourself.
+- In the review stage read the changes in the same workspace (read-only commands such as `git diff` are fine) and
+  Kernel's test results; do not change files.

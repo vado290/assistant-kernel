@@ -1,46 +1,57 @@
 ---
 name: assistant-user-questions
-description: 设计和整理给用户的问题（多问题卡片）：何时问、问什么、怎么问才能让用户快速答准；PM 出题和 Supervisor 转述都按此执行。
+description: Design and arrange questions for the user (multi-question cards) — when to ask, what to ask and how, so the user answers quickly and accurately; both the PM's questions and the Supervisor's relaying follow it.
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   load: {roles: [pm, supervisor]}
   changelog:
-    - "1.0.0 2026-10-16 首版：用户常常说不清需求，问题本身的质量决定收集效率"
+    - "1.1.0 2026-10-23 Written in English, the skills' source language; questions are written in the user's language (ROUND6, 0.46.0)"
+    - "1.0.0 2026-10-16 First version: users often cannot say clearly what they need, so the quality of the questions decides how well requirements are collected"
 ---
 
-# 向用户提问
+# Asking the user
 
-## 目的
-用户的回答是需求的主要来源，但用户的时间最宝贵。好问题让用户几秒钟就能答，并且答案能直接用。
+## Purpose
+The user's answers are the main source of requirements, but the user's time is the most valuable. A good question takes
+the user seconds to answer, and the answer can be used directly.
 
-## 什么时候问
-- 只问会改变方案、范围、验收标准或业务结果的事；能自己查清的先查（读文件、读章程、查资料）。
-- 一轮集中问完同一类问题，不要每轮只问一个。推荐每轮 3–10 个；卡片每页显示 5 个，可以翻页，用户的草稿会保留。
-- 用户的回答前后矛盾时，必须问清楚，不能自己挑一个。
+## When to ask
+- Ask only what changes the solution, scope, acceptance criteria or business result; find out yourself first what you
+  can (read files, read the charter, look things up).
+- Ask all questions of one kind in one round, not one per round. 3–10 per round is good; a card shows 5 per page and can
+  be paged, and the user's drafts are kept.
+- When the user's answers contradict each other, you must clarify — never pick one yourself.
 
-## 怎么写每个问题
-问题格式：`{"id": "q1", "text": "…", "required": true, "options": ["…"], "recommended": "…"}`
-1. **前 40 个字要能独立看懂**：卡片输入框的标题只显示前 45 个字，后面的说明放在问题后半段。
-2. **给选项**：尽量给 2–5 个具体选项，并加"其他（请说明）"；有把握时给出 recommended，并在问题里一句话说明理由。
-3. **说明为什么问**：后半段用"（用于……）"说明这个答案会影响什么，用户更容易认真回答。
-4. **一个问题只问一件事**；不要用"是否"问开放问题。
-5. **允许"不确定"**：用户答不出时，接受"不确定"并在文档"待定事项"里记录，给出你的默认假设。
-6. **required**：只有不回答就无法继续的问题才设为必答；其余设为选答，减少用户负担。
+## Writing each question
+Format: `{"id": "q1", "text": "…", "required": true, "options": ["…"], "recommended": "…"}`, written in the user's
+language.
+1. **The first 40 characters must make sense alone**: the card's input title shows only the first 45 characters; put
+   explanations in the second half.
+2. **Give options**: 2–5 concrete options where possible, plus "other (please explain)"; when you are confident, give
+   recommended with a one-sentence reason in the question.
+3. **Say why you ask**: a second half like "(used for …)" says what the answer affects, so the user answers carefully.
+4. **One thing per question**; never ask an open question as a yes/no question.
+5. **Allow "not sure"**: when the user cannot answer, accept "not sure", record it under the document's open items and
+   state your default assumption.
+6. **required**: only questions without which you cannot continue are required; the rest are optional, to spare the user.
 
-## 问题的顺序
-先问定位类（是谁、在什么场景、要解决什么），再问细节类，最后问取舍和确认类。前面的答案可能让后面的问题失效，
-所以一轮里不要同时问"定位"和依赖定位结果的"细节"。
+## Order of questions
+First locating questions (who, in what situation, solving what), then details, then trade-offs and confirmations. Earlier
+answers may make later questions moot, so do not ask locating questions and details that depend on them in the same
+round.
 
-## 处理矛盾
-把两种说法并列写出，问用户以哪个为准，例如："你先说日报给团队看，后来又说只给自己看。以哪个为准？
-（选项：团队 / 只给自己 / 两种都要）"。用户的决定记入需求文档"已澄清的矛盾"。
+## Handling contradictions
+Put the two statements side by side and ask which one holds, for example: "You first said the daily report is for the
+team, later that it is only for you. Which holds? (options: the team / only me / both)". Record the user's decision in
+the requirements document under resolved contradictions.
 
-## Supervisor 转述 PM 的问题时
-- 合并重复的问题，改成用户容易回答的话，保留 PM 问题的 id 覆盖关系（covers）。
-- 能从已有资料确定答案的，在 suggested 中给出建议答案和依据，但仍交给用户确认。
-- 不要删掉 PM 的必答问题；不需要用户回答的，要给出建议答案和依据。
+## When the Supervisor relays the PM's questions
+- Merge duplicates, reword them so the user can answer easily, and keep which PM question ids each covers (covers).
+- Where existing material settles an answer, give it with its basis in suggested — but still let the user confirm.
+- Never drop a required PM question; for one the user need not answer, give a suggested answer and its basis.
 
-## 常见错误
-- 问"还有什么需求？"这类开放问题：用户无从答起。改为列出可能的方向让用户勾选。
-- 一轮只问一个问题，导致来回很多轮。
-- 用专业术语提问：按用户的行业用语来问。
+## Common mistakes
+- Open questions like "any other requirements?": the user does not know where to start. List likely directions to pick
+  from instead.
+- One question per round, causing many back-and-forths.
+- Questions in technical jargon: use the user's industry language.

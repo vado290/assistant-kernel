@@ -75,7 +75,7 @@ def check_config(settings, tmp_path: Path, text: str) -> list[str]:
 
 def test_validation_accepts_the_product_agent_example_and_rejects_retired_tools(kernel_settings, tmp_path):
     design = (SRC / "prompts" / "skills" / "assistant-agent-design" / "SKILL.md").read_text("utf-8")
-    example = re.search(r"config\.yaml 最小写法：\n```yaml\n(.*?)```", design, re.S).group(1)
+    example = re.search(r"Minimal config\.yaml:\n```yaml\n(.*?)```", design, re.S).group(1)
     assert check_config(kernel_settings, tmp_path, example) == []
     retired = example.replace("vault_read_text]", "vault_read_text, run_status]")
     assert len(check_config(kernel_settings, tmp_path, retired)) == 1

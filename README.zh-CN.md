@@ -23,7 +23,17 @@
 - 文档（需求、设计）和每一次发布都要你批准；文档一改，原来的批准就失效。项目文件只能通过任务改变：
   候选文件先校验再发布；代码项目的仓库和授权可写的外部目录在实施阶段直接修改，批准发布时提交。
 - `#pm` 里的消息交给当前任务（或开新任务）；`#supervisor` 里的消息是咨询。
-- 文字命令：`/status`、`/pending`、`/cancel 确认`、`/evolve`、`/iterations`、`/grants`、`/jobs`、`/secrets`。
+- 文字命令：`/status`、`/pending`、`/cancel confirm`、`/evolve`、`/iterations`、`/grants`、`/jobs`、`/secrets`
+  （`/cancel 确认` 也可以）。
+
+## 语言与看板
+
+- **语言**：界面统一用英文——卡片、按钮、通知、命令、看板，以及 Kernel 写进项目的文件；技能、角色和提示词也都是英文。
+  agent 按你使用的语言回复：总结、问题和文档正文跟随你的语言（判断不出时用英文），文档标题保持英文。
+- **看板**：`http://127.0.0.1:18001/dashboard`（由 `kernel-api` 提供，只能从本机访问）。用 `assistant-data/config/dashboard-token`
+  里的令牌登录（首次启动时生成）。第一页是 Discord 设置：在 Discord 开发者门户自己创建应用和机器人（Discord 没有提供这一步的
+  API），粘贴 bot token，看板会检查它、在 Discord 允许时打开 Message Content intent、给出邀请链接、列出机器人加入的服务器并
+  保存设置，网关随即用新设置重启。
 
 ## 项目
 
@@ -135,7 +145,12 @@ Kernel 会逐渐积累关于你和你的工作的记忆：背景信息存档（`
 ```
 
 Kernel 运行在 Docker 容器里（路径在 `/home/v/AI` 下，数据在 `assistant-data/`）。生产进程（`deploy/supervisord.conf`）：
-`kernel-core-dispatcher`、`kernel-core-gateway`、`kernel-api`（`/health/live`、`/health/ready`、`/version`），以及从项目
-已发布的 `jobs.yaml` 登记的项目服务。
+`kernel-core-dispatcher`、`kernel-core-gateway`、`kernel-api`（`/health/live`、`/health/ready`、`/version`、`/dashboard`），
+以及从项目已发布的 `jobs.yaml` 登记的项目服务。
 
 测试：`tests/core/`（每个测试使用一个临时数据库），以及 `tests/` 下的少量库测试。
+
+## 许可证
+
+[MIT](LICENSE)。`deploy/seccomp-codex.json` 改编自 Moby 的 seccomp 配置，仍按 Apache License 2.0 授权
+（[deploy/LICENSE_moby_profiles.txt](deploy/LICENSE_moby_profiles.txt)）。

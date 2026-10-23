@@ -11,7 +11,7 @@ from typing import Any
 
 import yaml
 
-from assistant_kernel.core import gitdelivery, runtime
+from assistant_kernel.core import gitdelivery, i18n, runtime
 from assistant_kernel.services.candidate_bundle import CandidateBundleService
 from assistant_kernel.storage import ProjectRuntimeManager
 
@@ -23,9 +23,9 @@ def _reseal(settings, project_id: str, task_id: str, expected: str) -> tuple[dic
     try:
         bundle = CandidateBundleService(settings).seal(project_id, task_id)
     except (FileNotFoundError, ValueError) as exc:
-        return None, f"候选文件无法封存：{exc}"
+        return None, f"the candidate files cannot be sealed: {exc}"
     if bundle["bundle_sha256"] != expected:
-        return None, "候选文件在提交实施报告之后又被修改过，需要重新提交实施报告。"
+        return None, "the candidate files changed after the implementation report was submitted; submit the report again."
     return bundle, None
 
 
@@ -39,7 +39,7 @@ async def execute_validation(run: dict[str, Any], ctx) -> dict[str, Any]:
     settings = ctx.services["settings"]
     project_id, task_id, bundle_sha = run["project_id"], str(run["task_id"]), run["input"]["bundle_sha"]
     if bundle_sha.startswith(NO_FILES):
-        return {"passed": True, "report": "本次交付没有候选文件（仅文档交付），无需文件验证。"}
+        return {"passed": True, "report": "This delivery has no candidate files (documents only); no file validation needed."}
     if bundle_sha.startswith(gitdelivery.PREFIX):   # code delivery: the project's tests on exactly that commit
         code = gitdelivery.config(settings, project_id)
         passed, report = await asyncio.to_thread(gitdelivery.validate, code, task_id,
@@ -201,16 +201,16 @@ async def _execute_publish(run: dict[str, Any], ctx) -> dict[str, Any]:
     vault = ProjectRuntimeManager(settings.data_root).ensure(project_id).vault_root
     task, grants = await ctx.kernel.get_task(run["task_id"]), await ctx.kernel.grants(project_id)
     problems, _ = await _joined_worker(ctx, projectgit.commit_release, vault, project_id, grants,
-                                      f"发布前快照（任务 {task_id[:8]}）", external=False)
+                                      f"Snapshot before release (task {task_id[:8]})", external=False)
     result = await _publish(run, ctx)
     if result.get("outcome") == "published":
         more, commits = await _joined_worker(ctx, projectgit.commit_release, vault, project_id, grants,
-                                            f"发布：{(task or {}).get('goal', '')[:72]}\n\n任务 {task_id}")
+                                            f"Release: {(task or {}).get('goal', '')[:72]}\n\nTask {task_id}")
         problems += more
         result["commits"] = result.get("commits", []) + commits
     if problems:
-        warning = ("⚠ 发布已完成，但 git 提交有问题（不影响发布）：" if result.get("outcome") == "published" else
-                   "⚠ 发布未完成，另有 git 快照问题：") + "；".join(problems)[:600]
+        warning = i18n.t("files.release_git_warning" if result.get("outcome") == "published" else
+                         "files.unreleased_git_warning", problems="; ".join(problems)[:600])
         result["note"] = "\n".join(part for part in (result.get("note"), warning) if part)
     return result
 
@@ -296,7 +296,9 @@ async def require_publication_stopped(c, settings, task):
                 return
         except (OSError, ValueError):
             pass
-    raise ValueError("旧发布写入尚未确认停止，保留核对卡片；先由维护者停止旧执行器、保存并核对副作用，记录绑定本次发布的停止回执，再处理失败或取消。")
+    raise ValueError("the earlier release writer is not confirmed stopped; the check card stays. A maintainer first stops "
+                     "the old executor, saves and checks side effects, records a stop receipt bound to this release, "
+                     "and only then handles the failure or cancellation.")
 
 
 def manifest_evidence(settings, project_id, bundle):
@@ -307,11 +309,11 @@ def manifest_evidence(settings, project_id, bundle):
                 return {"manifest_sha": None}
             prefix = f"vault://{project_id}/"
             if not item["artifact_uri"].startswith(prefix):
-                raise ValueError("运行声明快照不属于当前项目")
+                raise ValueError("the runtime manifest snapshot does not belong to this project")
             path = ProjectRuntimeManager(settings.data_root).resolve_vault_file(project_id, item["artifact_uri"][len(prefix):])
             raw = path.read_bytes()
             if hashlib.sha256(raw).hexdigest() != item["candidate_sha256"]:
-                raise ValueError("运行声明快照内容已变化")
+                raise ValueError("the runtime manifest snapshot has changed")
             return {"manifest_sha": runtime.manifest_sha(raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n"))}
     return {}
 
@@ -323,7 +325,7 @@ def reconcile_publication(settings, task, run):
     bundle_sha = rules.validated_bundle(task)
     if not run or not bundle_sha or run["input"].get("bundle_sha") != bundle_sha \
             or not rules.approval_valid(task, "release"):
-        raise ValueError("发布核对缺少匹配的批准对象或执行记录")
+        raise ValueError("the release check has no matching approval or run record")
     saved = run.get("result") or {}
     if bundle_sha.startswith(NO_FILES):
         return {"outcome": "published", "files": []}
@@ -336,20 +338,21 @@ def reconcile_publication(settings, task, run):
             return {"outcome": "published", "files": saved.get("files", []),
                     "commits": saved.get("commits") or [{"repo": "code", "commit": sha, "files": []}]}
         if not re.fullmatch(r"[0-9a-f]{64}", bundle_sha):
-            raise ValueError("无法定位批准的文件快照")
+            raise ValueError("the approved file snapshot cannot be found")
         vault = ProjectRuntimeManager(settings.data_root).ensure(project_id).vault_root
         journal = json.loads((vault / "runs" / str(run["run_id"]) / "publication/journal.json").read_text("utf-8"))
         if not isinstance(journal, dict) or journal.get("status") != "completed" or journal.get("project_id") != project_id \
                 or journal.get("publish_run_id") != str(run["run_id"]):
-            raise ValueError("发布写入终态未确认，旧执行器仍可能写入或回滚；保留核对，不得确认成功")
+            raise ValueError("the release writer's final state is not confirmed; the old executor may still write or roll "
+                             "back — the check stays and success must not be confirmed")
         bundle = json.loads((vault / "runtime/candidate-snapshots" / bundle_sha / "bundle.json").read_text("utf-8"))
         if bundle.get("bundle_sha256") != bundle_sha or not bundle.get("files"):
-            raise ValueError("发布快照身份不匹配或为空")
+            raise ValueError("the release snapshot identity does not match or is empty")
         seed = {k: bundle[k] for k in ("schema_version", "project_id", "task_id", "manifest_sha256")}
         seed["files"] = [{k: v for k, v in f.items() if k != "artifact_uri"} for f in bundle["files"]]
         if seed["project_id"] != project_id or seed["task_id"] != task_id or hashlib.sha256(
                 json.dumps(seed, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest() != bundle_sha:
-            raise ValueError("批准快照内容校验失败")
+            raise ValueError("the approved snapshot failed its content check")
         scopes = WorkspaceScopeService(settings)
         resolved = vault / "runs" / task_id / "resolved"
         plan_path = next((resolved / n for n in ("execution-plan-build.json", "execution-plan.json") if (resolved / n).is_file()),
@@ -361,12 +364,13 @@ def reconcile_publication(settings, task, run):
             approved, target, _ = scopes.resolve_uri(pinned, item["target_uri"])
             actual, current_target, _ = scopes.resolve_uri(current, item["target_uri"])
             if target != current_target or (approved.grant_id, approved.grant_sha256) != (actual.grant_id, actual.grant_sha256):
-                raise ValueError("发布目标授权已变化")
+                raise ValueError("the release target's grant has changed")
             if item["operation"] == "delete":
-                if target.exists(): raise ValueError("批准删除的目标仍存在")
+                if target.exists(): raise ValueError("a target approved for deletion still exists")
             elif not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest() != item["candidate_sha256"]:
-                raise ValueError("实际文件尚未与批准内容一致")
+                raise ValueError("the actual files do not match the approved content yet")
         return {"outcome": "published", "files": [f["target_uri"] for f in bundle["files"]],
                 "commits": saved.get("commits", []), **manifest_evidence(settings, project_id, bundle)}
     except (OSError, ValueError, KeyError, gitdelivery.GitError) as exc:
-        raise ValueError(f"发布结果尚未核实，请先确认写入已停止、核对回执和实际目标；不要盲目重发：{exc}") from exc
+        raise ValueError(f"the release result is not verified: first confirm the writer stopped and check the receipt "
+                         f"and the actual targets; do not blindly publish again: {exc}") from exc

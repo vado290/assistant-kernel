@@ -102,12 +102,12 @@ async def test_code_delivery_end_to_end(kernel, sim, dispatcher, fake_harness, k
     call = fake_harness.calls[-1]
     worktree = gitdelivery.worktree_path(gitdelivery.config(kernel_settings, "p1"), str(task_id))
     assert call.cwd == worktree and "write_candidate_file" not in call.scoped_tools
-    assert "不要运行 git commit" in call.prompt and str(worktree) in call.prompt
+    assert "Do not run git commit" in call.prompt and str(worktree) in call.prompt
     task = await sim.task(task_id)
     commit = task["documents"]["implementation_report"]["bundle_sha"]
     assert commit.startswith("git:") and git(repo, "rev-parse", gitdelivery.branch(str(task_id))) == commit[4:]
     assert task["documents"]["validation"]["passed"], task["documents"]["validation"]
-    assert "测试命令" in task["documents"]["validation"]["report"]
+    assert "Test command" in task["documents"]["validation"]["report"]
 
     item = await sim.item("p1", task_id)
     assert item["content"]["decision"] == "release"
@@ -170,7 +170,7 @@ async def test_full_git_review_refuses_drift_then_recovers_without_reset(
         assert result["usage"]["input_tokens"] == 100 and result["usage"]["output_tokens"] == 50
         assert result["session_id"] == failed["pm_session"]["native_session_id"]
         assert result["session_id"] and result["config_sha256"] and result["skills"]
-        assert "待复核" in result["summary"]
+        assert "leads to re-check" in result["summary"]
 
     # The test operator preserves the uncommitted material outside the managed worktree before restoring it.
     saved = kernel_settings.data_root / "saved-review-work.txt"
@@ -206,7 +206,7 @@ def test_validation_runs_the_tests_on_the_commit(tmp_path, kernel_settings, repo
     (path / "hello.py").write_text("oops\n", "utf-8")
     commit = gitdelivery.seal(cfg, "t-fail", "坏的实现")
     passed, report = gitdelivery.validate(cfg, "t-fail", commit[4:])
-    assert not passed and "退出码 1" in report
+    assert not passed and "exit code 1" in report
     (path / "hello.py").write_text("print('x')\n", "utf-8")                  # changed after sealing
     assert gitdelivery.validate(cfg, "t-fail", commit[4:])[0] is False
     assert gitdelivery.seal(cfg, "t-none", "没有改动") == ""                  # nothing changed → no-files marker
@@ -220,7 +220,7 @@ def test_fast_forward_refuses_when_main_moved(kernel_settings, repo):
     (repo / "b.txt").write_text("b", "utf-8")                                 # someone commits on main meanwhile
     git(repo, "add", "-A")
     git(repo, "-c", "user.name=u", "-c", "user.email=u@x", "commit", "-qm", "b")
-    with pytest.raises(gitdelivery.GitError, match="不能快进"):
+    with pytest.raises(gitdelivery.GitError, match="cannot be fast-forwarded"):
         gitdelivery.fast_forward(cfg, commit)
 
 

@@ -50,7 +50,7 @@ def test_map_validation_with_candidate_files(kernel_settings, project_files):
     vault = project_files
     assert check_map(kernel_settings, "p1", "t1") == []                         # no product, no map: nothing to check
     candidates(vault, "t2", {"product/entries/daily.py": "x"})
-    assert check_map(kernel_settings, "p1", "t2") == ["product/entries/daily.py 没有登记在地图里"]
+    assert check_map(kernel_settings, "p1", "t2") == ["product/entries/daily.py is not in the map"]
     candidates(vault, "t3", {"product/entries/daily.py": "x",
                              "knowledge/map.yaml": MAP + "  - {path: product/entries/daily.py, purpose: 日报}\n"
                                                          "  - {path: project:knowledge/charter.md, purpose: 章程}\n"})
@@ -61,7 +61,7 @@ def test_map_validation_with_candidate_files(kernel_settings, project_files):
     (vault / "product" / "entries" / "daily.py").write_text("x", "utf-8")
     (vault / "knowledge" / "map.yaml").write_text(MAP + "  - {path: product/entries/daily.py, purpose: 日报}\n", "utf-8")
     candidates(vault, "t4", {"product/entries/daily.py": None})                # deleted, still in the map
-    assert check_map(kernel_settings, "p1", "t4") == ["地图 product/entries/daily.py 指向的文件不存在"]
+    assert check_map(kernel_settings, "p1", "t4") == ["map product/entries/daily.py points to a file that does not exist"]
     candidates(vault, "t5", {"knowledge/map.yaml": "entries: ["})
     assert len(check_map(kernel_settings, "p1", "t5")) == 1
 
@@ -78,7 +78,7 @@ def test_a_repository_map_can_name_project_folder_files(tmp_path):
                                                       "  - {path: project:knowledge/charter.md, purpose: 章程}\n", "utf-8")
     assert check_repo_map(code, "t1", vault) == []
     (vault / "knowledge" / "charter.md").unlink()
-    assert check_repo_map(code, "t1", vault) == ["地图 project:knowledge/charter.md 指向的文件不存在"]
+    assert check_repo_map(code, "t1", vault) == ["map project:knowledge/charter.md points to a file that does not exist"]
 
 
 def test_rollout_gives_new_skills_refreshes_unedited_and_respects_removals(tmp_path, monkeypatch):
@@ -114,7 +114,7 @@ async def test_rollout_runs_once_per_version_and_commits_only_skills(kernel, ker
     projectgit.commit_all(project_files, "start")
     (project_files / "notes.md").write_text("an unrelated edit", "utf-8")
     assert await vault_sync._sync_templates(kernel, kernel_settings) >= 1
-    assert shutil_target.exists() and log(project_files)[0].startswith("同步技能模板")
+    assert shutil_target.exists() and log(project_files)[0].startswith("Sync skill templates")
     assert "notes.md" in projectgit.git("status", "--porcelain", cwd=project_files)   # not swept into that commit
     assert await vault_sync._sync_templates(kernel, kernel_settings) == 0          # same Kernel version: once
     # ROUND5 D24 restored in 0.45.11: the per-version rollout runs alongside the (disabled) adoption policy path.
@@ -156,7 +156,7 @@ def test_a_new_project_starts_with_a_commit(kernel_settings):
     (vault / "knowledge").mkdir(parents=True)
     (vault / "knowledge" / "charter.md").write_text("x", "utf-8")
     first_commit(kernel_settings, {"project_id": "fresh", "display_name": "新项目"})
-    assert log(vault) == ["创建项目 新项目"]
+    assert log(vault) == ["Create project 新项目"]
 
 
 async def test_map_and_credential_tools_over_mcp(kernel, sim, kernel_settings, project_files, tmp_path):

@@ -107,18 +107,18 @@ def layout_problems(vault: Path, targets: list[str] = ()) -> list[str]:
     problems = []
     for target in targets:
         if "/.agents/skills/" in f"/{target}" and not SKILL_HOME.match(target):
-            problems.append(f"{target}：技能只能放在 agents/<agent>/.agents/skills/ 下")
+            problems.append(f"{target}: skills belong only under agents/<agent>/.agents/skills/")
         if target.rsplit("/", 1)[-1] == "AGENTS.md":
-            problems.append(f"{target}：项目内不放 AGENTS.md（角色写在 role.md，规则写在技能里）")
+            problems.append(f"{target}: no AGENTS.md in a project (roles go in role.md, rules in skills)")
     for folder, dirs, files in os.walk(vault):
         dirs[:] = [d for d in dirs if d not in LAYOUT_SKIP]
         relative = Path(folder).relative_to(vault).as_posix()
         relative = "" if relative == "." else relative + "/"
         if ".agents" in dirs and (Path(folder) / ".agents" / "skills").is_dir() \
                 and not SKILL_HOME.match(f"{relative}.agents/skills/"):
-            problems.append(f"{relative}.agents/skills：这一级不能放技能")
+            problems.append(f"{relative}.agents/skills: no skills at this level")
         if "AGENTS.md" in files:
-            problems.append(f"{relative}AGENTS.md：项目内不放 AGENTS.md")
+            problems.append(f"{relative}AGENTS.md: no AGENTS.md in a project")
         dirs[:] = [d for d in dirs if d != ".agents"]
     return problems
 
@@ -168,12 +168,13 @@ class Selection:
         skills itself; otherwise (a code-delivery worktree) Kernel lists the on-demand ones with their paths."""
         parts = []
         if self.always:
-            parts.append("## 技能\n\n" + "\n\n".join(f"### 技能 {s.name}（{s.version}）\n\n{s.body}" for s in self.always))
+            parts.append("## Skills\n\n" + "\n\n".join(f"### Skill {s.name} ({s.version})\n\n{s.body}" for s in self.always))
         if self.on_demand and not native:
-            lines = [f"- {s.name}：{s.description}（全文：`{s.path.relative_to(vault).as_posix()}`）" for s in self.on_demand]
-            parts.append("## 按需技能（需要时用 vault_read_text 读取全文）\n\n" + "\n".join(lines))
+            lines = [f"- {s.name}: {s.description} (full text: `{s.path.relative_to(vault).as_posix()}`)" for s in self.on_demand]
+            parts.append("## Skills on demand (read the full text with vault_read_text when you need one)\n\n" + "\n".join(lines))
         if self.shared:
-            parts.append("## 公共背景（kernel 维护，只读；与项目章程冲突时以章程为准）\n\n"
+            parts.append("## Shared background (maintained by kernel, read-only; the project charter wins where they "
+                         "conflict)\n\n"
                          + "\n\n".join(s.body for s in self.shared))
         return "\n\n".join(parts)
 
@@ -253,8 +254,8 @@ def collaboration_gaps(vault: Path) -> list[str]:
     active = [s for s in distinct(project_skills(vault)) if s.io and not s.load.get("disabled")]
     reads = {a: [s.name for s in active if a in s.io.get("reads", [])] for s in active for a in s.io.get("reads", [])}
     writes = {a: [s.name for s in active if a in s.io.get("writes", [])] for s in active for a in s.io.get("writes", [])}
-    gaps = [f"{a}：由 {'、'.join(w)} 写出，但没有技能读取" for a, w in writes.items() if a not in reads]
-    gaps += [f"{a}：{'、'.join(r)} 要读取，但没有技能写出" for a, r in reads.items()
+    gaps = [f"{a}: written by {', '.join(w)}, but no skill reads it" for a, w in writes.items() if a not in reads]
+    gaps += [f"{a}: {', '.join(r)} read it, but no skill writes it" for a, r in reads.items()
              if a not in writes and a not in PLATFORM_ARTIFACTS]
     return sorted(gaps)
 
@@ -270,7 +271,7 @@ def template_updates(vault: Path) -> list[dict[str, str]]:
             seen.add((copy.name, copy.version))
             changelog = re.findall(r'^\s*-\s*"(.+?)"\s*$', template.path.read_text("utf-8"), re.M)[:2]
             updates.append({"name": copy.name, "copy": copy.version, "template": template.version,
-                            "changes": "；".join(changelog) or "（无变更记录）"})
+                            "changes": "; ".join(changelog) or "(no changelog)"})
     return updates
 
 
@@ -342,12 +343,25 @@ def _title(text: str) -> str:
     return re.split(r"[（(]", text, maxsplit=1)[0].strip()
 
 
+def title_variants(title: str) -> frozenset[str]:
+    """The comparable forms of a heading: for a Kernel-read heading (given by its key or any language's spelling)
+    every language's spelling, otherwise just this title (ROUND6)."""
+    from assistant_kernel.core import i18n
+    wanted = _title(title).casefold()
+    for key, texts in i18n.heading_keys().items():
+        forms = {_title(text).casefold() for text in texts}
+        if wanted == key.casefold() or wanted in forms:
+            return frozenset(forms)
+    return frozenset({wanted})
+
+
 def section_bounds(lines: list[str], title: str) -> tuple[int, int, int] | None:
-    """(heading index, body start, end) of the first heading with this title (numbering and notes ignored)."""
-    title = _title(title)
+    """(heading index, body start, end) of the first heading with this title (numbering, notes, case and the
+    language of a Kernel-read heading ignored)."""
+    wanted = title_variants(title)
     for index, line in enumerate(lines):
         head = _heading(line)
-        if head and _title(head[1]) == title:
+        if head and _title(head[1]).casefold() in wanted:
             level, end = head[0], len(lines)
             for later in range(index + 1, len(lines)):
                 other = _heading(lines[later])

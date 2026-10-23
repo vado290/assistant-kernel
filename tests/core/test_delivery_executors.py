@@ -120,11 +120,11 @@ async def test_reconcile_restores_runtime_evidence_without_republishing(
             item = await sim.item("p1")
             assert item["content"]["decision"] == "reconcile"
             assert (project_files / "jobs.yaml").read_text() == manifest
-            with pytest.raises(ValueError, match="尚未确认停止"):
+            with pytest.raises(ValueError, match="not confirmed stopped"):
                 await kernel.act("p1", item["item_id"], "published")
-            with pytest.raises(ValueError, match="尚未确认停止"):
+            with pytest.raises(ValueError, match="not confirmed stopped"):
                 await kernel.act("p1", item["item_id"], "failed")
-            with pytest.raises(ValueError, match="尚未确认停止"):
+            with pytest.raises(ValueError, match="not confirmed stopped"):
                 await kernel.cancel_task(task_id)
             assert (await sim.task(task_id))["state"] == "awaiting_user"
         finally:
@@ -133,7 +133,7 @@ async def test_reconcile_restores_runtime_evidence_without_republishing(
         assert not (project_files / "jobs.yaml").exists()
         assert not (project_files / "scripts/report.py").exists()
         assert (await sim.item("p1"))["item_id"] == item["item_id"]
-        with pytest.raises(ValueError, match="终态未确认"):
+        with pytest.raises(ValueError, match="final state is not confirmed"):
             await kernel.act("p1", item["item_id"], "published")
         await kernel.act("p1", item["item_id"], "failed")
         assert (await sim.task(task_id))["state"] == "supervising"
@@ -153,19 +153,19 @@ async def test_reconcile_restores_runtime_evidence_without_republishing(
         journal_bytes, stopped_bytes = journal.read_bytes(), stopped.read_bytes()
         journal.unlink()
         stopped.unlink()  # legacy task with no positive stop evidence
-        with pytest.raises(ValueError, match="尚未确认停止"):
+        with pytest.raises(ValueError, match="not confirmed stopped"):
             await kernel.act("p1", item["item_id"], "failed")
-        with pytest.raises(ValueError, match="尚未确认停止"):
+        with pytest.raises(ValueError, match="not confirmed stopped"):
             await kernel.cancel_task(task_id)
         assert await kernel.expire_idle_tasks(days=0) == []
         stopped.write_bytes(stopped_bytes)  # maintenance confirms this already-returned test worker has stopped
-        with pytest.raises(ValueError, match="尚未核实"):
+        with pytest.raises(ValueError, match="is not verified"):
             await kernel.act("p1", item["item_id"], "published")
         journal.write_bytes(journal_bytes)
     target = project_files / ("docs/result.md" if delete_manifest else "scripts/report.py")
     expected = target.read_bytes()
     target.write_bytes(b"unverified external change")
-    with pytest.raises(ValueError, match="尚未核实"):
+    with pytest.raises(ValueError, match="is not verified"):
         await kernel.act("p1", item["item_id"], "published")
     assert (await sim.item("p1"))["item_id"] == item["item_id"]
     target.write_bytes(expected)
@@ -297,7 +297,7 @@ async def test_files_changed_after_the_report_fail_validation(kernel, sim, dispa
     dispatcher.scripts.add("supervisor:evaluate", next_step("build", "重新提交实施报告"))
     await settle(dispatcher)
     validation = (await sim.task(task_id))["documents"]["validation"]
-    assert not validation["passed"] and "又被修改" in validation["report"]
+    assert not validation["passed"] and "changed after the implementation report" in validation["report"]
 
 
 async def test_document_only_delivery_needs_no_files(kernel, sim, dispatcher):

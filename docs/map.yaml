@@ -66,7 +66,19 @@ entries:
   purpose: 把火山方舟的共享密钥同步到 Kernel 的共享配置
 - path: src/assistant_kernel/api/main.py
   kind: module
-  purpose: 'kernel-api: health and version for the container health check and deploy.ps1.'
+  purpose: 'kernel-api: health and version for the container health check and deploy.ps1, and the dashboard'
+- path: src/assistant_kernel/api/dashboard.py
+  kind: module
+  purpose: 'The dashboard (ROUND6): local English page with the Discord settings (check token, enable intent, invite link, save)'
+- path: src/assistant_kernel/api/static/
+  kind: directory
+  purpose: The dashboard's single HTML page (no build step)
+- path: src/assistant_kernel/i18n/
+  kind: directory
+  purpose: 'en.yaml (ROUND6): Kernel''s interface text and the English headings it parses'
+- path: src/assistant_kernel/core/i18n.py
+  kind: module
+  purpose: 'Text and language rules (ROUND6): interface text, English headings (older Chinese found), contract placeholders, replies in the user''s language'
 - path: src/assistant_kernel/config/settings.py
   kind: module
   purpose: Kernel 设置：从环境变量读取数据库、目录、模型等配置
@@ -135,7 +147,10 @@ entries:
     a PM-channel message while the'
 - path: src/assistant_kernel/core/gateway/config.py
   kind: module
-  purpose: 'Gateway configuration: one explicit file mapping project channels (config/core-discord.yaml).'
+  purpose: 'Gateway configuration: one explicit file mapping project channels (config/core-discord.yaml); the saved bot token'
+- path: src/assistant_kernel/core/gateway/setup.py
+  kind: module
+  purpose: 'Discord setup for the dashboard (ROUND6): check a bot token, application, owner, intent, invite link and servers'
 - path: src/assistant_kernel/core/gateway/discord_app.py
   kind: module
   purpose: 'Discord wiring for the core gateway: a thin layer over GatewayService

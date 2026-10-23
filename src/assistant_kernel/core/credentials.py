@@ -66,7 +66,7 @@ def put(vault: Path, key: str, value: Any, *, service: str = "", purpose: str = 
         source: str = "user") -> dict[str, Any]:
     """Store or replace one credential; the key must be lower_snake_case."""
     if not KEY.fullmatch(key):
-        raise ValueError(f"凭据 key 只能是小写字母、数字和下划线，以字母开头：{key!r}")
+        raise ValueError(f"a credential key uses lowercase letters, digits and underscores and starts with a letter: {key!r}")
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     with _locked(vault) as target:
         items = _read(target)
@@ -89,10 +89,11 @@ def delete(vault: Path, key: str) -> bool:
 
 
 def render(items: list[dict[str, Any]]) -> str:
+    from assistant_kernel.core.i18n import t
     if not items:
-        return "本项目还没有保存任何凭据。"
-    lines = ["本项目保存的凭据（不显示值）："]
-    lines += [f"- `{i['key']}`：{i.get('service') or '—'} · {i.get('purpose') or '—'}（更新于 {str(i.get('updated_at'))[:10]}）"
-              for i in items]
-    lines.append("删除：/secrets delete <key>（会要求确认）。新增：由 PM 在需要时提问，你在卡片上填写。")
+        return t("secrets.none")
+    lines = [t("secrets.title")]
+    lines += [t("secrets.line", key=i["key"], service=i.get("service") or "—", purpose=i.get("purpose") or "—",
+                date=str(i.get("updated_at"))[:10]) for i in items]
+    lines.append(t("secrets.footer"))
     return "\n".join(lines)

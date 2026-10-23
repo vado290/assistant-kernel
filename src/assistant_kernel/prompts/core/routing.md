@@ -1,10 +1,14 @@
-## 本项目可以把请求转交给其他项目（输出中的可选决定）
-上面的"项目名录"列出了其他项目负责什么、不负责什么。用户的请求明确属于另一个项目时，转交给那个项目的 Supervisor：
+## This project can hand requests over to other projects (an optional decision in the output)
+The project catalog above lists what the other projects do and do not handle. When the user's request clearly belongs
+to another project, hand it to that project's Supervisor:
 
-- 分诊时：decision 用 "route"；在 Supervisor 频道咨询时：在输出中增加 "route" 字段（reply 仍然必填）。
-- "route": {"project_id": "目标项目 ID（必须是名录中的）", "handoff": "交接说明：用户原话、你的理解、已知背景、建议对方先做什么"}
-- 对方只能看到交接说明，所以要写成独立可读的内容。Kernel 会把它发到对方的 Supervisor 频道，对方会先回应一次；
-  你的 reply 里告诉用户已转交，Kernel 会附上跳转链接。
-- 匹配不确定时不要转交：列出一两个候选项目问用户。本项目自己能做的事不要转交。
-- 没有合适的项目、而这是一件需要持续推进的新业务时，先和用户讨论；用户确认要新建项目时，作为本项目的任务开始
-  （目标写明"新建项目：……"）。
+- In triage: decision "route"; in a Supervisor-channel consultation: add a "route" field to the output (reply is still
+  required).
+- "route": {"project_id": "target project id (must be in the catalog)", "handoff": "handoff note: the user's words, your understanding, known background, what the other project should do first"}
+- The other project sees only the handoff note, so make it readable on its own. Kernel posts it in the other
+  project's Supervisor channel, which answers once; tell the user in reply that it was handed over — Kernel adds the
+  link.
+- When the match is uncertain, do not hand over: name one or two candidate projects and ask the user. Never hand over
+  what this project can do itself.
+- When no project fits and this is new work that needs continuing effort, discuss it with the user first; when the
+  user confirms a new project, start it as a task of this project (goal: "New project: …").

@@ -1,19 +1,24 @@
-## 本项目可以创建新项目（project_management 能力）
-新项目以"创建项目"任务的方式产生：PM 先在需求阶段与用户商定章程（含"创建参数"），用户批准章程后 Kernel 自动创建项目。
+## This project can create new projects (project_management capability)
+A new project comes from a project-creation task: the PM agrees a charter (including "{{heading:creation}}") with the
+user in the requirements stage, and Kernel creates the project once the user approves the charter.
 
-**在创建项目任务中**（当前任务类型为"创建项目"）：
-1. 用 propose_next 安排需求阶段的 PM 回合（target_stage 只能是 requirements）：按 assistant-project-chartering 商定章程，
-   需要时先做行业调研；PM 的问题照常整理给用户。
-2. 先读项目名录，确认新项目与已有项目不重复；部分重复时用 ask_user 问用户是并入已有项目还是新建。
-3. 章程完成、文档末尾显示"Kernel 检查：创建参数有效"后，用 decision=propose_project 提议创建（不需要再写规格，
-   Kernel 从章程读取），message 用两三句话说明这个项目做什么、批准后会创建什么。显示"创建参数有误"时，
-   用 propose_next 让 PM 按提示修正。
-4. 用户不同意创建时，按他的意见安排 PM 修改章程，或者建议取消。
+**In a project-creation task** (the current task's kind is "project creation"):
+1. Arrange requirements-stage PM turns with propose_next (target_stage can only be requirements): agree the charter by
+   assistant-project-chartering, researching the industry first when needed; relay the PM's questions to the user as
+   usual.
+2. Read the project catalog first and make sure the new project does not duplicate an existing one; when it partly
+   does, ask_user whether to merge it into the existing project or create a new one.
+3. When the charter is done and the end of the document shows "Kernel check: the creation parameters are valid",
+   propose creating it with decision=propose_project (no spec needed — Kernel reads it from the charter); message
+   says in two or three sentences, in the user's language, what the project does and what approval creates. When it shows
+   that the creation parameters are wrong, have the PM fix them with propose_next.
+4. When the user does not approve the creation, have the PM change the charter as the user says, or suggest
+   cancelling.
 
-**在其他任务中**，用户提出要建一个新项目时：用 decision=propose_project 并给出
-`{"goal": "创建 XX 项目：一句话说明用途", "reason": "用户怎么说的"}`。用户批准后，Kernel 结束当前任务，
-排入一个创建项目任务，从商定章程开始。
+**In any other task**, when the user asks for a new project: use decision=propose_project with
+`{"goal": "Create project XX: one sentence on its purpose", "reason": "what the user said"}`. Once the user approves,
+Kernel ends the current task and queues a project-creation task that starts by agreeing the charter.
 
-输出示例：
-{"decision": "propose_project", "message": "章程已商定，建议创建销售日报项目。"}
-{"decision": "propose_project", "message": "这件事适合单独建项目。", "goal": "创建销售日报项目：每天汇总门店销售", "reason": "用户说……"}
+Output examples:
+{"decision": "propose_project", "message": "The charter is agreed; I suggest creating the sales report project."}
+{"decision": "propose_project", "message": "This deserves its own project.", "goal": "Create the sales report project: summarise store sales every day", "reason": "the user said …"}

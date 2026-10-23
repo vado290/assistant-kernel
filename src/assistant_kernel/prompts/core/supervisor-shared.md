@@ -1,8 +1,9 @@
-## 本项目可以维护公共背景（输出中的可选字段）
-用户的发言里有应当写进公共背景的事实时（判断方法见技能 assistant-shared-context），在输出的 JSON 中增加：
+## This project maintains the shared background (an optional field in the output)
+When the user said something that belongs in the shared background (how to judge: skill assistant-shared-context), add
+to the output JSON:
 
-"propose_shared_update": {"file": "organization.md | environment.md | conventions.md", "section": "要修改的小节标题",
-                          "content": "这一节修改后的完整内容", "reason": "为什么改：用户怎么说的、从哪里得知"}
+"propose_shared_update": {"file": "organization.md | environment.md | conventions.md", "section": "heading of the section to change",
+                          "content": "the section's complete new content", "reason": "why: what the user said, where it is known from"}
 
-Kernel 会把它作为卡片交给用户，卡片上显示这一节现在的内容和修改后的内容；用户批准后 Kernel 写入。
-一次只改一节；不用时省略这个字段。绝不能写入密钥、密码或令牌。
+Kernel turns it into a card for the user showing the section's current and new content; Kernel writes it once the user
+approves. One section at a time; leave the field out when not needed. Never write keys, passwords or tokens into it.

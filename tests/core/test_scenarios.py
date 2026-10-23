@@ -119,7 +119,7 @@ async def test_expired_release_card_can_reject_rereview_and_publish(kernel, sim,
         async with kernel.db.tx() as c:
             await c.execute("UPDATE core.tasks SET documents=%s, approvals=%s WHERE task_id=%s",
                             (Jsonb(docs), Jsonb(approvals), task_id))
-    with pytest.raises(ValueError, match="本次未批准.*不同意"):
+    with pytest.raises(ValueError, match="Not approved this time.*Decline"):
         await kernel.act("p1", item["item_id"], "approve")
     from assistant_kernel.core.gateway.config import GatewayConfig, ProjectChannels
     from assistant_kernel.core.gateway.service import GatewayService
@@ -127,7 +127,7 @@ async def test_expired_release_card_can_reject_rereview_and_publish(kernel, sim,
     gateway = GatewayService(kernel, GatewayConfig(guild_id="g", allowed_user_ids=frozenset({USER}),
                              projects={"p1": ProjectChannels("p1", PM_CH, SUP_CH)}), FakeTransport())
     reply = await gateway._act("p1", item["item_id"], "approve", {}, USER, "expired-attempt")
-    assert "本次未批准" in reply.text and "不同意" in reply.text and "卡片已更新" not in reply.text
+    assert "Not approved this time" in reply.text and "Decline" in reply.text and "card was updated" not in reply.text
     assert (await sim.item("p1", task_id))["item_id"] == item["item_id"]
     assert "release" not in (await sim.task(task_id))["approvals"]
     await sim.assert_consistent()
@@ -199,10 +199,10 @@ async def test_legacy_release_stage_can_stop_after_preserving_work_and_start_fol
         prior.setattr(rules, "review_error", lambda task: None)
         await sim.drain()  # an old retry card, left in release by the previous version
     retry = await sim.item("p1", task_id)
-    with pytest.raises(ValueError, match="尚未确认停止"):
+    with pytest.raises(ValueError, match="not confirmed stopped"):
         await kernel.cancel_task(task_id)
     await confirm_simulated_publisher_stopped(kernel, task_id)  # maintenance confirmed the legacy worker exited
-    with pytest.raises(ValueError, match="release 阶段不能直接返回 Review"):
+    with pytest.raises(ValueError, match="the release stage cannot go straight back to review"):
         await kernel.act("p1", retry["item_id"], "approve")
     await kernel.act("p1", retry["item_id"], "reject")
     sim.script("supervisor:evaluate", {"decision": "propose_cancel", "message": "已保留工作，请确认停止后另建任务"})
@@ -288,8 +288,8 @@ async def test_s01_mainline_to_completion(kernel, sim):
     assert task["state"] == "completed"
     assert all(rules.approval_valid(task, k) for k in ("requirements", "design", "release"))
     notices = [m["body"]["text"] for m in await sim.outbound("p1")]
-    assert any(n.startswith("PM（需求分析）：") for n in notices)       # every PM turn reports to the PM channel
-    assert any(n.startswith("✅ 任务完成") for n in notices)
+    assert any(n.startswith("PM (Requirements): ") for n in notices)       # every PM turn reports to the PM channel
+    assert any(n.startswith("✅ Task completed") for n in notices)
     assert (await sim.task(second["task_id"]))["state"] == "awaiting_user"
     async with kernel.db.tx() as c:
         project = await (await c.execute("SELECT operational_baseline FROM core.projects WHERE project_id='p1'")).fetchone()

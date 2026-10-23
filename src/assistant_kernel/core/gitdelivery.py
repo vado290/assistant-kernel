@@ -35,7 +35,7 @@ class GitError(RuntimeError):
 def git(*args: str, cwd: Path, timeout: int = 120) -> str:
     done = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, timeout=timeout)
     if done.returncode != 0:
-        raise GitError(f"git {' '.join(args[:3])} 失败：{(done.stderr or done.stdout).strip()[-600:]}")
+        raise GitError(f"git {' '.join(args[:3])} failed: {(done.stderr or done.stdout).strip()[-600:]}")
     return done.stdout.strip()
 
 
@@ -105,24 +105,25 @@ def validate(cfg: dict[str, Any], task_id: str, sha: str) -> tuple[bool, str]:
     """Run the project's test command on exactly the bound commit."""
     path = worktree_path(cfg, task_id)
     if not (path / ".git").exists():
-        return False, "任务工作区不存在"
+        return False, "the task's workspace does not exist"
     head = git("rev-parse", "HEAD", cwd=path)
     if head != sha or git("status", "--porcelain", cwd=path):
-        return False, "工作区在提交后又被改动过（或不是被验证的提交），请重新提交实施报告"
+        return False, "the workspace changed after the commit (or is not the validated commit); submit the implementation report again"
     files = changed_files(cfg, sha)
-    summary = f"提交 {sha[:12]}，相对 {cfg['main']} 改动 {len(files)} 个文件：" + "、".join(files[:20])
+    summary = f"commit {sha[:12]} changes {len(files)} files against {cfg['main']}: " + ", ".join(files[:20])
     if not cfg["test_command"]:
-        return True, summary + "\n本项目没有配置测试命令（project.yaml 的 validation.command），只确认了提交；Review 时要人工核对测试。"
+        return True, summary + ("\nThis project has no test command (validation.command in project.yaml); only the commit "
+                                "was confirmed — check the tests by hand in the review.")
     env = {key: value for key, value in os.environ.items()
            if key in PASSED_ENV or any(fnmatch.fnmatchcase(key, pattern) for pattern in cfg["pass_env"])}
     try:
         done = subprocess.run(["bash", "-lc", cfg["test_command"]], cwd=str(path), env=env, capture_output=True,
                               text=True, timeout=cfg["test_timeout"])
     except subprocess.TimeoutExpired:
-        return False, summary + f"\n测试命令超时（{cfg['test_timeout']} 秒）：{cfg['test_command']}"
+        return False, summary + f"\nThe test command timed out ({cfg['test_timeout']} s): {cfg['test_command']}"
     output = (done.stdout + done.stderr).strip()[-3000:]
-    verdict = "通过" if done.returncode == 0 else f"失败（退出码 {done.returncode}）"
-    return done.returncode == 0, f"{summary}\n测试命令 `{cfg['test_command']}` {verdict}：\n{output}"
+    verdict = "passed" if done.returncode == 0 else f"failed (exit code {done.returncode})"
+    return done.returncode == 0, f"{summary}\nTest command `{cfg['test_command']}` {verdict}:\n{output}"
 
 
 def fast_forward(cfg: dict[str, Any], sha: str) -> list[str]:
@@ -134,12 +135,14 @@ def fast_forward(cfg: dict[str, Any], sha: str) -> list[str]:
     try:
         git("merge-base", "--is-ancestor", old, sha, cwd=repo)
     except GitError as exc:
-        raise GitError(f"{main} 在本任务开始后又有了新提交，不能快进；需要先把 {main} 合并进任务分支") from exc
+        raise GitError(f"{main} got new commits after this task started and cannot be fast-forwarded; merge {main} "
+                       "into the task branch first") from exc
     current = git("rev-parse", "--abbrev-ref", "HEAD", cwd=repo)
     if current != main:
         git("update-ref", f"refs/heads/{main}", sha, old, cwd=repo)   # compare-and-swap: only from the checked value
     elif git("status", "--porcelain", "--untracked-files=no", cwd=repo):
-        raise GitError(f"{main} 在主工作区被检出且有未提交的改动，Kernel 不会动它；请先提交或切换分支")
+        raise GitError(f"{main} is checked out in the main worktree with uncommitted changes, which Kernel never touches; "
+                       "commit them or switch branches first")
     else:
         git("merge", "--ff-only", "-q", sha, cwd=repo)
     return files
@@ -149,7 +152,8 @@ def runtime_home(cfg: dict[str, Any]) -> Path:
     """Runtime executes a clean main working copy; never switch or reset the user's checkout."""
     if git("rev-parse", "HEAD", cwd=cfg["repo"]) != git("rev-parse", cfg["main"], cwd=cfg["repo"]) \
             or git("status", "--porcelain", "--untracked-files=no", cwd=cfg["repo"]):
-        raise GitError("运行工作区不对应干净的已发布主分支；请保留改动并核对运行目录，Kernel 不自动切换或重置")
+        raise GitError("the runtime worktree is not a clean released main branch; keep the changes and check the runtime "
+                       "directory — Kernel never switches or resets it")
     return cfg["repo"]
 
 
@@ -171,7 +175,7 @@ def init_repository(path: Path, main: str = "main", readme: str = "") -> bool:
         return False
     path.mkdir(parents=True, exist_ok=True)
     git("init", "-q", "-b", main, cwd=path)
-    (path / "README.md").write_text(readme or "# 项目代码仓库\n", "utf-8")
+    (path / "README.md").write_text(readme or "# Project code repository\n", "utf-8")
     git("add", "-A", cwd=path)
-    git(*IDENTITY, "commit", "-q", "-m", "初始化仓库", cwd=path)
+    git(*IDENTITY, "commit", "-q", "-m", "Initialise repository", cwd=path)
     return True

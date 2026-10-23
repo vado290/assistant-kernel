@@ -1,26 +1,30 @@
 ---
 name: assistant-history-retrieval
-description: 需要核实过去的决定、批准、约束或用户原话时，用 list_recent_history 读取本项目最近的对话记录，并注明出处。
+description: When you need to verify a past decision, approval, constraint or the user's own words, read this project's recent conversation with list_recent_history and cite where it came from.
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   load: {roles: [pm, supervisor], on_demand: true}
   changelog:
-    - "1.0.0 2026-10-16 按核心 v6 就地重写：工具现在总是返回整个项目最近一页记录（两个频道、按时间顺序），删除已失效的分页和范围说明"
+    - "1.1.0 2026-10-23 Written in English, the skills' source language; what the user reads follows the user's language (ROUND6, 0.46.0)"
+    - "1.0.0 2026-10-16 Rewritten in place for core v6: the tool now always returns the project's latest page of records (both channels, in time order); obsolete paging and scope notes removed"
 ---
 
-# 查阅历史对话
+# Looking up past conversation
 
-## 何时查
-只在以下情况查，不要每轮例行查询：
-- 用户提到"以前、上次、之前说过、当时决定"；
-- 判断依赖过去的决定、约束或原话，而当前上下文和工件里没有；
-- 当前说法与工件可能冲突，需要回到原话核实。
+## When to look
+Only in these cases — not as a routine every turn:
+- the user mentions "before, last time, as I said, what we decided then";
+- a judgement depends on a past decision, constraint or the user's words that are not in the current context or artifacts;
+- what is said now may conflict with the artifacts, and the original words must be checked.
 
-## 怎样查
-调用 `list_recent_history(lookback_days)`：返回本项目两个频道最近的消息（按时间先后），默认回看 365 天。
-它不做关键词或语义搜索，只能按时间看最近的记录；更早的内容以工件为准。
+## How to look
+Call `list_recent_history(lookback_days)`: it returns the latest messages of the project's two channels (oldest first),
+looking back 365 days by default. It does no keyword or semantic search; it only shows the latest records in time order —
+for anything older, the artifacts are the reference.
 
-## 怎样用
-- 区分用户原话、agent 的回复和系统通知；涉及"用户是否同意过"时，以用户的原话和卡片操作为准。
-- 关键结论注明消息时间；没找到就如实说明查了多长时间范围，不要凭印象补造。
-- 工件中已经记录的事实，优先引用工件。
+## How to use it
+- Tell the user's own words, agent replies and system notices apart; on "did the user agree", the user's words and card
+  actions decide.
+- Give the message time for key conclusions; when nothing is found, say honestly how far back you looked — never fill
+  the gap from memory.
+- Facts already recorded in the artifacts are quoted from the artifacts first.

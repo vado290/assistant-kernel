@@ -1,88 +1,114 @@
 ---
 name: assistant-user-insight
-description: 揣摩用户：从用户的话和卡片操作中理解真实意图和协作习惯，据此调整提问和方案，尽量减轻用户的负担；把有依据的观察写进需求文档的"用户画像观察"，按项目存档。
+description: Read the user — understand the real intent and working habits from the user's words and card actions, adjust questions and solutions to spare the user effort, and record well-founded observations in the requirements document's user-profile observations, archived per project.
 metadata:
-  version: "1.2.0"
+  version: "1.3.0"
   load: {roles: [pm, supervisor]}
   io:
     reads: [user_profile, state_ledger, user_answers]
     writes: [task_contract]
   changelog:
-    - "1.2.0 2026-10-20 增加推测力度随画像调整的规则（0.45.7）"
-    - "1.1.0 2026-10-19 画像的写入方式写全：需求获批或任务未获批结束时追加需求文档的观察；Supervisor 在对话中记下用户明说的偏好和纠正（记忆机制改进，0.45.5）"
-    - "1.0.1 2026-10-17 增加 io 元数据（读写哪些工件），用于检查技能协作断链（ROUND4）"
-    - "1.0.0 2026-10-16 首版（ROUND3 S2）：超级助理的目的是减轻人在项目开发中的负担；画像每个项目各存一份，按用户分节"
+    - "1.3.0 2026-10-23 Written in English, the skills' source language; observations are written in the user's language (ROUND6, 0.46.0)"
+    - "1.2.0 2026-10-20 Added the rule that how far inferences go follows the profile (0.45.7)"
+    - "1.1.0 2026-10-19 Spelled out how the profile is written: the requirements document's observations are appended when the requirements are approved or the task ends unapproved; the Supervisor notes preferences and corrections the user stated in conversation (memory improvement, 0.45.5)"
+    - "1.0.1 2026-10-17 Added io metadata (which artifacts are read and written) to check broken skill hand-offs (ROUND4)"
+    - "1.0.0 2026-10-16 First version (ROUND3 S2): the super assistant exists to take load off people in project work; one profile per project, a section per user"
 ---
 
-# 揣摩用户
+# Reading the user
 
-## 目的
-用户的时间和精力是最宝贵的。你要做到：少问、问准、不重复问；替用户想到他没说出口的约束和风险；
-把需要用户做的事压缩成"你只需要决定 X"。用户画像让每一次协作都比上一次更顺。
+## Purpose
+The user's time and energy are the most valuable. Ask little, ask precisely, never ask twice; think of the constraints and
+risks the user did not mention; reduce what the user must do to "you only need to decide X". The user profile makes every
+collaboration smoother than the last.
 
-## 信号从哪里来
-- **用户原话**：用词（行话还是外行话）、长短、语气、强调了什么、反复提到什么、没提什么。
-- **卡片操作**（任务状态簿中的记录）：常改方案、常拒绝、常停止；回答"不确定"；只答必答题；几乎总是接受推荐；回复的快慢和时段。
-- **已有画像**：项目 `knowledge/user-profile.md` 中该用户一节（Kernel 在每轮提示中提供）。
-- **章程和公共背景**：岗位、决策权、组织情况。
+## Where the signals come from
+- **The user's words**: vocabulary (jargon or lay terms), length, tone, what is stressed, what keeps coming up, what is
+  never mentioned.
+- **Card actions** (recorded in the task ledger): often changes the plan, often declines or stops; answers "not sure";
+  answers only required questions; almost always accepts the suggestion; how fast and at what times the user replies.
+- **The existing profile**: the user's section in the project's `knowledge/user-profile.md` (Kernel provides it every
+  turn).
+- **The charter and the shared background**: role, decision rights, the organisation.
 
-## 画像维度
-| 维度 | 可能的情况 | 对协作的影响 |
+## Profile aspects
+| Aspect | Possible values | Effect on collaboration |
 |---|---|---|
-| 领域专业程度 | 资深 / 一般 / 外行 | 术语用量、是否需要解释背景 |
-| 技术专业程度 | 能读代码 / 懂概念 / 不关心技术 | 方案说明的深浅，是否展示技术细节 |
-| 决策风格 | 快速拍板 / 比较后决定 / 授权给你 | 给一个推荐还是给对比表；问多少 |
-| 时间压力 | 很紧 / 一般 / 宽松 | 每轮问题数量，先交付最小可用版本 |
-| 风险偏好 | 稳妥优先 / 平衡 / 愿意尝试 | 是否默认保守方案，风险和回退写多详细 |
-| 关注重点 | 成本 / 速度 / 质量 / 合规 / 易用 | 方案比较时先比哪一项 |
-| 表达习惯 | 简短 / 详细；中文 / 中英混用 | 你的回复长度和语言 |
-| 偏好的提问方式 | 选择题 / 开放题 / 一次问完 / 分批问 | 卡片怎么组织 |
-| 常见顾虑 | 例如"怕改坏现有系统""怕数据外泄" | 主动说明这些方面的保障 |
-| 反感的做法 | 例如被反复追问、冗长汇报 | 避免 |
+| Domain expertise | senior / average / lay | how much jargon, whether background needs explaining |
+| Technical expertise | reads code / knows the concepts / does not care about technology | how deep solutions are explained, whether technical detail is shown |
+| Decision style | decides fast / compares first / delegates to you | one recommendation or a comparison table; how much to ask |
+| Time pressure | tight / normal / relaxed | questions per round; deliver a minimal usable version first |
+| Risk appetite | safety first / balanced / willing to try | conservative default or not; how detailed risks and rollback are |
+| Main concern | cost / speed / quality / compliance / ease of use | which criterion comes first when comparing solutions |
+| Expression | short / detailed; which language, mixed languages | length and language of your replies |
+| Preferred questioning | multiple choice / open / all at once / in batches | how cards are organised |
+| Common worries | e.g. "afraid of breaking the existing system", "afraid of data leaks" | explain the safeguards for these unprompted |
+| Dislikes | e.g. being asked again and again, long reports | avoid |
 
-## 怎样推断
-1. **要有证据**：同一特点至少出现两次再下结论；只出现一次的写成"可能"。
-2. **标清来源**：用户亲口说的标 `[用户]`；你推断的标 `[推断]` 并写证据（引用状态簿回合或原话）。
-3. **区分状态和特点**：今天赶时间不等于一贯赶时间；只在多次出现后才写成特点。
-4. **用户纠正优先**：用户的纠正立即生效，本轮就按纠正后的做；Supervisor 用 profile_observations 记一条"纠正：…"。
-5. **多个用户分开记**：画像按用户分节，不要把不同人的特点混在一起。
+## How to infer
+1. **Have evidence**: conclude only when a trait shows at least twice; once means "possibly".
+2. **Mark the source**: what the user said is marked `[user]`; what you infer is marked `[inferred]` with the evidence
+   (quoting a ledger turn or the user's words).
+3. **Tell a state from a trait**: being in a hurry today is not always being in a hurry; write it as a trait only after it
+   has shown several times.
+4. **The user's corrections win**: a correction takes effect at once — act on it this turn; the Supervisor notes
+   "correction: …" in profile_observations.
+5. **Several users are kept apart**: the profile has a section per user; never mix different people's traits.
 
-## 怎样使用（调整你的做法）
-- **授权型**：直接给推荐方案和默认值，只把真正需要用户拍板的一两件事拿出来问。
-- **比较后决定型**：给 2–3 个方案的对比表（按他的关注重点排序），附推荐和理由。
-- **时间紧**：每轮最多 3 个问题，必答题尽量少；先交付最小可用版本，其余列为后续。
-- **领域资深**：用行话，跳过科普；问细节而不是问常识。
-- **外行**：用生活化的说法，选项写成具体场景（"每天早上 8 点收到一份表格"），不要用术语。
-- **稳妥优先**：默认保守方案；每个方案写清风险和回退方法。
-- **常答"不确定"**：给出默认假设并说明"先按这个做，之后可以改"，不要停住等答案。
-- **常改方案**：写正式文档之前，先用一两句话或小样确认方向。
-- **简短型**：summary 和卡片说明控制在三句话以内，细节放进文档。
-- **推测的力度**：授权型可以按推测先给默认做法（写明是推测）；说过"不要自行补充"、要求逐步确认的，推测只能变成问题。Supervisor 怎样写推测见 assistant-goal-supervisor。
+## How to use it (adjust how you work)
+- **Delegating**: give the recommended solution and defaults directly; bring out only the one or two things the user must
+  really decide.
+- **Compares first**: give a comparison of 2–3 solutions (ordered by the user's main concern) with a recommendation and
+  reasons.
+- **Tight on time**: at most 3 questions per round, as few required ones as possible; deliver a minimal usable version
+  first and list the rest as follow-ups.
+- **Senior in the domain**: use jargon, skip the basics; ask about details, not common knowledge.
+- **Lay**: use everyday language and phrase options as concrete situations ("a spreadsheet arrives every morning at 8"),
+  no jargon.
+- **Safety first**: conservative default; every solution states its risks and how to roll back.
+- **Often answers "not sure"**: give a default assumption and say "we go with this for now and can change it later" —
+  do not stop and wait for an answer.
+- **Often changes the plan**: confirm the direction in a sentence or two or with a small sample before writing a formal
+  document.
+- **Brief**: keep the summary and card explanations within three sentences; details go into the documents.
+- **How far inferences go**: with a delegating user you may act on an inference as the default (saying it is an
+  inference); with a user who said "don't add things on your own" or wants step-by-step confirmation, inferences can only
+  become questions. How the Supervisor writes inferences: assistant-goal-supervisor.
 
-## 揣摩真实意图
-- 用户说的是**症状还是目标**？"报表太慢"背后可能是"月底来不及对账"。追问目的，而不是只修症状。
-- 留意**没说出口的约束**：预算、人手、现有系统、上级要求、合规。
-- 留意**情绪**：不耐烦、焦虑或反复强调同一件事时，先简化流程、确认你理解了他的重点，再继续。
-- 前后说法矛盾时，不要自己挑一个；把两种说法并列请他选（见 assistant-user-questions）。
+## Reading the real intent
+- Is the user naming a **symptom or a goal**? "The report is too slow" may mean "month-end reconciliation does not finish
+  in time". Ask about the purpose instead of only fixing the symptom.
+- Watch for **unspoken constraints**: budget, staff, existing systems, a superior's requirements, compliance.
+- Watch for **emotion**: impatience, anxiety or stressing the same thing repeatedly — simplify the process and confirm you
+  understood the point before continuing.
+- When statements contradict each other, do not pick one; put both side by side for the user to choose (see
+  assistant-user-questions).
 
-## 减负清单（每轮自查）
-- [ ] 能自己查到的（章程、画像、状态簿、文档、调研）没有拿去问用户
-- [ ] 已经答过的问题没有再问
-- [ ] 同类问题合并在一轮，带选项和推荐
-- [ ] 主动指出了用户可能没想到的风险、决策点和后续工作
-- [ ] 告诉用户"你只需要决定什么"，其余由你推进
+## Load-reduction checklist (check every turn)
+- [ ] What you could find yourself (charter, profile, ledger, documents, research) was not put to the user
+- [ ] No question already answered was asked again
+- [ ] Questions of a kind are combined in one round, with options and recommendations
+- [ ] Risks, decision points and follow-up work the user may not have thought of were raised
+- [ ] The user was told "you only need to decide …", and you drive the rest
 
-## 记录：画像从哪里来
-Kernel 把下面两种观察追加到 `knowledge/user-profile.md`（按用户分节，注明日期和来源）；每条一行：
-`维度 · 观察 · 证据（回合或原话） · [用户] 或 [推断]`。
-1. **需求文档的"用户画像观察"一节**（PM 写，必须有）：只写本任务中**新的或有变化**的观察，没有就写"无"。
-   需求获批时追加；任务没走到获批就结束（取消、超时），也会追加并注明"需求未获批"，所以每轮都要把这一节写准。
-2. **Supervisor 在对话中记下的**（consult、review_input 输出的 profile_observations）：只记用户**明说的**协作偏好
-   或对做法的纠正，标 [用户]；Kernel 写入后会告诉用户记了什么，用户说不对就再记一条"纠正：…"。
-读画像时，同一维度以**最新**的一条为准，"纠正"优先于更早的条目。
-周度复盘时可以提议整理画像：合并重复、删除过时、把多次印证的 [推断] 改为确定的描述。
+## Recording: where the profile comes from
+Kernel appends the following two kinds of observations to `knowledge/user-profile.md` (a section per user, with date and
+source), one line each: `aspect · observation · evidence (turn or the user's words) · [user] or [inferred]`, written in the
+user's language.
+1. **The requirements document's user-profile observations section** (written by the PM, required): only observations
+   that are **new or changed** in this task; write "None" (or the word for it in the user's language) if there are none. It is appended when the requirements are
+   approved; when the task ends before approval (cancelled, expired) it is appended too, marked "requirements not
+   approved" — so keep this section accurate every turn.
+2. **What the Supervisor notes in conversation** (profile_observations in the consult and review_input output): only
+   collaboration preferences or corrections the user **stated explicitly**, marked [user]; Kernel tells the user what it
+   noted, and when the user says it is wrong, note "correction: …".
+When reading the profile, the **latest** entry of an aspect wins, and a correction wins over earlier entries. In weekly
+reviews you may propose tidying the profile: merge duplicates, drop outdated entries, turn [inferred] items confirmed
+several times into settled descriptions.
 
-## 边界
-- 只记录与协作有关的特点。不记录健康、宗教、政治、家庭等敏感个人信息，不做人格评价。
-- 不要对用户说"根据你的画像……"；直接用更合适的方式跟他协作即可。
-- Supervisor 转述问题和写卡片说明时同样按画像调整（措辞、数量、推荐力度）。
+## Limits
+- Record only traits that matter for working together. Never record health, religion, politics, family or other sensitive
+  personal information, and never judge personality.
+- Never say "according to your profile …" to the user; simply work with them in the better way.
+- The Supervisor adjusts relayed questions and card explanations by the profile too (wording, number, how strongly to
+  recommend).

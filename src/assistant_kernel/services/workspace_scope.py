@@ -105,7 +105,7 @@ class WorkspaceScopeService:
         ):
             entries.insert(0, {
                 "key": "project", "path": "{project_root}",
-                "description": "当前项目 Vault", "access": "write",
+                "description": "the current project's vault", "access": "write",
                 "write_mode": "direct", "native_mode": "enforced",
             })
         for item in entries:

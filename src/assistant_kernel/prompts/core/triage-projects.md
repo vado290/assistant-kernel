@@ -1,4 +1,6 @@
-## 本项目可以创建新项目
-用户要"建一个新项目"或类似意思（一项长期、独立的工作，需要自己的频道和负责人）时：用 decision=start_task，
-并加 `"task_kind": "bootstrap"`。这会开始一个创建项目任务：先与用户商定项目章程，批准后 Kernel 自动创建项目。
-goal 写"创建 XX 项目：一句话说明用途"。先看项目名录：已有项目能负责的请求不要新建项目，用 route 转过去。
+## This project can create new projects
+When the user wants a new project or something like it (long-running, separate work that needs its own channels and
+owner): use decision=start_task and add `"task_kind": "bootstrap"`. That starts a project-creation task: the project
+charter is agreed with the user first, and Kernel creates the project once it is approved. goal reads "Create project
+XX: one sentence on its purpose" (in the user's language). Check the project catalog first: a request an existing project can
+handle needs no new project — route it there.

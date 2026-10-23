@@ -1,56 +1,79 @@
 ---
 name: assistant-solution-design
-description: 设计阶段：依据已批准的需求，设计从输入到可用结果的完整方案，核实关键依赖，写清实施交接和验收方法。
+description: Design stage — from the approved requirements, design the complete solution from input to usable result, verify the key dependencies, and spell out the hand-over to the build and how it is accepted.
 metadata:
-  version: "2.3.1"
+  version: "2.4.0"
   load: {roles: [pm], stages: [design]}
   io:
     reads: [task_contract, working_notes, state_ledger, domain_brief, charter, map, change_stream]
     writes: [solution_design, working_notes]
   changelog:
-    - "2.3.1 2026-10-20 补接收异常、默认/待定语义及任务调研优先核对，保持现有需求与批准机制"
-    - "2.3.0 2026-10-20 仅完善 design：接收检查、业务流程、依赖证据、委派与实施交接；完成标准引用工件约定"
-    - "2.2.1 2026-10-17 增加 io 元数据（读写哪些工件），用于检查技能协作断链（ROUND4）"
-    - "2.2.0 2026-10-17 设计前读地图，按需查变更原因（ROUND4）"
-    - "2.1.1 2026-10-16 运行声明文件改为项目根目录的 jobs.yaml（vault 的 runtime/ 目录存放 Kernel 内部数据）"
-    - "2.1.0 2026-10-16 设计文档增加'运行方式'，与通用运行时的 manifest 对应（ROUND3 S3）"
-    - "2.0.0 2026-10-16 按核心 v6 就地重写（旧版使用已废弃的协议用语和输出字段）：由 pm-design.md 改写，增加需求覆盖和可并行子任务"
+    - "2.4.0 2026-10-23 Written in English, the skills' source language; the design document is written in the user's language (ROUND6, 0.46.0)"
+    - "2.3.1 2026-10-20 Added handling of reception problems, the meaning of defaults and open items, and checking this task's research first; kept the existing requirements and approval mechanism"
+    - "2.3.0 2026-10-20 Design only: reception checks, business flow, dependency evidence, delegation and build hand-over; the completion standard refers to the artifact conventions"
+    - "2.2.1 2026-10-17 Added io metadata (which artifacts are read and written) to check broken skill hand-offs (ROUND4)"
+    - "2.2.0 2026-10-17 Read the map before designing; look up reasons for changes as needed (ROUND4)"
+    - "2.1.1 2026-10-16 The runtime manifest is jobs.yaml at the project root (the vault's runtime/ folder holds Kernel's internal data)"
+    - "2.1.0 2026-10-16 The design document gains a 'how it runs' section matching the general runtime's manifest (ROUND3 S3)"
+    - "2.0.0 2026-10-16 Rewritten in place for core v6 (the old version used retired protocol terms and output fields): pm-design.md rewritten, with requirement coverage and parallel subtasks added"
 ---
 
-# 方案设计
+# Solution design
 
-## 接收需求
-只用于完整流程的 design；不为 quick 或创建项目任务增加设计阶段。读当前已批准需求的 R/A、有效用户决定和相关工作笔记、
-状态簿、章程、调研。整理已确认目标、范围、硬约束、用户已作的决定、你可自主选择的事项和未知项，引用原工件，不另造需求。
-状态簿可能压缩早期记录；不要把没看到细节当作用户没有回答，也不要把工作笔记中的假设当作已批准要求。
-已批准需求有引用却正文为空或无法读取时，停止设计并用 failed 报告交接读取异常及恢复条件，不退回去让用户重述需求。
-关键约定应能在正式需求或有效用户决定中定位；明确约定随批准生效的默认值按约定执行，仍标为待用户决定的事项不能自行确认。
-本任务调研与项目归档同时出现时核对日期、适用范围和来源；复用适用于本任务的证据，冲突先查明，不混用或覆盖用户约定。
+## Receiving the requirements
+Only for the full track's design; never add a design stage to the quick track or project creation. Read the R/A of the
+currently approved requirements, the user's decisions in effect and the relevant working notes, ledger, charter and
+research. Sort out the confirmed goals, scope, hard constraints, decisions the user made, what you may choose yourself and
+the unknowns, citing the original artifacts — never invent requirements. The ledger may compress early records; not seeing
+a detail does not mean the user did not answer, and an assumption in the working notes is not an approved requirement.
+When the approved requirements are referenced but their text is empty or unreadable, stop designing and report the
+hand-over read failure and its recovery condition with failed — do not send it back for the user to restate. Key
+agreements must be traceable to the formal requirements or the user's decisions in effect; defaults explicitly agreed to
+take effect on approval are followed as agreed, and items still marked for the user to decide must not be confirmed by
+you. When this task's research and the project archive both exist, compare their dates, scope and sources; reuse evidence
+that applies to this task, clear up conflicts first, and never mix them or override the user's agreements.
 
-- 信息已经明确但分散：汇总引用，不重复询问；能自行查证的事实先查。
-- 未指定平台、工具或技术不等于需求缺失：在已授权范围内自主选择并说明依据；需要用户作重要方案取舍时用 needs_input。
-- 需求缺失、矛盾或不可实现，必须改变目标、范围、硬约束或验收标准时，用 return_to_requirements 说明影响，不在设计中改需求。
+- Information that is clear but scattered: gather and cite it, without asking again; check facts you can check yourself
+  first.
+- An unspecified platform, tool or technology is not a missing requirement: choose within the grants and say why; use
+  needs_input when the user must make an important trade-off.
+- When requirements are missing, contradictory or impossible and the goal, scope, hard constraints or acceptance criteria
+  must change, say so with return_to_requirements and its impact — never change requirements in the design.
 
-## 从结果设计方案
-1. 从用户最终怎样使用结果倒推必要步骤：输入取得 → 处理或执行 → 结果交付 → 使用或后续处理 → 效果核验。
-   只展开已确认范围内的环节；研究、内容、个人计划等不强套软件流程，交付文档可以就是终点。每个关键步骤写清输入、动作、
-   执行者、输出、接收方和完成信号，不能只有文件清单。区分可直接验收的交付与受第三方影响的效果，不承诺无法控制的结果。
-2. 先读地图定位相关能力，再查实际文件；需要变更原因时用 `list_iterations(artifact=...)`。优先复用，结构改变时把地图列入
-   第 4 节。无须改项目文件的任务注明原因，不为填章节制造代码或作业。
-3. 有实质取舍的可行方案才比较成本、风险、效果和维护负担，并推荐一个；路线明显时不强凑备选。确定性的处理优先用脚本，
-   持续监听用服务，需要理解判断才用 agent；写清人工参与和权限边界。产物需要定时、长期运行或内部 agent 时读取
-   assistant-workflow-design，运行方式沿用 jobs.yaml；设计本身不启动服务或执行外部变更。
-4. 对决定方案成败的依赖（平台、数据源、接口、设备、软件或协作方），写用途及对应 R/D、选择依据、使用条件、证据与日期、
-   限制和不可用时的处理。文档声明、真实样例、实际调用分别标明；已有调研只复用仍适用的部分，易变关键事实定向核查。
-   需要补查时读 assistant-domain-research 的设计分支；调查只在当前授权内进行，无法验证就说明未知，不能写成已可用。
-5. 按 assistant-subagent-orchestration 的设计分支决定是否委派调查、盘点或反例审查，核对关键证据并处理发现。
-   派过子 agent 不代表已验证；普通小方案可自行检查。
+## Designing from the result
+1. Work back from how the user will finally use the result: getting the input → processing or executing → delivering the
+   result → use or follow-up → checking the effect. Expand only the steps within the confirmed scope; research, content
+   and personal plans need no software process forced on them — a delivered document can be the end point. For each key
+   step state the input, action, actor, output, receiver and completion signal — a file list alone is not enough. Tell
+   directly acceptable deliverables from effects influenced by third parties, and never promise results you cannot
+   control.
+2. Read the map first to locate the relevant capabilities, then the actual files; look up reasons for changes with
+   `list_iterations(artifact=...)` when needed. Prefer reuse; when the structure changes, list the map in section 4. When a
+   task needs no project file changes, say why — never invent code or jobs to fill a section.
+3. Compare cost, risk, effect and maintenance only between feasible options with a real trade-off, and recommend one; when
+   the route is obvious, do not force alternatives. Prefer scripts for deterministic processing, services for continuous
+   listening, and agents only where understanding and judgement are needed; state the human involvement and permission
+   boundaries. When the product must run on a schedule, keep running or contain agents, read assistant-workflow-design;
+   the way it runs stays jobs.yaml; the design itself starts no services and makes no outside changes.
+4. For dependencies the solution stands or falls on (platforms, data sources, interfaces, devices, software or
+   collaborators), state their purpose and the matching R/D, why they were chosen, the conditions of use, evidence and
+   date, limits, and what happens when unavailable. Mark documentation claims, real samples and actual calls separately;
+   reuse existing research only where it still applies, and re-check volatile key facts specifically. For further research
+   read the design branch of assistant-domain-research; investigate only within the current grants, and when you cannot
+   verify, say it is unknown — never write it as available.
+5. Decide by the design branch of assistant-subagent-orchestration whether to delegate investigations, inventories or
+   counter-example reviews; check the key evidence and act on the findings. Having sent a subagent does not mean verified;
+   small ordinary solutions you can check yourself.
 
-## 收敛与交接
-按 assistant-task-continuity 的设计文档九章记录结论，并逐项检查其中的“设计完成标准”；既从 R/A 查遗漏，
-也从重要 D 反查需求依据，避免未经授权的扩展。事实、假设、建议分别标来源；正式结论写入 solution_design，
-进行中的判断和下一步写入 working_notes，不能只留在 summary 或子 agent 回复中。
+## Converging and handing over
+Record the conclusions in the nine sections of the design document by assistant-task-continuity and check its "design
+completion standard" item by item; look for omissions from R/A, and trace important D back to their requirements to avoid
+unauthorised extensions. Mark facts, assumptions and recommendations with their sources; formal conclusions go into
+solution_design, judgements in progress and the next step into working_notes — never only in the summary or a subagent's
+reply.
 
-会推翻核心方案、影响必须需求或授权的未知项是阻断项，先调查、提问或退回需求。可留给实施的事项写清内容、影响、
-解决者、完成时点、通过条件和失败处理；局部实现细节允许在设计约束内自行处理。
-设计完成才用 outcome = completed、document.kind = solution_design；本阶段不写候选文件。
+Unknowns that would overturn the core solution or affect required requirements or grants are blockers: investigate, ask or
+go back to the requirements first. Items that can be left to the build state their content, impact, who resolves them,
+when, the pass condition and what happens on failure; local implementation details may be decided within the design's
+constraints. Use outcome = completed and document.kind = solution_design only when the design is done; this stage writes no
+candidate files.

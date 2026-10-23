@@ -18,6 +18,10 @@ This repository is the Kernel of the personal super assistant: the control core 
 - Prompt text in `src/assistant_kernel/prompts/core/` is the **contract** (output formats, Kernel-parsed sections):
   change it only together with the code that reads it. Skills in `src/assistant_kernel/prompts/skills/` are
   **templates** copied into projects; bump `metadata.version` and add a changelog line when you change one.
+- Language (ROUND6): the interface, prompt text, skills and templates are English. Kernel's own user-facing text comes
+  from `src/assistant_kernel/i18n/en.yaml` — a new string gets a key there, never a literal in Python. Models reply in the
+  user's language (`i18n.LANGUAGE_NOTE`); headings Kernel parses are keys (`heading.*`), English, with older Chinese
+  headings still found.
 - `docs/map.yaml` is this repository's map (an index entry per file): adding, removing or renaming a Python file
   means updating it in the same change, or validation fails.
 - Keep changes small and on the main path. No machinery for rare cases; the user prefers patches later over

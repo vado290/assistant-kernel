@@ -28,7 +28,19 @@ stages: requirements → design → build → (Kernel validation) → review →
   released; a code project's repository and external folders granted for writing are edited in the build stage and
   committed when the release is approved.
 - Messages in `#pm` go to the current task (or start one); messages in `#supervisor` are consultations.
-- Text commands: `/status`, `/pending`, `/cancel 确认`, `/evolve`, `/iterations`, `/grants`, `/jobs`, `/secrets`.
+- Text commands: `/status`, `/pending`, `/cancel confirm`, `/evolve`, `/iterations`, `/grants`, `/jobs`, `/secrets`.
+
+## Language and dashboard
+
+- **Language**: the interface is English — cards, buttons, notices, commands, the dashboard and the files Kernel writes
+  into projects; skills, roles and prompts are English too. The agents reply in the language you write in: summaries,
+  questions and the text of documents follow your language (English when it cannot be told), while document headings
+  stay in English.
+- **Dashboard**: `http://127.0.0.1:18001/dashboard` (served by `kernel-api`, reachable only from your machine). Sign in with
+  the token in `assistant-data/config/dashboard-token` (created on first start). The first page sets up Discord: create a
+  Discord application and bot yourself in the Developer Portal (Discord offers no API for that), paste the bot token, and
+  the dashboard checks it, switches on the Message Content intent where Discord allows it, gives you the invite link,
+  lists the servers the bot joined and saves the settings; the gateway restarts with them.
 
 ## Projects
 
@@ -151,6 +163,11 @@ the card is submitted — including an answer to a credential question. A fix is
 
 The Kernel runs in a Docker container (paths under `/home/v/AI`, data in `assistant-data/`). Production processes
 (`deploy/supervisord.conf`): `kernel-core-dispatcher`, `kernel-core-gateway`, `kernel-api` (`/health/live`,
-`/health/ready`, `/version`), and project services registered from a project's released `jobs.yaml`.
+`/health/ready`, `/version`, `/dashboard`), and project services registered from a project's released `jobs.yaml`.
 
 Tests: `tests/core/` (each test gets a temporary database) and a few library tests in `tests/`.
+
+## License
+
+[MIT](LICENSE). `deploy/seccomp-codex.json` is derived from the Moby seccomp profile and stays under the Apache
+License 2.0 ([deploy/LICENSE_moby_profiles.txt](deploy/LICENSE_moby_profiles.txt)).

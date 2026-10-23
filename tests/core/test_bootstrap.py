@@ -114,7 +114,7 @@ async def test_project_is_created_from_the_approved_charter(kernel, sim, dispatc
     assert done["state"] == "completed" and rules.approval_valid(done, "requirements")
     vault = kernel_settings.data_root / "vaults" / "sales-report"
     charter = (vault / "knowledge" / "charter.md").read_text("utf-8")
-    assert charter.startswith("# 销售日报 · 项目章程") and "每天汇总门店销售数据" in charter
+    assert charter.startswith("# 销售日报 · Project charter") and "每天汇总门店销售数据" in charter
     assert "创建参数" not in charter and "用户画像观察" not in charter and "修订记录" not in charter
     assert "变更记录" not in charter                                           # reasons live in the stream
     first = (await kernel.iterations("sales-report"))[0]
@@ -129,7 +129,7 @@ async def test_project_is_created_from_the_approved_charter(kernel, sim, dispatc
     assert (vault / "agents" / "pm" / ".agents" / "skills" / "assistant-requirements" / "SKILL.md").is_file()
     assert yaml.safe_load(management.read_text("utf-8"))["projects"]["sales-report"]["pm_channel_id"] == "pm1"
     notices = [m["body"]["text"] for m in await sim.outbound("kernel")]
-    assert any("🆕 项目 sales-report 已创建" in n and "/g1/pm1" in n for n in notices)
+    assert any("🆕 Project sales-report created." in n and "/g1/pm1" in n for n in notices)
     # the charter is not archived into the creating project's own charter
     await sync_vaults(kernel, kernel_settings)
     assert not (kernel_settings.data_root / "vaults" / "kernel" / "knowledge" / "user-profile.md").exists()

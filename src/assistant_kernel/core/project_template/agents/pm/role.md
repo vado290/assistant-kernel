@@ -1,7 +1,7 @@
-# {display_name} · PM 角色
+# {display_name} · PM role
 
-本项目（`{project_id}`）的用途：{purpose}
-项目的业务目标、背景、范围和约束见项目章程（`knowledge/charter.md`），工作方法见各阶段技能。
+This project (`{project_id}`) is for: {purpose}
+The project's business goals, background, scope and constraints are in the project charter (`knowledge/charter.md`); the working methods are in the stage skills.
 
-## 本项目对 PM 的特别要求
-（创建项目时与用户商定；在运营中根据复盘调整。没有特别要求时保持为空。）
+## Project-specific notes for the PM
+(Agreed with the user when the project is created; adjusted from the weekly reviews. Leave empty when there are none.)

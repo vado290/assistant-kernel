@@ -33,7 +33,7 @@ async def test_a_separate_request_while_a_task_waits_queues_behind_it(kernel, si
     await sim.drain()
     assert (await sim.item("p1", first))["item_id"] == waiting["item_id"]      # the waiting card is untouched
     [proposal] = new_task_items(await kernel.card("p1"))
-    assert "之后" in proposal["content"]["message"] and "/cancel" in proposal["content"]["message"]
+    assert "queues behind" in proposal["content"]["message"] and "/cancel" in proposal["content"]["message"]
 
     created = await kernel.act("p1", proposal["item_id"], "approve")
     second = created["task_id"]

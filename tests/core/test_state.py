@@ -20,8 +20,8 @@ async def test_a_new_session_takes_over_from_ledger_and_notes(kernel, sim, dispa
     reply = editing(kernel_settings, {"outcome": "completed", "summary": "读者已确认", "questions": [],
                                       "document": None}, content=NOTES, kind="working_notes")
     task_id, fresh, resumed = await ask_then_answer(kernel, sim, dispatcher, fake_harness, reply)
-    assert "任务状态簿" in fresh and "还没有完成的 PM 回合" in fresh
-    assert "任务状态簿" not in resumed and f"runs/{task_id}/state.md" in resumed   # a resumed session lived it
+    assert "## Task ledger" in fresh and "no completed PM turn yet" in fresh
+    assert "## Task ledger" not in resumed and f"runs/{task_id}/state.md" in resumed   # a resumed session lived it
 
     task = await sim.task(task_id)
     notes = task["documents"]["working_notes"]
@@ -38,11 +38,11 @@ async def test_a_new_session_takes_over_from_ledger_and_notes(kernel, sim, dispa
     await settle(dispatcher)
     third = fake_harness.calls[-1]
     assert third.physical_session_id is None
-    assert "问：日报给谁看？ → 答：团队" in third.prompt   # "卡片问答" (0.45.12)
-    assert "PM 工作笔记" in third.prompt and "问清发送时间" in third.prompt
+    assert "Q: 日报给谁看？ → A: 团队" in third.prompt   # "卡片问答" (0.45.12)
+    assert "PM working notes" in third.prompt and "问清发送时间" in third.prompt
     assert (await sim.task(task_id))["pm_session"]["turns"] == 1
     ledger = state_path(kernel_settings, "p1", task_id).read_text("utf-8")   # written at the start of the turn
-    assert "已完成 PM 回合：2" in ledger and "卡片问答" in ledger and "日报给谁看？" in ledger and "working_notes" in ledger
+    assert "PM turns completed: 2" in ledger and "Card questions" in ledger and "日报给谁看？" in ledger and "working_notes" in ledger
 
 
 def test_notes_are_editable_in_every_stage():
@@ -57,8 +57,8 @@ def test_early_turns_shrink_to_one_line():
               "result": {"outcome": "completed", "summary": f"小结{n}"}} for n in range(12)]
     task = {"goal": "日报", "stage": "requirements", "track": "full", "approvals": {}, "documents": {}}
     text = render_state(task, {"turns": turns, "actions": []}, STAGE_NAMES)
-    assert "回合 1（需求分析，10-16 09:00）：小结0" in text and "指令0" not in text
-    assert "指令11" in text and "已完成 PM 回合：12" in text
+    assert "Turn 1 (requirements, 10-16 09:00): 小结0" in text and "指令0" not in text
+    assert "指令11" in text and "PM turns completed: 12" in text
 
 
 async def test_an_outcome_of_another_stage_is_corrected_in_the_same_session(kernel, sim, dispatcher,  # noqa: F811
@@ -70,5 +70,5 @@ async def test_an_outcome_of_another_stage_is_corrected_in_the_same_session(kern
     dispatcher.scripts.add("supervisor:evaluate", next_step("requirements"))
     await settle(dispatcher)
     first, fix = fake_harness.calls[-2:]
-    assert "只用于实施阶段" in fix.prompt and fix.physical_session_id is not None
+    assert "only for the build stage" in fix.prompt and fix.physical_session_id is not None
     assert (await sim.task(task_id))["state"] == "awaiting_user"   # completed → Supervisor → card, not a failure

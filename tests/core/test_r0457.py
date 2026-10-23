@@ -41,16 +41,16 @@ async def test_the_inference_reaches_card_pm_and_ledger(kernel, sim, dispatcher,
     item = await sim.item("p1", task_id)
     assert item["content"]["inferred_intent"] == [GUESS]
     shown = render.render_item(item)["text"]
-    assert "我的推测（未经你确认" in shown and "月底对账来得及" in shown and "依据：回合 1" in shown
+    assert "My inference (not confirmed by you" in shown and "月底对账来得及" in shown and "basis: 回合 1" in shown
 
     await kernel.act("p1", item["item_id"], "execute")
     fake_harness.script("pm", {"outcome": "completed", "summary": "需求初稿", "questions": [],
                                "document": {"kind": "task_contract", "markdown": "# 需求\n- 日报"}})
     fake_harness.script("supervisor", propose(message="再看一轮"))
     await settle(dispatcher)
-    pm_prompt = next(c.prompt for c in fake_harness.calls if c.prompt.startswith("# 项目 p1 · PM 回合"))
-    assert "Supervisor 的推测（假设，不是需求" in pm_prompt and "月底对账来得及" in pm_prompt
-    ledger_line = "Supervisor 推测（假设）：用户真正在意的是月底对账来得及"
+    pm_prompt = next(c.prompt for c in fake_harness.calls if c.prompt.startswith("# Project p1 · PM turn"))
+    assert "The Supervisor's inference (assumptions, not requirements" in pm_prompt and "月底对账来得及" in pm_prompt
+    ledger_line = "Supervisor's inference (assumption): 用户真正在意的是月底对账来得及"
     assert ledger_line in fake_harness.calls[-1].prompt          # the next stateless Supervisor run sees it in the ledger
     from assistant_kernel.core.executors.pm import STAGE_NAMES
     from assistant_kernel.core.executors.state import render_state
@@ -66,7 +66,7 @@ async def test_a_revised_card_shows_supervisor_its_earlier_inference(kernel, sim
     fake_harness.script("supervisor", propose(message="改好了"))
     await settle(dispatcher)
     prompt = fake_harness.calls[-1].prompt
-    assert "你上次的推测（用户看过后提出了修改）" in prompt and "不是对账，是给店长看" in prompt
+    assert "Your last inference (the user saw it and asked for a change)" in prompt and "不是对账，是给店长看" in prompt
 
 
 async def test_supervisor_knows_time_user_and_the_project_situation(kernel, sim, dispatcher, fake_harness,
@@ -80,9 +80,9 @@ async def test_supervisor_knows_time_user_and_the_project_situation(kernel, sim,
     fake_harness.script("supervisor", propose())
     await settle(dispatcher)
     prompt = next(c.prompt for c in fake_harness.calls if "做个日报" in c.prompt)
-    assert "当前时间：" in prompt and "当前用户：u-7（用户画像中\"用户 u-7\"一节）" in prompt
-    assert "[取消] 先做一个周报" in prompt and f"runs/{earlier}/state.md" in prompt and str(task_id) not in prompt.split("其他任务")[1].split("###")[0]
-    assert "零售 · 上海" in prompt and "全文在 knowledge/domain-brief.md" in prompt
+    assert "Current time: " in prompt and "Current user: u-7 (the \"user u-7\" section of the user profile)" in prompt
+    assert "[cancelled] 先做一个周报" in prompt and f"runs/{earlier}/state.md" in prompt and str(task_id) not in prompt.split("Other tasks")[1].split("###")[0]
+    assert "零售 · 上海" in prompt and "full text in knowledge/domain-brief.md" in prompt
 
 
 def test_supervisor_runs_get_five_minutes():
@@ -123,7 +123,7 @@ async def test_evolution_supervisor_reads_queued_basis_and_original_report_witho
     assert "BASIS_END_MUST_SURVIVE" in call.prompt and "P2_SCOPE_ONLY_REVIEW_ROLE" in call.prompt
     assert call.prompt.count("ORIGINAL_PROPOSAL_EVIDENCE") == 1  # shared parent read once
     assert f"review:{str(parent['task_id'])[:8]}:P1" in call.prompt
-    assert "排队中，不依赖 state.md" in call.prompt and '"source_proposal_ref": null' in call.prompt
+    assert "queued; does not rely on state.md" in call.prompt and '"source_proposal_ref": null' in call.prompt
     assert "read_project_document" not in call.scoped_tools  # default Supervisor tools were not widened
     rows = await kernel.recent_tasks("p1", exclude=current["task_id"], include_basis=True)
     row = next(r for r in rows if r["task_id"] == children[0]["task_id"])
@@ -156,8 +156,8 @@ async def test_evolution_parent_report_failure_is_explicit_and_project_scoped(
     await kernel.create_task("p1", goal="queued", origin="evolution", parent_task_id=parent["task_id"], source_ref="P1")
     prompt = await project_situation(kernel, kernel_settings, "p1", current)
     assert "UNREADABLE_SOURCE_MUST_NOT_LEAK" not in prompt
-    assert "安排 PM 在 operate 定向补证" in prompt
-    assert ('"source_proposal_ref": null' if fault == "foreign_parent" else "缺失、校验失败或无正文：尚未核实") in prompt
+    assert "have the PM gather the evidence in operate" in prompt
+    assert ('"source_proposal_ref": null' if fault == "foreign_parent" else "missing, failed verification or empty: not verified yet") in prompt
 
 
 async def test_evolution_original_report_expansion_is_bounded_with_continuation(kernel, kernel_settings, project_files):
@@ -180,6 +180,6 @@ async def test_evolution_original_report_expansion_is_bounded_with_continuation(
                                  parent_task_id=parent["task_id"], source_ref="P1")
     prompt = await project_situation(kernel, kernel_settings, "p1", current)
     assert prompt.count("REPORT_BODY_") == 5 and "UNSHOWN_END" not in prompt
-    assert prompt.count("正文超过 8000 字符，已截断") == 5
-    assert "原报告正文入口超过 5 份" in prompt and "安排 PM 在 operate 定向补证" in prompt
+    assert prompt.count("longer than 8000 characters, cut off") == 5
+    assert "More than 5 original reports are referenced" in prompt and "have the PM gather the evidence in operate" in prompt
     assert all(doc["ref"]["sha256"] in prompt for _, doc in parents)

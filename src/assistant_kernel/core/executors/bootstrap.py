@@ -15,7 +15,7 @@ from typing import Any
 import httpx
 import yaml
 
-from assistant_kernel.core import skills
+from assistant_kernel.core import i18n, skills
 from assistant_kernel.core.gitdelivery import init_repository
 from assistant_kernel.storage import ProjectRuntimeManager
 
@@ -31,9 +31,10 @@ def fill(text: str, values: dict[str, str]) -> str:
 
 
 # Sections of the draft that do not belong in the charter (change reasons live in core.iterations, ROUND4).
-CHARTER_ONLY_IN_TASK = ("创建参数", "用户画像观察", "修订记录", "变更记录")
-ARCHIVE_TITLE = "背景信息存档"   # collected while creating the project; goes to knowledge/background.md (0.45.6)
-ROLE_SECTIONS = {"pm": "本项目对 PM 的特别要求", "supervisor": "本项目对 Supervisor 的特别要求"}
+# Heading keys (any language's heading is found, ROUND6).
+CHARTER_ONLY_IN_TASK = ("creation", "profile", "revision_log")
+ARCHIVE_TITLE = "archive"   # collected while creating the project; goes to knowledge/background.md (0.45.6)
+ROLE_SECTIONS = {"pm": "pm_notes", "supervisor": "supervisor_notes"}
 
 
 def drop_section(markdown: str, title: str) -> str:
@@ -48,10 +49,8 @@ def render_charter(spec: dict[str, Any], draft: str, created: str, task_id: str)
     for title in CHARTER_ONLY_IN_TASK:
         body = drop_section(body, title)
     body = "\n".join(line for line in body.splitlines() if not line.startswith("# ")).strip()   # its own title goes
-    header = (f"# {spec['display_name']} · 项目章程\n\n> 项目 ID：`{spec['project_id']}` · 创建于 {created}（任务 {task_id[:8]}）。"
-              "PM 和 Supervisor 每一轮都会读本章程；第 1、5、7 节同时用于 kernel 的项目路由。\n"
-              "> 各节通过任务修改（修改原因记在项目的变更流水里）。背景信息存档在 `knowledge/background.md`，"
-              "由 Kernel 在需求文档获批时追加。\n\n")
+    header = i18n.t("files.charter_header", name=spec["display_name"], project_id=spec["project_id"],
+                    created=created, task=task_id[:8]) + "\n\n"
     return header + drop_section(body, ARCHIVE_TITLE).strip() + "\n"
 
 
@@ -69,9 +68,9 @@ def write_project_files(settings, spec: dict[str, Any]) -> list[str]:
         raise PermissionError(f"a vault for {spec['project_id']} already exists and was not created by this bootstrap")
     runtime.ensure(spec["project_id"])
     created = datetime.now(timezone.utc).date().isoformat()
+    see = i18n.t("files.see_charter")
     values = {"project_id": spec["project_id"], "display_name": spec["display_name"], "purpose": spec["purpose"],
-              "created_at": created, "industry": "（见章程）", "organization": "（见章程）", "users": "（见章程）",
-              "notes": "（见章程）"}
+              "created_at": created, "industry": see, "organization": see, "users": see, "notes": see}
     written = []
     # project.yaml first: it marks the vault as ours, so an interrupted run can be repeated.
     for source in sorted((p for p in TEMPLATE.rglob("*") if p.is_file()), key=lambda p: p.name != "project.yaml"):
@@ -98,24 +97,26 @@ def write_project_files(settings, spec: dict[str, Any]) -> list[str]:
         (vault / "knowledge" / "charter.md").write_text(render_charter(spec, draft, created, task_id), "utf-8",
                                                         newline="\n")
         facts = skills.section_text(draft, ARCHIVE_TITLE)
-        if facts.strip() and facts.strip() not in ("无", "无。", "（无）"):
+        if not i18n.is_none(facts):
             append_archive(vault / "knowledge" / "background.md", f"archive:{charter_doc['sha256'][:12]}",
-                           f"{created} · 创建项目时收集", facts)
-        observed = skills.section_text(draft, "用户画像观察")
-        if observed.strip() and observed.strip() not in ("无", "无。", "（无）"):
-            append_profile(vault / "knowledge" / "user-profile.md", spec.get("user_id") or "默认",
-                           f"profile:{charter_doc['sha256'][:12]}", f"{created} · 创建项目时的观察", observed)
-    for role, title in ROLE_SECTIONS.items():
+                           i18n.t("files.created_archive", date=created), facts)
+        observed = skills.section_text(draft, "profile")
+        if not i18n.is_none(observed):
+            append_profile(vault / "knowledge" / "user-profile.md", spec.get("user_id") or "default",
+                           f"profile:{charter_doc['sha256'][:12]}", i18n.t("files.created_profile", date=created),
+                           observed)
+    for role, key in ROLE_SECTIONS.items():
         note = spec.get(f"{role}_role")
         path = vault / "agents" / role / "role.md"
         if note and path.is_file():
-            path.write_text(skills.replace_section(path.read_text("utf-8"), title, note), "utf-8", newline="\n")
+            path.write_text(skills.replace_section(path.read_text("utf-8"), i18n.heading(key), note), "utf-8",
+                            newline="\n")
     brief = spec.get("brief")
     if brief:
         research = read_document(settings, source, brief)
         if research.strip():
             write_brief(vault / "knowledge" / "domain-brief.md", f"brief:{brief['sha256'][:12]}",
-                        f"{created} · 创建项目时的调研", research)
+                        i18n.t("files.created_brief", date=created), research)
     capabilities = skills.project_config(vault)["capabilities"]
     written += [f"agents/{copy.split('/')[0]}/.agents/skills/{copy.split('/')[1]}"
                 for copy in skills.install_templates(vault, capabilities)]
@@ -144,7 +145,7 @@ class DiscordChannels:
 
             category = await find_or_create(None, {"name": f"PROJECT · {project_id}", "type": 4})
             channels = {}
-            for role, title in (("pm", "PM：在这里提需求、补充信息"), ("supervisor", "Supervisor：卡片、咨询")):
+            for role, title in (("pm", i18n.t("files.topic_pm")), ("supervisor", i18n.t("files.topic_supervisor"))):
                 marker = f"core-project:{project_id}:{role}"
                 channels[role] = await find_or_create(marker, {
                     "name": role, "type": 0, "parent_id": category,
@@ -181,7 +182,7 @@ def first_commit(settings, spec: dict[str, Any]) -> None:
     vault = ProjectRuntimeManager(settings.data_root).describe(spec["project_id"]).vault_root
     try:
         projectgit.ensure_repo(vault)
-        projectgit.commit_all(vault, f"创建项目 {spec['display_name']}")
+        projectgit.commit_all(vault, f"Create project {spec['display_name']}")
     except (projectgit.GitError, OSError) as exc:   # a project without history still works
         log.warning("first commit of %s failed: %s", spec["project_id"], exc)
 

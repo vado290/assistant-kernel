@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Super Assistant</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --surface: #ffffff; --text: #1d2330; --muted: #5d6677; --line: #dfe3ea;
+    --accent: #3f5bd8; --accent-text: #ffffff; --ok: #1f7a4d; --ok-bg: #e6f4ec; --warn: #9a5b00; --warn-bg: #fff3df;
+    --bad: #b3261e; --bad-bg: #fdeceb; --code-bg: #eef1f6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12151b; --surface: #1b1f27; --text: #e7eaf0; --muted: #9aa3b4; --line: #2c323d;
+      --accent: #8ea2ff; --accent-text: #10131a; --ok: #6fd4a0; --ok-bg: #16301f; --warn: #f2b65a; --warn-bg: #33270f;
+      --bad: #ff8a80; --bad-bg: #3a1c1a; --code-bg: #242a35;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #12151b; --surface: #1b1f27; --text: #e7eaf0; --muted: #9aa3b4; --line: #2c323d;
+    --accent: #8ea2ff; --accent-text: #10131a; --ok: #6fd4a0; --ok-bg: #16301f; --warn: #f2b65a; --warn-bg: #33270f;
+    --bad: #ff8a80; --bad-bg: #3a1c1a; --code-bg: #242a35;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.55 system-ui, -apple-system, "Segoe UI", "Noto Sans", "PingFang SC", "Hiragino Sans", sans-serif; }
+  header { max-width: 860px; margin: 0 auto; padding: 28px 16px 8px; display: flex; gap: 16px;
+           align-items: flex-end; justify-content: space-between; flex-wrap: wrap; }
+  h1 { margin: 0; font-size: 22px; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: 14px; }
+  main { max-width: 860px; margin: 0 auto; padding: 8px 16px 48px; display: grid; gap: 16px; }
+  section { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
+  h2 { margin: 0 0 6px; font-size: 17px; }
+  h3 { margin: 0 0 6px; font-size: 15px; }
+  p { margin: 0 0 10px; }
+  .step { border-top: 1px solid var(--line); padding-top: 16px; margin-top: 16px; }
+  label { display: block; font-weight: 600; font-size: 14px; margin: 10px 0 4px; }
+  .help { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  input, select { width: 100%; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line);
+                  border-radius: 8px; padding: 9px 11px; }
+  input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+  .row input { flex: 1 1 260px; }
+  button, a.button { font: inherit; font-weight: 600; border-radius: 8px; padding: 9px 16px; border: 1px solid var(--accent);
+                     background: var(--accent); color: var(--accent-text); cursor: pointer; text-decoration: none;
+                     display: inline-block; }
+  button.secondary, a.button.secondary { background: transparent; color: var(--accent); }
+  button:disabled { opacity: .55; cursor: default; }
+  .notice { border-radius: 8px; padding: 10px 12px; margin-top: 12px; font-size: 14px; }
+  .notice.ok { background: var(--ok-bg); color: var(--ok); }
+  .notice.warn { background: var(--warn-bg); color: var(--warn); }
+  .notice.bad { background: var(--bad-bg); color: var(--bad); }
+  .notice a { color: inherit; }
+  code { background: var(--code-bg); border-radius: 4px; padding: 1px 5px; font-size: 13px; word-break: break-all; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  .table-wrap { overflow-x: auto; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1 data-t="title">Super Assistant</h1>
+    <div class="sub" data-t="subtitle"></div>
+  </div>
+</header>
+<main>
+  <section id="access" hidden>
+    <h2 data-t="access_title"></h2>
+    <p id="access-help"></p>
+    <div class="row">
+      <input id="access-token" type="password" autocomplete="off">
+      <button id="access-open" data-t="access_button"></button>
+    </div>
+    <div id="access-msg"></div>
+  </section>
+
+  <section id="discord" hidden>
+    <div class="row" style="justify-content: space-between; margin-top: 0">
+      <h2 data-t="discord_title"></h2>
+      <button class="secondary" id="sign-out" data-t="sign_out"></button>
+    </div>
+    <p class="sub" data-t="discord_intro"></p>
+
+    <div class="step">
+      <h3 data-t="step1_title"></h3>
+      <p data-t="step1_body"></p>
+      <a class="button secondary" href="https://discord.com/developers/applications" target="_blank" rel="noopener" data-t="step1_link"></a>
+    </div>
+
+    <div class="step">
+      <h3 data-t="step2_title"></h3>
+      <label for="bot-token" data-t="token_label"></label>
+      <div class="help" id="token-state"></div>
+      <div class="row">
+        <input id="bot-token" type="password" autocomplete="off">
+        <button id="check" data-t="check_button"></button>
+      </div>
+      <div id="check-msg"></div>
+      <div id="bot-info" hidden>
+        <p class="help" id="bot-line" style="margin-top: 10px"></p>
+        <div id="intent"></div>
+      </div>
+    </div>
+
+    <div class="step" id="step-invite" hidden>
+      <h3 data-t="step3_title"></h3>
+      <p data-t="step3_body"></p>
+      <div class="row">
+        <a class="button" id="invite" target="_blank" rel="noopener" data-t="invite_button"></a>
+        <button class="secondary" id="refresh" data-t="refresh_button"></button>
+      </div>
+    </div>
+
+    <div class="step" id="step-save" hidden>
+      <h3 data-t="step4_title"></h3>
+      <label for="guild" data-t="guild_label"></label>
+      <select id="guild"></select>
+      <div class="help" id="guild-none" data-t="guild_none" hidden></div>
+      <label for="users" data-t="users_label"></label>
+      <input id="users" inputmode="numeric">
+      <div class="help" data-t="users_help"></div>
+      <div class="row"><button id="save" data-t="save_button"></button></div>
+      <div id="save-msg"></div>
+    </div>
+  </section>
+
+  <section id="projects" hidden>
+    <h2 data-t="projects_title"></h2>
+    <p class="sub" data-t="projects_help"></p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th data-t="col_project"></th><th>#pm</th><th>#supervisor</th></tr></thead>
+        <tbody id="project-rows"></tbody>
+      </table>
+    </div>
+    <p class="help" id="projects-empty" data-t="projects_empty" hidden></p>
+  </section>
+</main>
+
+<script>
+(() => {
+  const KEY = "kernel-dashboard-token";
+  const $ = (id) => document.getElementById(id);
+  let texts = {}, token = "", inspected = null, discord = null;
+
+  const store = {
+    get() { try { return localStorage.getItem(KEY) || ""; } catch (e) { return ""; } },
+    set(v) { try { v ? localStorage.setItem(KEY, v) : localStorage.removeItem(KEY); } catch (e) {} },
+  };
+  const tr = (key, values = {}) =>
+    (texts[key] || key).replace(/\{(\w+)\}/g, (m, name) => (name in values ? values[name] : m));
+
+  async function api(method, path, body) {
+    const response = await fetch(path, {
+      method, headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}) },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    let data = null;
+    try { data = await response.json(); } catch (e) {}
+    if (!response.ok) {
+      const detail = data && data.detail;
+      const error = new Error(typeof detail === "string" ? detail : (detail && detail.code) || String(response.status));
+      error.code = typeof detail === "string" ? detail : detail && detail.code;
+      error.detail = detail && detail.detail;
+      error.status = response.status;
+      throw error;
+    }
+    return data;
+  }
+
+  function errorText(error) {
+    const key = "error." + (error.code || "unknown");
+    return texts[key] ? tr(key, { detail: error.detail || "" }) : tr("error.unknown", { detail: error.message });
+  }
+
+  function notice(target, kind, text, link) {
+    const box = $(target);
+    box.replaceChildren();
+    if (!text) return;
+    const div = document.createElement("div");
+    div.className = "notice " + kind;
+    div.textContent = text;
+    if (link) {
+      div.append(" ");
+      const a = document.createElement("a");
+      a.href = link.href; a.target = "_blank"; a.rel = "noopener"; a.textContent = link.text;
+      div.append(a);
+    }
+    box.append(div);
+  }
+
+  async function applyTexts() {
+    texts = (await api("GET", "/api/v1/texts")).texts;
+    document.querySelectorAll("[data-t]").forEach((el) => { el.textContent = tr(el.dataset.t); });
+    document.title = tr("title");
+    $("access-help").textContent = tr("access_help", { path: "assistant-data/config/dashboard-token" });
+    $("access-token").placeholder = tr("access_input");
+    $("bot-token").placeholder = tr("token_placeholder");
+  }
+
+  function renderDiscord() {
+    if (!discord) return;
+    const state = discord.token;
+    $("token-state").textContent = state.saved
+      ? tr("token_saved", { hint: state.saved, source: tr(state.source === "env" ? "token_source_env" : "token_source_file") })
+      : tr("token_none");
+    if (!$("users").value && discord.allowed_user_ids.length) $("users").value = discord.allowed_user_ids.join(", ");
+    const rows = discord.projects.map((p) => {
+      const tr_ = document.createElement("tr");
+      for (const value of [p.project_id, p.pm_channel_id, p.supervisor_channel_id]) {
+        const td = document.createElement("td"); const code = document.createElement("code");
+        code.textContent = value; td.append(code); tr_.append(td);
+      }
+      return tr_;
+    });
+    $("project-rows").replaceChildren(...rows);
+    $("projects-empty").hidden = rows.length > 0;
+  }
+
+  function renderInspection() {
+    if (!inspected) return;
+    $("bot-info").hidden = false;
+    $("bot-line").textContent = tr("bot_line", { bot: inspected.bot.name, app: inspected.application.id, owner: inspected.owner_id });
+    const intent = $("intent");
+    intent.replaceChildren();
+    if (inspected.message_content) {
+      notice("intent", "ok", tr("intent_on"));
+    } else {
+      notice("intent", "warn", tr("intent_off"));
+      const row = document.createElement("div"); row.className = "row";
+      const button = document.createElement("button"); button.textContent = tr("intent_button");
+      button.addEventListener("click", enableIntent);
+      row.append(button); intent.append(row);
+    }
+    $("step-invite").hidden = false;
+    $("invite").href = inspected.invite_url;
+    $("step-save").hidden = false;
+    const guild = $("guild");
+    const keep = guild.value || (discord && discord.guild_id) || "";
+    guild.replaceChildren(...inspected.guilds.map((g) => {
+      const option = document.createElement("option");
+      option.value = g.id; option.textContent = g.name + "  (" + g.id + ")"; option.selected = g.id === keep;
+      return option;
+    }));
+    $("guild-none").hidden = inspected.guilds.length > 0;
+    guild.hidden = inspected.guilds.length === 0;
+    $("save").disabled = inspected.guilds.length === 0;
+    if (!$("users").value && inspected.owner_id) $("users").value = inspected.owner_id;
+  }
+
+  async function check() {
+    const button = $("check");
+    button.disabled = true; button.textContent = tr("checking");
+    notice("check-msg", "", "");
+    try {
+      inspected = await api("POST", "/api/v1/discord/inspect", { token: $("bot-token").value.trim() || null });
+      renderInspection();
+    } catch (error) {
+      inspected = null; $("bot-info").hidden = true; $("step-invite").hidden = true; $("step-save").hidden = true;
+      notice("check-msg", "bad", errorText(error));
+    } finally {
+      button.disabled = false; button.textContent = tr("check_button");
+    }
+  }
+
+  async function enableIntent() {
+    try {
+      const result = await api("POST", "/api/v1/discord/intent", { token: $("bot-token").value.trim() || null });
+      if (result.message_content) { inspected.message_content = true; renderInspection(); return; }
+    } catch (error) { /* fall through to the manual instruction */ }
+    notice("intent", "warn", tr("intent_manual"), { href: inspected.application.portal_url, text: tr("bot_page") });
+  }
+
+  async function save() {
+    const button = $("save");
+    button.disabled = true;
+    notice("save-msg", "", "");
+    try {
+      const users = $("users").value.split(/[\s,，、]+/).map((v) => v.trim()).filter(Boolean);
+      const result = await api("PUT", "/api/v1/discord",
+        { token: $("bot-token").value.trim() || null, guild_id: $("guild").value, allowed_user_ids: users });
+      $("bot-token").value = "";
+      notice("save-msg", result.env_overrides ? "warn" : "ok", tr(result.env_overrides ? "env_overrides" : "saved"));
+      discord = await api("GET", "/api/v1/discord");
+      renderDiscord();
+    } catch (error) {
+      notice("save-msg", "bad", errorText(error));
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function openWith(value) {
+    token = value;
+    try {
+      await api("GET", "/api/v1/auth");
+    } catch (error) {
+      token = ""; store.set("");
+      $("access").hidden = false; $("discord").hidden = true; $("projects").hidden = true;
+      if (value) notice("access-msg", "bad", errorText(error));
+      return;
+    }
+    store.set(value);
+    $("access").hidden = true; $("discord").hidden = false; $("projects").hidden = false;
+    discord = await api("GET", "/api/v1/discord");
+    renderDiscord();
+    if (discord.token.saved) check();
+  }
+
+  $("access-open").addEventListener("click", () => openWith($("access-token").value.trim()));
+  $("access-token").addEventListener("keydown", (e) => { if (e.key === "Enter") openWith($("access-token").value.trim()); });
+  $("sign-out").addEventListener("click", () => { store.set(""); location.reload(); });
+  $("check").addEventListener("click", check);
+  $("refresh").addEventListener("click", check);
+  $("save").addEventListener("click", save);
+
+  (async () => {
+    await applyTexts();
+    await openWith(store.get());
+  })();
+})();
+</script>
+</body>
+</html>

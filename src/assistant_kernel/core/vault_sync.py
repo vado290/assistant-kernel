@@ -4,10 +4,11 @@ The state machine only changes the database. Whatever must also land in a vault 
 on the dispatcher's maintenance tick. Every step is idempotent: the file is checked for its marker
 before writing, and a task event records that the step is done.
 
-- background archive: an approved requirements document's "背景信息存档" goes into knowledge/background.md (kept
-  apart from the charter since 0.45.6, so a charter holds only the project's definition and can be public), its
-  "用户画像观察" into knowledge/user-profile.md, and the task's domain brief into knowledge/domain-brief.md;
-  a task that ends without approval still gives its "用户画像观察" (marked as such; its facts were never confirmed);
+- background archive: an approved requirements document's background-archive section goes into
+  knowledge/background.md (kept apart from the charter since 0.45.6, so a charter holds only the project's definition
+  and can be public), its user-profile observations into knowledge/user-profile.md, and the task's domain brief into
+  knowledge/domain-brief.md; a task that ends without approval still gives its user-profile observations (marked as
+  such; its facts were never confirmed). Headings are English; older Chinese headings are still found (ROUND6);
 - profile observations Supervisor noted in a consultation or a card review go into knowledge/user-profile.md;
 - each such write is committed on its own, naming its source (system map memory review, 0.45.5);
 - (the iteration log moved to the core.iterations table in ROUND4; changes/iterations.md is no longer written)
@@ -23,22 +24,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from assistant_kernel.core import projectgit, rules, skills
+from assistant_kernel.core import i18n, projectgit, rules, skills
 from assistant_kernel.core.db import all_rows, event
 from assistant_kernel.core.machine import notify
 from assistant_kernel.storage import ProjectRuntimeManager
 
 log = logging.getLogger(__name__)
-ARCHIVE = "背景信息存档"
+ARCHIVE = "archive"            # heading keys (any language's heading is found)
 BACKGROUND = "background.md"
-BACKGROUND_HEADER = ("# 背景信息存档\n\n本项目积累的组织、行业与项目事实。Kernel 在需求文档获批时追加其\"背景信息存档\"一节，"
-                     "每条注明日期和任务；读的时候以最新条目为准。\n")
-PROFILE_SECTION = "用户画像观察"
-PROFILE_HEADER = ("# 用户画像\n\n每位用户一节。Kernel 追加需求文档的\"用户画像观察\"（需求获批时；任务未获批就结束时也追加并注明），"
-                  "以及 Supervisor 在对话中记下的用户偏好和纠正；周度复盘可以提议整理。"
-                  "标 [推断] 的内容未经用户确认；同一维度以最新一条为准，用户的纠正优先。\n")
-EMPTY = {"", "无", "无。", "（无）", "暂无"}
-STATE_NAMES = {"completed": "完成", "cancelled": "取消", "failed": "失败"}
+PROFILE_SECTION = "profile"
+DEFAULT_USER = "default"
 
 
 def _vault(settings, project_id: str) -> Path:
@@ -74,6 +69,8 @@ def _commit(vault: Path, paths: list[str], message: str) -> None:
         log.warning("commit of %s in %s failed: %s", present, vault, exc)
 
 
+# Subjects of Kernel's release commits (older Chinese ones included): those are already in the change stream.
+RELEASE_SUBJECTS = ("Release: ", "发布：")
 MEMORY_FILES = ["knowledge/background.md", "knowledge/user-profile.md", "knowledge/domain-brief.md",
                 "knowledge/archive"]
 
@@ -82,7 +79,7 @@ MEMORY_FILES = ["knowledge/background.md", "knowledge/user-profile.md", "knowled
 
 def append_archive(path: Path, marker: str, heading: str, body: str) -> bool:
     """Add one dated entry to knowledge/background.md (created on first use); False when it is already there."""
-    text = path.read_text("utf-8") if path.is_file() else BACKGROUND_HEADER
+    text = path.read_text("utf-8") if path.is_file() else i18n.t("files.background_header")
     if marker in text:
         return False
     entry = f"### {heading} <!-- {marker} -->\n\n{body.strip()}"
@@ -92,11 +89,14 @@ def append_archive(path: Path, marker: str, heading: str, body: str) -> bool:
 
 
 def append_profile(path: Path, user: str, marker: str, heading: str, body: str) -> bool:
-    """Add one dated observation to the user's section of knowledge/user-profile.md; False when already there."""
-    text = path.read_text("utf-8") if path.is_file() else PROFILE_HEADER
+    """Add one dated observation to the user's section of knowledge/user-profile.md; False when already there.
+    The user's section is "User <id>"; an older profile's "用户 <id>" section is used when it exists."""
+    text = path.read_text("utf-8") if path.is_file() else i18n.t("files.profile_header")
     if marker in text:
         return False
-    section = f"用户 {user}"
+    section = i18n.t("files.user_section", user=user)
+    if skills.section_bounds(text.splitlines(), f"用户 {user}"):   # profiles written before ROUND6
+        section = f"用户 {user}"
     entry = f"### {heading} <!-- {marker} -->\n\n{body.strip()}"
     text = skills.replace_section(text, section, (skills.section_text(text, section) + "\n\n" + entry).strip())
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -114,7 +114,8 @@ def write_brief(path: Path, marker: str, heading: str, body: str) -> bool:
         archive.parent.mkdir(parents=True, exist_ok=True)
         archive.write_text(old, "utf-8", newline="\n")
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"# 行业速写\n\n> {heading} <!-- {marker} -->\n\n{body.strip()}\n", "utf-8", newline="\n")
+    path.write_text(f"# {i18n.t('files.brief_title')}\n\n> {heading} <!-- {marker} -->\n\n{body.strip()}\n",
+                    "utf-8", newline="\n")
     return True
 
 
@@ -138,35 +139,36 @@ async def _archive_backgrounds(kernel, settings) -> int:
         markdown = await asyncio.to_thread(read_document, settings, row["project_id"], row["contract"])
         body = skills.section_text(markdown, ARCHIVE)
         knowledge = _vault(settings, row["project_id"]) / "knowledge"
-        heading = f"{_today()} · {row['goal'][:40]}（任务 {str(row['task_id'])[:8]}）"
+        heading = i18n.t("files.entry_heading", date=_today(), goal=row["goal"][:40], task=str(row["task_id"])[:8])
         written = False
-        if body.strip() not in EMPTY:
+        if not i18n.is_none(body):
             written = await asyncio.to_thread(append_archive, knowledge / BACKGROUND, f"archive:{sha[:12]}", heading,
                                               body)
         observed = skills.section_text(markdown, PROFILE_SECTION)
         profiled = False
-        if observed.strip() not in EMPTY:
-            profiled = await asyncio.to_thread(append_profile, knowledge / "user-profile.md", row["user_id"] or "默认",
+        if not i18n.is_none(observed):
+            profiled = await asyncio.to_thread(append_profile, knowledge / "user-profile.md", row["user_id"] or DEFAULT_USER,
                                                f"profile:{sha[:12]}", heading, observed)
         briefed = False
         if row["brief"]:
             research = await asyncio.to_thread(read_document, settings, row["project_id"], row["brief"])
             if research.strip():
                 briefed = await asyncio.to_thread(write_brief, knowledge / "domain-brief.md",
-                                                  f"brief:{row['brief']['sha256'][:12]}", f"{heading} 调研，随需求批准存档",
-                                                  research)
+                                                  f"brief:{row['brief']['sha256'][:12]}",
+                                                  i18n.t("files.brief_heading", heading=heading), research)
         if written or profiled or briefed:
             await asyncio.to_thread(_commit, _vault(settings, row["project_id"]), MEMORY_FILES,
-                                    f"存档：需求获批的背景、画像与行业速写（任务 {str(row['task_id'])[:8]}）")
+                                    f"Archive: background, profile and industry brief of approved requirements "
+                                    f"(task {str(row['task_id'])[:8]})")
         async with kernel.db.tx() as c:
             await event(c, row["project_id"], "background_archived", task_id=row["task_id"], doc_sha=sha,
-                        written=written, empty=body.strip() in EMPTY, profiled=profiled, briefed=briefed)
+                        written=written, empty=i18n.is_none(body), profiled=profiled, briefed=briefed)
         count += written
     return count
 
 
 async def _archive_unapproved(kernel, settings) -> int:
-    """A delivery task that ended without its requirements approved: its "用户画像观察" still says how the user works
+    """A delivery task that ended without its requirements approved: its profile observations still say how the user works
     with us, so it goes into the profile, marked as unapproved; its background facts were never confirmed and stay out."""
     from assistant_kernel.core.executors.common import read_document
     async with kernel.db.tx() as c:
@@ -185,14 +187,16 @@ async def _archive_unapproved(kernel, settings) -> int:
         markdown = await asyncio.to_thread(read_document, settings, row["project_id"], row["contract"])
         observed = skills.section_text(markdown, PROFILE_SECTION)
         profiled = False
-        if observed.strip() not in EMPTY:
+        if not i18n.is_none(observed):
             vault = _vault(settings, row["project_id"])
-            heading = f"{_today()} · {row['goal'][:40]}（任务 {str(row['task_id'])[:8]}，需求未获批，仅协作观察）"
+            heading = i18n.t("files.unapproved_heading", date=_today(), goal=row["goal"][:40],
+                             task=str(row["task_id"])[:8])
             profiled = await asyncio.to_thread(append_profile, vault / "knowledge" / "user-profile.md",
-                                               row["user_id"] or "默认", f"profile:{sha[:12]}", heading, observed)
+                                               row["user_id"] or DEFAULT_USER, f"profile:{sha[:12]}", heading, observed)
             if profiled:
                 await asyncio.to_thread(_commit, vault, ["knowledge/user-profile.md"],
-                                        f"存档：未获批任务的协作观察（任务 {str(row['task_id'])[:8]}）")
+                                        f"Archive: collaboration observations of an unapproved task "
+                                        f"(task {str(row['task_id'])[:8]})")
         async with kernel.db.tx() as c:
             await event(c, row["project_id"], "background_archived", task_id=row["task_id"], doc_sha=sha,
                         unapproved=True, written=False, profiled=profiled, briefed=False)
@@ -214,13 +218,13 @@ async def _apply_profile_observations(kernel, settings) -> int:
     for row in rows:
         payload, vault = row["payload"], _vault(settings, row["project_id"])
         run = str(payload["source_run"])
-        body = "\n".join(f"- {item} · [Supervisor·对话]" for item in payload.get("items") or [])
+        body = "\n".join(f"- {item} · [{i18n.t('files.observed_tag')}]" for item in payload.get("items") or [])
         added = await asyncio.to_thread(append_profile, vault / "knowledge" / "user-profile.md",
-                                        payload.get("user_id") or "默认", f"observed:{run[:12]}",
-                                        f"{_today()} · Supervisor 在对话中记下", body)
+                                        payload.get("user_id") or DEFAULT_USER, f"observed:{run[:12]}",
+                                        i18n.t("files.observed_heading", date=_today()), body)
         if added:
             await asyncio.to_thread(_commit, vault, ["knowledge/user-profile.md"],
-                                    f"存档：Supervisor 记下的用户偏好或纠正（运行 {run[:8]}）")
+                                    f"Archive: user preferences or corrections noted by the Supervisor (run {run[:8]})")
         async with kernel.db.tx() as c:
             await event(c, row["project_id"], "profile_observation_applied", source_run=run)
     return len(rows)
@@ -273,11 +277,12 @@ async def _apply_shared(kernel, settings) -> int:
         await asyncio.to_thread(write_shared, settings.data_root, update)
         await asyncio.to_thread(_commit, _vault(settings, skills.SHARED_CONTEXT_HOME),
                                 [f"knowledge/shared/{update['file']}"],
-                                f"公共背景：{update['file']} · {update['section']}（用户批准）")
+                                f"Shared background: {update['file']} · {update['section']} (approved by the user)")
         async with kernel.db.tx() as c:
             await event(c, row["project_id"], "shared_update_applied", item_id=update["item_id"])
             await notify(c, row["project_id"], "supervisor",
-                         f"✅ 公共背景已更新：{update['file']} · {update['section']}（各项目从下一轮起使用新内容）")
+                         i18n.t("files.shared_updated", file=update["file"],
+                                section=update["section"]))
     return len(rows)
 
 
@@ -340,8 +345,8 @@ async def _push_repositories(kernel, settings) -> int:
                 async with kernel.db.tx() as c:
                     await event(c, project_id, "git_push_failed", path=str(path), error=str(exc)[:500], notified=tell)
                     if tell:
-                        await notify(c, project_id, "supervisor", f"⚠ 推送到 GitHub 失败（本地提交不受影响，每小时重试）："
-                                     f"{str(exc)[:400]}")
+                        await notify(c, project_id, "supervisor", i18n.t("files.push_failed",
+                                                                         error=str(exc)[:400]))
                 break
     return pushed
 
@@ -401,7 +406,8 @@ async def _import_commits(kernel, settings) -> int:
                 log.warning("reading the history of %s failed: %s", path, exc)
                 continue
             by_kernel = lambda c: c["author"] in kernel_names  # noqa: E731
-            wanted = [c for c in commits if not (by_kernel(c) and (label == "code" or c["subject"].startswith("发布：")))]
+            wanted = [c for c in commits if not (by_kernel(c) and (label == "code" or
+                                                                   c["subject"].startswith(RELEASE_SUBJECTS)))]
             if not wanted:
                 continue
             refs = {f"git:{label}:{c['sha']}": c for c in wanted}
@@ -413,11 +419,11 @@ async def _import_commits(kernel, settings) -> int:
                     files = [scheme + f for f in commit["files"]]
                     row = await machine.insert_iteration(
                         c, project_id, None, kind="imported", source="system" if by_kernel(commit) else "manual",
-                        source_ref=ref, title=commit["subject"] or f"提交 {commit['sha'][:8]}",
-                        reason=f"任务之外的提交（{label} {commit['sha'][:8]}，{commit['author']}）："
-                               + (commit["body"] or commit["subject"] or "（提交说明为空）")[:1200],
+                        source_ref=ref, title=commit["subject"] or f"commit {commit['sha'][:8]}",
+                        reason=f"commit outside a task ({label} {commit['sha'][:8]}, {commit['author']}): "
+                               + (commit["body"] or commit["subject"] or "(empty commit message)")[:1200],
                         changes=[{"type": "file", "target": f, "action": "modify", "note": ""} for f in commit["files"][:30]],
-                        outcome="已提交（导入）", facts={"files": files[:200], "commit": commit["sha"], "repo": label,
+                        outcome="committed (imported)", facts={"files": files[:200], "commit": commit["sha"], "repo": label,
                                                     "author": commit["author"]}, created_at=commit["date"])
                     imported += bool(row)
     return imported
@@ -445,7 +451,7 @@ async def _sync_templates(kernel, settings) -> int:
             changed += 1
             try:
                 await asyncio.to_thread(projectgit.commit_paths, vault, ["agents"],
-                                        f"同步技能模板（Kernel {__version__}）")
+                                        f"Sync skill templates (Kernel {__version__})")
             except (projectgit.GitError, OSError) as exc:
                 log.warning("committing synced skills of %s failed: %s", project_id, exc)
         async with kernel.db.tx() as c:

@@ -1,93 +1,125 @@
 ---
 name: assistant-evolution-review
-description: 周度复盘（运营阶段的核心方法，每周自动或 /evolve 触发）：复核上期改进的效果，从运行记录和变更流水中发现问题、找到根因，提出带预期效果和衡量方法的改进建议，闭合"改进→记录→复核"的循环。
+description: Weekly review (the core method of the operate stage, triggered weekly or by /evolve) — check the effect of the last improvements, find problems and their root causes in the run records and change stream, and propose improvements with expected effects and ways to measure them, closing the loop "improve → record → review".
 metadata:
-  version: "2.3.0"
+  version: "2.4.0"
   load: {roles: [pm], stages: [evolution]}
   io:
     reads: [digest, change_stream, user_profile, map, charter, skills, template_updates]
     writes: [improvement_proposal]
   changelog:
-    - "2.3.0 2026-10-22 补材料分页与积压覆盖、目标导向分析、自身角色技能审查和重复提案交接"
-    - "2.2.0 2026-10-21 补运营基线、待观察跟踪、业务效果证据和风险委派；保留取消时合法效果写回"
-    - "2.1.0 2026-10-19 kernel 复盘材料增加其他项目的“公共”事实候选，值得采纳的列进需要用户决定的（记忆机制改进，0.45.5）"
-    - "2.0.0 2026-10-17 重写（ROUND4）：先复核上期效果，再发现问题、归因、提建议；数据来自变更流水；子 agent 分工；固定输出章节"
-    - "1.1.0 2026-10-16 复盘范围增加用户画像、行业速写和子 agent 使用情况（ROUND3 S2）"
+    - "2.4.0 2026-10-23 Written in English, the skills' source language; the proposal is written in the user's language with the effect-review heading the output requirements give (ROUND6, 0.46.0)"
+    - "2.3.0 2026-10-22 Added material paging and backlog coverage, goal-oriented analysis, reviews of the agents' own roles and skills, and the hand-over of duplicate proposals"
+    - "2.2.0 2026-10-21 Added the operating baseline, tracking of items under observation, business effect evidence and risk-based delegation; kept the write-back of valid verdicts on cancellation"
+    - "2.1.0 2026-10-19 kernel's review material adds other projects' shared fact candidates; those worth adopting are listed for the user to decide (memory improvement, 0.45.5)"
+    - "2.0.0 2026-10-17 Rewritten (ROUND4): review the last effects first, then find problems, attribute causes and propose; data from the change stream; subagent roles; fixed output sections"
+    - "1.1.0 2026-10-16 The review also covers the user profile, the industry brief and subagent use (ROUND3 S2)"
 ---
 
-# 周度复盘
+# Weekly review
 
-## 目的
-让项目越用越好，而且每次改进都有据可查：上次改了什么、为什么、有没有效果，这次再据此决定改什么。
-先判断项目目标与实际结果的差距，再判断应改业务方法、产物、数据、角色还是技能，不预设问题出在话术。
+## Purpose
+Make the project better the more it is used, with every improvement traceable: what changed last time, why, whether it
+worked — and decide from that what to change now. First judge the gap between the project's goals and the actual results,
+then whether the business method, product, data, roles or skills should change — never assume the problem is the wording.
 
-## 输入（Kernel 已经放进提示，不用再找）
-- 本周运行记录：任务和结果、各任务按阶段的 PM 回合数、卡片上的修改 / 拒绝 / "不确定"、失败和重试、子 agent、作业统计；
-- 变更流水：近 4 周的有界记录、尚未完成的效果复核及更早重大改动；遵守提示中的上限和截断说明，需要时定向查；
-- 用户画像、项目地图、章程；模板有更新的技能；技能协作断链（如有）；kernel 项目另有其他项目的运营概况，以及其他项目标“公共”、公共背景还没有的事实候选（值得采纳的写进"5 需要用户决定的"，写明建议放进哪份文件哪一节；用户在 Supervisor 频道说采纳后由 Supervisor 提议修改）。
-需要更多时按需查：`list_iterations(artifact=..., query=...)` 查某个工件或某件事的历史；读某个任务的状态簿或文档核实细节。
-**以最新状态为准，历史只作参考**，不要把所有工件的历史都翻一遍。
+## Inputs (Kernel has put them in the prompt; no need to look for them)
+- This week's run record: tasks and results, PM turns per stage of each task, changes / rejections / "not sure" on cards,
+  failures and retries, subagents, job statistics;
+- the change stream: a bounded record of the last 4 weeks, effect reviews not yet done and earlier major changes; respect
+  the limits and cut-off notes in the prompt and query specifically when needed;
+- the user profile, the project map, the charter; skills whose templates were updated; broken skill hand-offs (if any); for
+  the kernel project also the other projects' operations and the candidates of facts other projects marked as shared that
+  the shared background lacks (those worth adopting go under "5 for the user to decide", naming the file and section they
+  should go into; once the user says so in the Supervisor channel, the Supervisor proposes the change).
+When you need more, query as needed: `list_iterations(artifact=..., query=...)` for the history of an artifact or matter;
+read a task's ledger or documents to verify details. **The latest state decides; history is only a reference** — do not
+leaf through every artifact's history.
 
-## 材料覆盖与积压
-- 先在“0 本期概况”说明观察窗口、对象/版本、材料时间和本轮范围；摘要是导航，重要结论须核实原始证据。
-  当前运行登记及最后观测不等于实时健康，最近发布只代表一次增量。日志、实际产物和用户反馈按风险定向读取。
-- 有截断时用 list_iterations / list_recent_history 返回的 next_cursor 继续查询，保持原筛选条件；
-  待复核用 pending_only=true、oldest_first=true，缺衡量方法用 needs_measure=true。只读取本轮判断需要的页，不强行清空历史。
-  较老积压与最近高风险变更都要考虑；已待观察但尚不满足观察条件的记录可说明后跳过，继续查看其他记录。
-- 本轮纳入的记录逐条给出结论或暂缓原因，写清缺什么证据、何时/满足什么条件再看。
-  未覆盖项及继续查询的条件/游标记入报告，进行中的证据记入 working_notes；下轮参考最近复盘报告继续，但重新核对真实状态。
-  游标只用于定位，不能证明期间状态没变。缺数据不等于正常，未覆盖不等于无需复核；有已知待办却写 [] 时须解释。
-- 旧记录有明确改进目标但缺衡量方法时，先查原批准依据；不能补造历史指标。普通无效果承诺记录不强行列为积压。
-  本轮“无法判断”不自动关闭旧记录；资料能力不足写清受阻项和恢复条件。
+## Material coverage and backlog
+- First state in "0 overview" the observation window, objects/versions, material times and this round's scope; summaries
+  are for navigation — important conclusions are verified against the original evidence. Current runtime registrations
+  and last observations are not live health, and the latest release is only one increment. Read logs, actual products and
+  user feedback by risk.
+- When cut off, continue with the next_cursor that list_iterations / list_recent_history return, keeping the same filters;
+  pending reviews with pending_only=true and oldest_first=true, missing measures with needs_measure=true. Read only the
+  pages this round's judgement needs — no forcing the history empty. Consider both older backlog and recent high-risk
+  changes; a record under observation whose observation condition is not yet met can be noted and skipped while you look
+  at others.
+- Give each record included this round a verdict or a reason for deferral, stating what evidence is missing and when /
+  under what condition to look again. Items not covered and the condition/cursor to continue go into the report, evidence in
+  progress into working_notes; the next round continues from the latest review report but re-checks the real state. A
+  cursor only locates — it does not prove nothing changed in between. Missing data is not "normal", not covered is not "no
+  review needed"; writing [] while known items are pending must be explained.
+- When an old record has a clear improvement goal but no measure, first look up the original basis of its approval; never
+  invent historical metrics. Ordinary records without an effect promise are not forced into the backlog. "Cannot judge"
+  this round does not close an old record; when material is insufficient, name what is blocked and the recovery condition.
 
-## 做法
-1. **复核上期效果**：对有预期效果/衡量方法且尚未形成有效结论的记录（含 pending 和超过默认窗口的记录），对照约定：
-   有效（effective）/ 无效（ineffective）/ 待观察（pending，数据还不够）。无效的要说明可能的原因，并在第 3 步重新归因。
-   写明比较基线、观察窗口、样本、证据和局限；pending 不是关闭，下轮继续核对。结论写进"上期效果复核"，
-   使用 Kernel 展示的记录编号，不能猜编号；无须复核才写 []。解析/匹配错误先修正，不能当作没有复核事项。
-2. **发现问题**（编号 F1、F2…）：项目有已交付或实际使用的产物（包括文档）时，先按 assistant-operation 的运营健康检查清单过一遍。
-   只从记录中找事实，常见信号：
-   - 某阶段回合数偏多（需求阶段来回多轮、实施反复返工）；
-   - 用户修改、拒绝、停止，或回答"不确定"；
-   - 执行失败或重试、作业失败、服务异常；
-   - 地图或章程与实际不符、技能之间断链；
-   - 上期改进被判定为无效。
-   每个问题引用证据（任务、回合、记录编号）。没有证据的猜测不算问题。
-3. **归因**：对照项目目标、交付约定和实际结果查原因，归入一类：
-   技能话术 · 角色或章程 · 工件结构 · 地图或背景信息过时 · 缺少工具或能力 · 产品缺陷 · 用户需求变化。
-   同一根因引起多个问题时合并处理。
-    区分事实、假设与未知项，考虑样本、任务复杂度、业务周期和同期改动；回合多、拒绝或指标变化不直接证明质量差或因果关系。
-    先核实改动是否实际采用、已回退或被替代。证据不足保留假设并给最小验证办法；有证据的改善机会也可提出。
-4. **提出建议**（编号 P1、P2…，先处理重大影响与不可逆风险，再权衡频率、收益和工作量，最多 5 条）。每条写：
-   针对的问题（F 编号）· 根因 · 具体改法（技能要给出新话术原文，文件要写到路径和章节，作业写到 jobs.yaml 的改动）·
-   预期效果 · **衡量方法**（运行统计及授权范围内可复核的业务证据，写清来源、口径和时点）· 工作量 · 风险。
-   作业成功和回合减少不代替业务目标；缺数据标 pending，必要时提出采集建议，不编造指标或扩大授权。
-   修改技能的建议遵守 assistant-capability-maintenance；"模板有更新"时判断是否值得采用、采用哪些部分。
-    涉及自身 skills、role.md 或配置时按该技能的 evolution 审查分支核对实际加载及协作，不在本轮改写自身规则。
-    提案前核对相关未结束任务和既往建议；已排队/实施中则关联，不重复创建；被拒绝后再提须说明新证据或条件变化。
-    待观察不当作新故障重复立项；最多五条重点建议，其他重要发现注明延期原因，不能藏掉。
-5. **考虑过但不建议的**：列出来并说明原因，避免下次重复讨论。
-6. 没有值得做的改进就如实说明，不要为了交差而提建议。
+## How
+1. **Review the last effects**: for records with an expected effect or measure and no valid verdict yet (including pending
+   ones and those beyond the default window), compare with what was agreed: effective / ineffective / pending (not enough
+   data yet). For ineffective ones give the likely reason and attribute it again in step 3. State the baseline,
+   observation window, sample, evidence and limits; pending is not closed and is re-checked next round. The verdicts go
+   into the effect-review section (its heading as the output requirements give it), using the record ids Kernel shows —
+   never guess ids; write [] only when nothing needs reviewing. Fix parse/match errors first; they never mean there is
+   nothing to review.
+2. **Find problems** (numbered F1, F2…): when the project has delivered or actually used products (documents included),
+   first go through the operating health checklist of assistant-operation. Take facts only from the records; common signals:
+   - many turns in a stage (many back-and-forths in requirements, repeated rework in the build);
+   - the user changing, declining, stopping, or answering "not sure";
+   - failed or retried runs, failed jobs, service problems;
+   - the map or charter not matching reality, broken skill hand-offs;
+   - a last improvement judged ineffective.
+   Each problem cites its evidence (task, turn, record id). A guess without evidence is not a problem.
+3. **Attribute causes**: look for causes against the project's goals, delivery agreements and actual results, and assign
+   one category: skill wording · role or charter · artifact structure · outdated map or background · missing tool or
+   capability · product defect · changed user needs. Handle problems with the same root cause together. Tell facts,
+   assumptions and unknowns apart, and consider the sample, task complexity, business cycles and concurrent changes; many
+   turns, rejections or changed metrics do not by themselves prove poor quality or causation. First verify whether a change
+   was actually adopted, rolled back or replaced. With insufficient evidence keep it as an assumption with the smallest way
+   to verify it; well-evidenced opportunities for improvement may be proposed too.
+4. **Propose improvements** (numbered P1, P2…; major impact and irreversible risks first, then frequency, benefit and
+   effort; at most 5). Each states: the problem addressed (F id) · root cause · the concrete change (for a skill the new
+   wording verbatim, for a file the path and section, for a job the change to jobs.yaml) · expected effect · **how to
+   measure** (run statistics and business evidence that can be checked within the grants, with source, definition and
+   time) · effort · risk. A successful job or fewer turns does not replace the business goal; mark missing data pending and
+   suggest collecting it where needed — never invent metrics or widen grants. Skill change proposals follow
+   assistant-capability-maintenance; when "templates were updated", judge whether and what to adopt. For the agents' own
+   skills, role.md or configuration, check actual loading and collaboration by that skill's evolution review branch —
+   never rewrite your own rules in this round. Before proposing, check related open tasks and earlier proposals; link to
+   one already queued or in progress instead of creating a duplicate; re-proposing something rejected needs new evidence or
+   changed conditions. Items under observation are not raised again as new faults; at most five key proposals, with the
+   reason for deferring other important findings stated — never hidden.
+5. **Considered but not proposed**: list them with the reasons, so they are not discussed again next time.
+6. When nothing is worth improving, say so honestly — never propose just to have something to show.
 
-## 子 agent
-按 assistant-subagent-orchestration 的 evolution 分支判断成本与收益，不按任务数量强制委派。可拆为：
-- **记录分析**：读本周各任务的状态簿（`runs/<任务>/state.md`）和运行记录 → 问题清单（含证据）；
-- **技能与工件审查**：读和问题相关的技能、章程、地图 → 每个问题的候选改法（话术原文）；
-- 建议成形后，派**反例审查**：逐条找漏洞（改了会不会伤到别处、衡量方法能不能量）。
-你负责最终的归因、取舍和结论。
+## Subagents
+Judge cost and benefit by the evolution branch of assistant-subagent-orchestration; no forced delegation by task count.
+Possible splits:
+- **record analysis**: read this week's task ledgers (`runs/<task>/state.md`) and run records → a list of problems with
+  evidence;
+- **skill and artifact review**: read the skills, charter and map related to the problems → candidate changes for each
+  problem (wording verbatim);
+- once the proposals take shape, send a **counter-example review**: look for holes in each (would the change hurt
+  elsewhere, can the measure be measured).
+The final attribution, trade-offs and conclusions are yours.
 
-## 产出
-outcome = completed，document.kind = improvement_proposal，固定章节：
-0 本期概况（几个关键数字）· 1 上期效果复核（YAML）· 2 发现的问题（F）· 3 改进建议（P）· 4 考虑过但不建议的 · 5 需要用户决定的。
-本轮只写 improvement_proposal 和 working_notes，不修改业务文件、技能副本或执行运营动作。
-Supervisor 把采纳的 P 组装为有依据、边界和验收条件的后续任务，用户批准后排队；完成后进入变更流水供复核。
-仅确需用户信息用 needs_input；能力故障无法继续用 failed 并说明恢复条件；补查可在 operate 续轮。
-取消复盘仍沿用 Kernel 对合法效果结论的写回行为；非法或歧义编号不会成为有效写回，按反馈保留待核对事项。
+## Output
+outcome = completed, document.kind = improvement_proposal, written in the user's language, with fixed sections:
+0 overview (a few key numbers) · 1 effect review (YAML, under the heading the output requirements give) · 2 problems found
+(F) · 3 proposals (P) · 4 considered but not proposed · 5 for the user to decide.
+This round writes only improvement_proposal and working_notes — it changes no business files or skill copies and takes no
+operating actions. The Supervisor turns adopted P into follow-up tasks with their basis, boundaries and acceptance
+conditions, queued once the user approves; when done they enter the change stream for review. Use needs_input only when
+you truly need the user's information; when a capability failure stops you, failed with the recovery condition; further
+evidence can be gathered in a resumed operate turn. A cancelled review still has Kernel write back valid effect verdicts;
+invalid or ambiguous ids never become valid write-backs and stay as items to check, as reported.
 
-## 自检清单
-- [ ] 每条上期记录都有复核结论，或说明了为什么还不能判断
-- [ ] 已说明实际覆盖、截断及未覆盖入口，未把 [] 或摘要当成完整检查证明
-- [ ] 新建议不重复已有任务，保留原衡量口径和必须保持的行为
-- [ ] 每个问题都有证据；每条建议都有可量的衡量方法
-- [ ] 技能改法给的是新话术原文，不是"优化一下"
-- [ ] 没有为了凑数而提建议
+## Self-check
+- [ ] Every earlier record has a review verdict, or a reason it cannot be judged yet
+- [ ] Actual coverage, cut-offs and the entry points for what was not covered are stated; [] or a summary was not taken as
+      proof of a complete check
+- [ ] New proposals do not duplicate existing tasks, and keep the original measures and behaviour that must stay
+- [ ] Every problem has evidence; every proposal has a measurable way to measure it
+- [ ] Skill changes give the new wording verbatim, not "improve it a bit"
+- [ ] No proposal was made just to fill the list

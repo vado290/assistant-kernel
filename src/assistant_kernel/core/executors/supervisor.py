@@ -19,75 +19,82 @@ from assistant_kernel.core.executors.digest import SHARED_CANDIDATES_HEADING, sh
 STAGE_ORDER = ["requirements", "design", "build", "review", "release", "operate"]
 PURPOSE_PROMPT = {"evaluate": "supervisor-evaluate", "review_input": "supervisor-review-input",
                   "consult": "supervisor-consult"}
-PURPOSE_NAMES = {"evaluate": "评估并安排下一步", "review_input": "卡片待处理时用户的新消息", "consult": "回答用户的咨询"}
+PURPOSE_NAMES = {"evaluate": "evaluate and arrange the next step", "review_input": "a new user message while a card is open",
+                 "consult": "answer the user's question"}
 REASONS = {
-    "start": "新任务刚开始，安排第一步",
-    "pm_questions": "PM 提出了问题，需要整理给用户",
-    "pm_completed": "PM 完成了本轮工作",
-    "pm_failed": "PM 报告本轮失败",
-    "pm_return": "PM 建议回到更早的阶段", "answers": "用户回答了你上次的问题",
-    "revise": "用户要求修改你上次提出的下一步", "validation_passed": "Kernel 验证通过",
-    "validation_failed": "Kernel 验证未通过", "publish_failed": "发布失败",
-    "release_rejected": "用户没有批准发布", "complete_rejected": "用户不同意结束任务",
-    "cancel_rejected": "用户不同意取消任务",
-    "create_project_rejected": "用户没有批准按当前章程创建项目", "bootstrap_failed": "创建项目失败",
-    "followups_rejected": "用户没有批准你提出的后续任务",
-    "project_task_rejected": "用户不同意开始创建项目的任务",
-    "grant_approved": "用户批准了你提议的目录授权（下一轮起生效）", "grant_rejected": "用户没有批准你提议的目录授权",
+    "start": "a new task has just started; arrange the first step",
+    "pm_questions": "the PM asked questions that need to be put to the user",
+    "pm_completed": "the PM finished this turn's work",
+    "pm_failed": "the PM reported that this turn failed",
+    "pm_return": "the PM suggests going back to an earlier stage", "answers": "the user answered your last questions",
+    "revise": "the user wants your last proposed next step changed", "validation_passed": "Kernel validation passed",
+    "validation_failed": "Kernel validation failed", "publish_failed": "the release failed",
+    "release_rejected": "the user did not approve the release", "complete_rejected": "the user does not want the task finished",
+    "cancel_rejected": "the user does not want the task cancelled",
+    "create_project_rejected": "the user did not approve creating the project from the current charter",
+    "bootstrap_failed": "creating the project failed",
+    "followups_rejected": "the user did not approve the follow-up tasks you proposed",
+    "project_task_rejected": "the user does not want to start a project-creation task",
+    "grant_approved": "the user approved the directory access you proposed (effective from the next turn)",
+    "grant_rejected": "the user did not approve the directory access you proposed",
 }
-KIND_NAMES = {"delivery": "交付", "evolution": "周度复盘（自我进化）", "bootstrap": "创建项目"}
-TRACK_NAMES = {"full": "完整流程（需求→设计→实施→Review→发布）", "quick": "轻量流程（需求含简要方案→实施→发布）"}
+KIND_NAMES = {"delivery": "delivery", "evolution": "weekly review (self-improvement)", "bootstrap": "project creation"}
+TRACK_NAMES = {"full": "full track (requirements → design → build → review → release)",
+               "quick": "quick track (requirements with a brief solution → build → release)"}
 
 
 def allowed_moves(task: dict[str, Any]) -> str:
-    lines = [f"当前流程：{TRACK_NAMES.get(task.get('track', 'full'))}"]
+    lines = [f"Current track: {TRACK_NAMES.get(task.get('track', 'full'))}"]
     for target in sorted(rules.stage_moves(task), key=STAGE_ORDER.index):
         approve = rules.approvals_needed(task, target)
         error = rules.move_error(task, target, approving=tuple(approve))
         if error:
-            lines.append(f"- {target}：现在不可以（{error}）")
+            lines.append(f"- {target}: not possible now ({error})")
         else:
-            lines.append(f"- {target}：可以" + (f"（用户执行时将同时批准 {', '.join(approve)}）" if approve else ""))
+            lines.append(f"- {target}: possible" + (f" (executing it also approves {', '.join(approve)})" if approve else ""))
     return "\n".join(lines)
 
 
 def render_reason(run_input: dict[str, Any]) -> str:
     reason = run_input.get("reason", "")
-    lines = [f"- 评估原因：{reason}（{REASONS.get(reason, '')}）"]
-    for key, label in (("summary", "PM 本轮总结"), ("text", "用户的修改意见/附言"), ("target", "PM 建议回到的阶段"),
-                       ("error", "错误"), ("instruction", "你上次提出的指令")):
+    lines = [f"- Reason for this evaluation: {reason} ({REASONS.get(reason, '')})"]
+    for key, label in (("summary", "PM's summary of this turn"), ("text", "the user's change request / note"),
+                       ("target", "stage the PM suggests going back to"), ("error", "error"),
+                       ("instruction", "the instruction you proposed last time")):
         if run_input.get(key):
-            lines.append(f"- {label}：{run_input[key]}")
+            lines.append(f"- {label}: {run_input[key]}")
     if run_input.get("inferred_intent"):
-        lines.append("- 你上次的推测（用户看过后提出了修改）：\n" + "\n".join(
+        lines.append("- Your last inference (the user saw it and asked for a change):\n" + "\n".join(
             f"  - {i['text']}" for i in run_input["inferred_intent"]))
     if run_input.get("pm_questions"):
-        lines.append("- PM 的问题：\n" + "\n".join(
-            f"  - [{q['id']}]{'（必答）' if q.get('required', True) else ''} {q['text']}" for q in run_input["pm_questions"]))
+        lines.append("- The PM's questions:\n" + "\n".join(
+            f"  - [{q['id']}]{' (required)' if q.get('required', True) else ''} {q['text']}" for q in run_input["pm_questions"]))
     if run_input.get("unanswered"):
-        lines.append("- 用户没有回答这些问题，而是给出了上面的想法：\n" + "\n".join(f"  - {q}" for q in run_input["unanswered"]))
+        lines.append("- The user did not answer these questions and gave the thoughts above instead:\n"
+                     + "\n".join(f"  - {q}" for q in run_input["unanswered"]))
     if run_input.get("answers"):
         asked = {q["id"]: q["text"] for q in run_input.get("questions") or []}
-        lines.append("- 用户的回答：\n" + "\n".join(f"  - {asked.get(k, k)}：{v}" for k, v in run_input["answers"].items()))
+        lines.append("- The user's answers:\n" + "\n".join(f"  - {asked.get(k, k)}: {v}" for k, v in run_input["answers"].items()))
     return "\n".join(lines)
 
 
 def render_messages(messages: list[dict[str, Any]]) -> str:
-    who = {("inbound", "pm"): "用户→PM频道", ("inbound", "supervisor"): "用户→Supervisor频道",
-           ("outbound", "pm"): "PM", ("outbound", "supervisor"): "Supervisor", ("outbound", "kernel"): "系统"}
-    lines = [f"- [{m['created_at']:%m-%d %H:%M}] {who.get((m['direction'], m['role']), m['role'])}：{m['body'].get('text')}"
+    who = {("inbound", "pm"): "user → PM channel", ("inbound", "supervisor"): "user → Supervisor channel",
+           ("outbound", "pm"): "PM", ("outbound", "supervisor"): "Supervisor", ("outbound", "kernel"): "system"}
+    lines = [f"- [{m['created_at']:%m-%d %H:%M}] {who.get((m['direction'], m['role']), m['role'])}: {m['body'].get('text')}"
              for m in messages if m["body"].get("text")]
-    return "\n".join(lines) or "（无）"
+    return "\n".join(lines) or "(none)"
 
 
 def render_card(card: dict[str, Any] | None) -> str:
     if not card or not card["items"]:
-        return "（没有待处理的卡片）"
+        return "(no open card)"
     return "\n".join(f"- [{i['kind']}] " + json.dumps(i["content"], ensure_ascii=False)[:1500] for i in card["items"])
 
 
-TASK_STATES = {"queued": "排队中", "completed": "完成", "cancelled": "取消"}
+TASK_STATES = {"queued": "queued", "completed": "completed", "cancelled": "cancelled"}
 BRIEF_LIMIT = 2000
+CATALOG_HEADING = "## Project catalog (Kernel summary: each project's purpose, scope and routing from its charter)\n\n"
 
 
 async def situation_line(kernel, run_input: dict[str, Any], task: dict[str, Any] | None) -> str:
@@ -95,31 +102,35 @@ async def situation_line(kernel, run_input: dict[str, Any], task: dict[str, Any]
     message_id = run_input.get("message_id") or (task or {}).get("source_message_id")
     message = await kernel.get_message(message_id) if message_id else None
     user = (message or {}).get("user_id")
-    who = f"当前用户：{user}（用户画像中\"用户 {user}\"一节）" if user else "当前用户：未知（看画像中最相关的一节）"
-    return f"当前时间：{datetime.now(ZoneInfo(DEFAULT_TZ)):%Y-%m-%d %H:%M}（{DEFAULT_TZ}）· {who}"
+    who = (f"Current user: {user} (the \"user {user}\" section of the user profile)" if user
+           else "Current user: unknown (use the most relevant section of the profile)")
+    return f"Current time: {datetime.now(ZoneInfo(DEFAULT_TZ)):%Y-%m-%d %H:%M} ({DEFAULT_TZ}) · {who}"
 
 
 async def project_situation(kernel, settings, project_id: str, task: dict[str, Any] | None) -> str:
     """What else is going on in the project: other tasks (queued, recently ended, with their ledgers), the latest
     changes, and the industry brief's opening — material for reading what the user meant but has not said."""
-    lines = ["## 项目近况（Kernel 汇总）"]
+    lines = ["## Project situation (Kernel summary)"]
     evolution = (task or {}).get("kind") == "evolution"
     others = await kernel.recent_tasks(project_id, exclude=(task or {}).get("task_id"),
                                       **({"include_basis": True} if evolution else {}))
-    lines.append("### 其他任务（排队任务可能尚无状态簿；以下依据与原建议引用来自当前数据库）" if evolution else
-                 "### 其他任务（排队中的和最近结束的；需要细节时在只读沙箱里读它的状态簿）")
-    lines += [f"- [{TASK_STATES.get(t['state'], t['state'])}] {t['goal']}（{t['kind']}"
-              + (f"，结束原因 {t['close_reason']}" if t.get("close_reason") else "")
-              + f"，{t['updated_at']:%m-%d}）· "
-              + (f"任务 {t['task_id']}（排队中，不依赖 state.md）" if evolution and t["state"] == "queued" else
+    lines.append("### Other tasks (queued tasks may have no ledger yet; the basis and proposal references below come "
+                 "from the current database)" if evolution else
+                 "### Other tasks (queued and recently ended; read a task's ledger in the read-only sandbox for details)")
+    lines += [f"- [{TASK_STATES.get(t['state'], t['state'])}] {t['goal']} ({t['kind']}"
+              + (f", closed because {t['close_reason']}" if t.get("close_reason") else "")
+              + f", {t['updated_at']:%m-%d}) · "
+              + (f"task {t['task_id']} (queued; does not rely on state.md)" if evolution and t["state"] == "queued" else
                  f"`runs/{t['task_id']}/state.md`")
-              + ("\n  依据：" + json.dumps({"reason": t.get("reason"), "parent_task_id": t.get("parent_task_id"),
+              + ("\n  basis: " + json.dumps({"reason": t.get("reason"), "parent_task_id": t.get("parent_task_id"),
                     "source_ref": t.get("source_ref"), "source_proposal_ref": t.get("source_proposal_ref")},
-                    ensure_ascii=False, default=str) if evolution else "") for t in others] or ["（无）"]
+                    ensure_ascii=False, default=str) if evolution else "") for t in others] or ["(none)"]
     if evolution:
-        lines.append("相似目标不等于重复：核对原因、原 P 和范围，不自动合并或改写既有批准。"
-                     "缺引用/依据标未知，不猜编号；原报告缺失或截断时用已启用的读取工具补查，"
-                     "没有读取能力则安排 PM 在 operate 定向补证，不以缺证推断没有重复。")
+        lines.append("A similar goal is not a duplicate: compare the reason, the original proposal and the scope; never "
+                     "merge automatically or rewrite an existing approval. Mark missing references or basis as unknown "
+                     "instead of guessing ids; when an original report is missing or cut off, look it up with the read "
+                     "tools you have, and without them have the PM gather the evidence in operate — never conclude "
+                     "\"no duplicate\" from missing evidence.")
         seen = set()
         for t in others:
             ref = t.get("source_proposal_ref")
@@ -129,19 +140,22 @@ async def project_situation(kernel, settings, project_id: str, task: dict[str, A
             if key in seen:
                 continue
             if len(seen) >= 5:
-                lines.append("原报告正文入口超过 5 份，本轮材料未全部展开；其余保留上方引用，按相关性定向补证。")
+                lines.append("More than 5 original reports are referenced; not all are expanded here. The rest keep "
+                             "their references above — gather evidence for the relevant ones.")
                 break
             seen.add(key)
             body = await asyncio.to_thread(read_document, settings, project_id, {"ref": ref})
-            lines.append(f"### 来源复盘原报告（父任务 {t.get('parent_task_id')}；按引用校验读取）\n"
-                         + (body[:8000] if body else "（缺失、校验失败或无正文：尚未核实）")
-                         + ("\n…（正文超过 8000 字符，已截断；不能据此宣称完整核对）" if len(body) > 8000 else ""))
+            lines.append(f"### Original review report (parent task {t.get('parent_task_id')}; read and verified by "
+                         "reference)\n"
+                         + (body[:8000] if body else "(missing, failed verification or empty: not verified yet)")
+                         + ("\n…(longer than 8000 characters, cut off; do not claim a complete check from this)"
+                            if len(body) > 8000 else ""))
     changes = await kernel.iterations(project_id, days=180, limit=5)
-    lines.append("### 最近的变更流水（细节用 list_iterations 查）\n" + (iterlog.render(changes, brief=True) or "（无）"))
+    lines.append("### Latest changes (details with list_iterations)\n" + (iterlog.render(changes, brief=True) or "(none)"))
     brief = await asyncio.to_thread(knowledge_text, settings, project_id, DOMAIN_BRIEF)
     if brief:
-        cut = brief if len(brief) <= BRIEF_LIMIT else brief[:BRIEF_LIMIT] + "\n…（全文在 knowledge/domain-brief.md）"
-        lines.append("### 行业速写（开头部分；注意日期和有效期）\n" + cut)
+        cut = brief if len(brief) <= BRIEF_LIMIT else brief[:BRIEF_LIMIT] + "\n…(full text in knowledge/domain-brief.md)"
+        lines.append("### Industry brief (opening; mind its dates and validity)\n" + cut)
     return "\n".join(lines)
 
 
@@ -155,52 +169,55 @@ async def execute_supervisor(run: dict[str, Any], ctx) -> dict[str, Any]:
     config = await asyncio.to_thread(load_agent, settings, project_id, "supervisor", purpose=purpose,
                                      task_kind=task["kind"] if task else None)
     card = await kernel.card(project_id)
-    sections = [f"# 项目 {project_id} · Supervisor（{PURPOSE_NAMES[purpose]}）",
+    sections = [f"# Project {project_id} · Supervisor ({PURPOSE_NAMES[purpose]})",
                 await situation_line(kernel, run_input, task)]
     project_charter = await asyncio.to_thread(charter, settings, project_id)
     if project_charter:
-        sections.append("## 项目章程\n\n" + project_charter)
+        sections.append("## Project charter\n\n" + project_charter)
     profile = await asyncio.to_thread(knowledge_text, settings, project_id, USER_PROFILE)
     if profile:
         sections.append(PROFILE_HEADING + profile)
     sections.append(await project_situation(kernel, settings, project_id, task))
-    sections.append("## 本项目对你的角色要求\n\n" + config.role_text)
+    sections.append("## Your role in this project\n\n" + config.role_text)
     if config.skills_text:
         sections.append(config.skills_text)
     if task:
-        sections.append(f"## 当前任务\n\n- 目标：{task['goal']}\n- 类型：{KIND_NAMES.get(task['kind'], task['kind'])}\n"
-                        + (f"- 发起原因：{task['reason']}\n" if task.get("reason") else "")
-                        + f"- 阶段：{task['stage']}\n- 状态：{task['state']}\n"
-                        f"- 已执行 PM 回合：{task['turn_count']}\n\n### 可去的阶段（Kernel 计算）\n\n{allowed_moves(task)}")
-        sections.append("## 已生效文档\n\n" + render_documents(settings, task))
+        sections.append(f"## Current task\n\n- Goal: {task['goal']}\n- Kind: {KIND_NAMES.get(task['kind'], task['kind'])}\n"
+                        + (f"- Why it was started: {task['reason']}\n" if task.get("reason") else "")
+                        + f"- Stage: {task['stage']}\n- State: {task['state']}\n"
+                        f"- PM turns so far: {task['turn_count']}\n\n### Stages it can move to (computed by Kernel)\n\n"
+                        f"{allowed_moves(task)}")
+        sections.append("## Documents in effect\n\n" + render_documents(settings, task))
         from assistant_kernel.core.executors.pm import STAGE_NAMES
         from assistant_kernel.core.executors.state import render_state
-        sections.append("## 任务状态簿（Kernel 记录的事实：每轮的指令、用户的回答和补充、卡片操作；用户答过的不要再问）\n\n"
+        sections.append("## Task ledger (facts recorded by Kernel: each turn's instruction, the user's answers and "
+                        "additions, card actions; never ask again what the user already answered)\n\n"
                         + render_state(task, await kernel.task_ledger(task["task_id"]), STAGE_NAMES))
     else:
-        sections.append("## 当前任务\n\n（项目当前没有进行中的任务）")
-    sections.append("## 最近的对话\n\n" + render_messages(await kernel.recent_messages(run["project_id"])))
-    sections.append("## 当前卡片\n\n" + render_card(card))
+        sections.append("## Current task\n\n(the project has no active task)")
+    sections.append("## Recent conversation\n\n" + render_messages(await kernel.recent_messages(run["project_id"])))
+    sections.append("## Current card\n\n" + render_card(card))
     if purpose == "evaluate":
-        sections.append("## 本次评估\n\n" + render_reason(run_input))
+        sections.append("## This evaluation\n\n" + render_reason(run_input))
     elif purpose == "review_input":
         message = await kernel.get_message(run_input["message_id"])
-        sections.append(f"## 用户刚发的新消息\n\n{message['body'].get('text', '')}")
+        sections.append(f"## The user's new message\n\n{message['body'].get('text', '')}")
     else:
         message = await kernel.get_message(run_input["message_id"])
         source = message["body"].get("handoff_from")
-        title = f"从项目 {source} 转交来的请求（交接说明）" if source else "用户在 Supervisor 频道的发言"
+        title = f"Request handed over from project {source} (handoff note)" if source else \
+            "What the user said in the Supervisor channel"
         sections.append(f"## {title}\n\n{message['body'].get('text', '')}")
         if "routing" in caps:
             catalog = await asyncio.to_thread(project_catalog, settings, await kernel.active_projects(),
                                               exclude=project_id)
-            sections.append("## 项目名录（Kernel 汇总，各项目章程的用途、范围和路由信息）\n\n" + catalog)
+            sections.append(CATALOG_HEADING + catalog)
     sections.append(prompt_text(PURPOSE_PROMPT[purpose]))
     if "project_management" in caps and purpose == "evaluate":
         if task and task["kind"] == "bootstrap":   # a new project must not duplicate an existing one
             catalog = await asyncio.to_thread(project_catalog, settings, await kernel.active_projects(),
                                               exclude=project_id)
-            sections.append("## 项目名录（Kernel 汇总，各项目章程的用途、范围和路由信息）\n\n" + catalog)
+            sections.append(CATALOG_HEADING + catalog)
         sections.append(prompt_text("supervisor-kernel"))
     if "shared_context" in caps and purpose == "consult":
         sections.append(prompt_text("supervisor-shared"))

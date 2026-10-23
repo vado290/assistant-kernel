@@ -1,39 +1,53 @@
 ---
 name: assistant-project-chartering
-description: 新建项目时，与用户商量并写出项目章程（用途、目标、背景、范围、路由信息）和创建参数（ID、名称、能力、交付方式、角色要点），用户批准后由 Kernel 创建项目。
+description: When creating a project, agree and write with the user the project charter (purpose, goals, background, scope, routing) and the creation parameters (id, name, capabilities, delivery mode, role notes); Kernel creates the project once the user approves.
 metadata:
-  version: "1.2.0"
+  version: "1.3.0"
   load: {roles: [pm, supervisor], task_kinds: [bootstrap], capabilities: [project_management]}
   changelog:
-    - "1.2.0 2026-10-21 章程只收集已知长期位置与保留约定，不提前设计目录或增加建项门槛"
-    - "1.1.0 2026-10-16 代码交付（R4a）上线：写代码的项目用 git-repo"
-    - "1.0.1 2026-10-16 代码交付（R4a）上线前只支持 vault-files"
-    - "1.0.0 2026-10-16 启用（R3）：创建项目改为任务方式；章程即本任务的需求文档，格式由合同 pm-bootstrap 规定"
-    - "0.1.0 2026-10-16 草稿：随 R3（以任务方式创建项目）启用"
+    - "1.3.0 2026-10-23 Written in English, the skills' source language; the charter is written in the user's language with the headings the contract gives (ROUND6, 0.46.0)"
+    - "1.2.0 2026-10-21 The charter only collects known long-term locations and retention agreements; no up-front directory design or extra hurdles for creating a project"
+    - "1.1.0 2026-10-16 Code delivery (R4a) is live: code projects use git-repo"
+    - "1.0.1 2026-10-16 Before code delivery (R4a) went live only vault-files was supported"
+    - "1.0.0 2026-10-16 Enabled (R3): projects are created through a task; the charter is this task's requirements document, in the format of the pm-bootstrap contract"
+    - "0.1.0 2026-10-16 Draft: enabled with R3 (projects created through a task)"
 ---
 
-# 编写项目章程
+# Writing the project charter
 
-## 目的
-章程是新项目以后每一轮都会读的"项目说明书"：它决定了 PM 和 Supervisor 怎样理解业务、Kernel 怎样把请求路由过来。
-章程写不准，后面所有工作都会偏。本任务的需求文档就是章程，章节和"创建参数"的格式见合同（Kernel 在提示中给出）。
+## Purpose
+The charter is the "project handbook" the new project reads every turn from now on: it decides how the PM and the
+Supervisor understand the business and how Kernel routes requests to it. A charter that is off makes all later work go
+off. This task's requirements document is the charter; its sections and the format of the creation parameters are in the
+contract (Kernel gives it in the prompt), headings exactly as given there.
 
-## 做法（按 assistant-requirements 的分轮提问方法，结合 assistant-user-insight 揣摩用户）
-1. **先查重**：读 Kernel 提供的项目名录（各项目的用途、范围、路由信息）。与已有项目重叠时，在第一轮就问用户：
-   并入已有项目，还是新建？公共背景里已有的组织和环境信息不再重复询问，章程只写本项目特有的部分。
-2. **行业调研**：项目涉及具体行业时，按 assistant-domain-research 派出"行业调研"子 agent，结果写进本任务的
-   domain_brief（项目创建时会存为新项目的行业速写），并用它的候选问题库组织提问。
-3. **收集并确认**：项目用途、业务目标与成功标准、使用者与场景、组织与行业背景、范围（负责 / 不负责）、约束。
-   已有仓库/授权目录、固定交付位置、数据保留要求和重要例外已明确时，简写在“约束”并注明来源；
-   具体结构沿用地图或已有项目文档。尚未明确的工程组织留给后续设计，不要求用户先选目录树，不为此单独增加一轮提问。
-   章程说明不等于目录已创建或权限已授予，外部目录仍走原创建参数及授权机制。
-4. **路由信息**：别名、典型请求（3–5 条，写用户实际会怎么说）、不负责的请求。它决定了以后哪些消息会被送到这个项目，
-   要与已有项目的路由信息区分开。
-5. **角色要点**：PM 和 Supervisor 在本项目中需要特别注意的事（几行即可，例如"涉及资金的操作必须二次确认"）；没有就留空。
-6. **创建参数**：建议项目 ID（简短好记）、名称、能力（一般项目不开启任何能力）、交付方式（写代码的项目用 git-repo，
-   其他用 vault-files）、共享级别（默认 improvements），请用户在卡片上确认 ID 和名称。
-7. 提交章程，并检查文档末尾的"Kernel 检查"结果：显示有误就按提示修正后再提交。
+## How (with the round-based questioning of assistant-requirements and the reading of the user in assistant-user-insight)
+1. **Check for duplicates first**: read the project catalog Kernel provides (each project's purpose, scope and routing).
+   When it overlaps an existing project, ask the user in the first round: merge into the existing project, or create a new
+   one? Organisation and environment facts already in the shared background are not asked again; the charter covers only
+   what is specific to this project.
+2. **Industry research**: when the project concerns a specific industry, send an industry-research subagent by
+   assistant-domain-research; its result goes into this task's domain_brief (stored as the new project's industry brief
+   when the project is created), and its question bank organises your questions.
+3. **Collect and confirm**: the project's purpose, business goals and success criteria, users and scenarios, organisation
+   and industry background, scope (in scope / out of scope), constraints. When existing repositories or granted
+   directories, fixed delivery locations, data retention requirements and important exceptions are already clear, note
+   them briefly under constraints with their source; the detailed structure follows the map or the existing project
+   documents. Engineering organisation that is not yet clear is left to later design — do not ask the user to choose a
+   directory tree first, and do not add a question round for it. The charter's notes do not mean a directory exists or
+   access is granted; outside directories still go through the creation parameters and the grant mechanism.
+4. **Routing**: aliases, typical requests (3–5, written the way the user would actually say them), requests it does not
+   handle. This decides which messages are sent to this project later; keep it distinct from the existing projects'
+   routing.
+5. **Role notes**: what the PM and the Supervisor must especially watch in this project (a few lines, for example
+   "operations involving money need a second confirmation"); empty if there is nothing.
+6. **Creation parameters**: suggest a project id (short and memorable), a name, capabilities (ordinary projects enable
+   none), the delivery mode (git-repo for code projects, vault-files otherwise) and the sharing level (improvements by
+   default); ask the user to confirm the id and name on the card.
+7. Submit the charter and check the "Kernel check" result at the end of the document: when it reports an error, fix it and
+   submit again.
 
-## Supervisor 在本任务中
-帮用户判断"值不值得单独建项目"，检查路由信息是否与已有项目冲突；章程通过 Kernel 检查后，用 propose_project 请用户批准，
-卡片上会列出创建参数和"批准后将创建哪些东西"。
+## The Supervisor in this task
+Help the user judge whether a separate project is worth it, and check that the routing does not clash with existing
+projects; once the charter passes the Kernel check, ask for approval with propose_project — the card lists the creation
+parameters and what approval will create.

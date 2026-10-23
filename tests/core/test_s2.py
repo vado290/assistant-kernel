@@ -34,9 +34,9 @@ async def test_profile_and_brief_are_archived_once_on_approval(kernel, kernel_se
     await sync_vaults(kernel, kernel_settings)
     await sync_vaults(kernel, kernel_settings)   # idempotent
     profile = (project_files / "knowledge" / "user-profile.md").read_text("utf-8")
-    assert profile.count("倾向直接接受推荐") == 1 and "倾向直接接受推荐" in skills.section_text(profile, "用户 u-42")
+    assert profile.count("倾向直接接受推荐") == 1 and "倾向直接接受推荐" in skills.section_text(profile, "User u-42")
     brief = (project_files / "knowledge" / "domain-brief.md").read_text("utf-8")
-    assert brief.startswith("# 行业速写") and brief.count("零售 · 上海 · 小型") == 1
+    assert brief.startswith("# Industry brief") and brief.count("零售 · 上海 · 小型") == 1
 
     # a later task's newer research replaces the brief; the old one is kept under knowledge/archive/
     await approved(kernel, kernel_settings, CONTRACT.replace("回合 2、3", "回合 4"), brief="## 0 定位参数与有效期\n零售 · 北京\n")
@@ -82,7 +82,7 @@ async def test_brief_draft_profile_context_and_delegations(kernel, sim, dispatch
     dispatcher.scripts.add("supervisor:evaluate", next_step("requirements"))
     await settle(dispatcher)
     from assistant_kernel.core.executors.state import state_path
-    assert "子 agent「industry-research」：零售日报调研 → 已写行业速写" in state_path(kernel_settings, "p1", task_id).read_text("utf-8")
+    assert 'Subagent "industry-research": 零售日报调研 → 已写行业速写' in state_path(kernel_settings, "p1", task_id).read_text("utf-8")
 
 
 def test_brief_is_editable_only_in_requirements():
@@ -101,6 +101,6 @@ async def test_pm_executor_checks_the_charter_of_a_creation_task(kernel, sim, di
                                                         "document": {"kind": "task_contract"}}, content=CHARTER))
     dispatcher.scripts.add("supervisor:evaluate", next_step("requirements"))
     await settle(dispatcher)
-    assert "创建参数" in fake_harness.calls[-1].prompt and "Kernel 直接解析" in fake_harness.calls[-1].prompt
+    assert "Creation parameters" in fake_harness.calls[-1].prompt and "Kernel parses directly" in fake_harness.calls[-1].prompt
     contract = (await sim.task(task["task_id"]))["documents"]["task_contract"]
     assert contract["spec"]["project_id"] == "sales-report" and "spec_error" not in contract

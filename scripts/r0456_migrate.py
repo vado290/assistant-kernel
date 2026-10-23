@@ -17,7 +17,8 @@ from pathlib import Path
 
 from assistant_kernel.config import KernelSettings
 from assistant_kernel.core import projectgit, rules, skills
-from assistant_kernel.core.vault_sync import ARCHIVE, BACKGROUND_HEADER
+from assistant_kernel.core.i18n import t
+from assistant_kernel.core.vault_sync import ARCHIVE
 
 PLACEHOLDER = "（需求文档获批时"
 OLD_NOTE = "第 9 节由 Kernel 自动追加。"   # the header note of the charters Round 2 generated
@@ -43,7 +44,7 @@ def split_charter(text: str) -> tuple[str, str]:
 
 def with_entries(current: str | None, entries: str) -> str:
     """knowledge/background.md holding `entries` (entries already there, by their marker line, are not repeated)."""
-    text = current if current is not None else BACKGROUND_HEADER
+    text = current if current is not None else t("files.background_header")
     new = [block for block in ("\n" + entries).split("\n### ") if block.strip()]
     for block in new:
         block = "### " + block.strip()

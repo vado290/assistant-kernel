@@ -46,10 +46,10 @@ async def test_a_task_ending_unapproved_keeps_its_observations_not_its_facts(ker
     await sync_vaults(kernel, kernel_settings)
     await sync_vaults(kernel, kernel_settings)                                        # once only
     profile = (project_files / "knowledge" / "user-profile.md").read_text("utf-8")
-    assert profile.count("喜欢一次只答一个问题") == 1 and "需求未获批" in profile and "用户 u-7" in profile
+    assert profile.count("喜欢一次只答一个问题") == 1 and "requirements not approved" in profile and "User u-7" in profile
     charter = project_files / "knowledge" / "charter.md"
     assert not charter.exists() or "约 20 家门店" not in charter.read_text("utf-8")  # unconfirmed facts stay out
-    assert log(project_files)[0].startswith("存档：未获批任务的协作观察")              # committed on its own
+    assert log(project_files)[0].startswith("Archive: collaboration observations of an unapproved task")              # committed on its own
 
 
 async def test_supervisor_records_what_the_user_states_and_sees_the_ledger(kernel, sim, dispatcher, fake_harness,
@@ -58,7 +58,7 @@ async def test_supervisor_records_what_the_user_states_and_sees_the_ledger(kerne
     fake_harness.script("supervisor", {"decision": "propose_next", "target_stage": "requirements",
                                        "instruction": "梳理需求", "message": "先梳理需求"})
     await settle(dispatcher)
-    assert "## 任务状态簿" in fake_harness.calls[-1].prompt
+    assert "## Task ledger" in fake_harness.calls[-1].prompt
     await kernel.act("p1", (await sim.item("p1", task_id))["item_id"], "execute")
     fake_harness.script("pm", {"outcome": "needs_input", "summary": "要确认读者", "document": None,
                                "questions": [{"id": "q1", "text": "日报给谁看？"}]})
@@ -71,7 +71,7 @@ async def test_supervisor_records_what_the_user_states_and_sees_the_ledger(kerne
     fake_harness.script("supervisor", {"decision": "ask_user", "message": "还有吗？",
                                        "questions": [{"id": "c2", "text": "还有别的要求吗？"}]})
     await settle(dispatcher)
-    assert "问：日报给谁看？ → 答：门店店长们" in fake_harness.calls[-1].prompt   # Supervisor sees earlier answers
+    assert "Q: 日报给谁看？ → A: 门店店长们" in fake_harness.calls[-1].prompt   # Supervisor sees earlier answers
 
     await kernel.receive("p1", role="supervisor", text="以后每次只问我一个问题", user_id="u-7")
     fake_harness.script("supervisor", {"reply": "好的，以后每次只问一个。",
@@ -80,11 +80,11 @@ async def test_supervisor_records_what_the_user_states_and_sees_the_ledger(kerne
     async with kernel.db.tx() as c:
         texts = [r["text"] for r in await (await c.execute(
             "SELECT body->>'text' AS text FROM core.messages WHERE direction='outbound' ORDER BY created_at")).fetchall()]
-    assert any(t.startswith("📝 已记入用户画像：提问方式 · 每次只问一个问题") for t in texts)
+    assert any(t.startswith("📝 Noted in your user profile: 提问方式 · 每次只问一个问题") for t in texts)
     await sync_vaults(kernel, kernel_settings)
     await sync_vaults(kernel, kernel_settings)
     profile = (project_files / "knowledge" / "user-profile.md").read_text("utf-8")
-    assert profile.count("每次只问一个问题 · 原话") == 1 and "[Supervisor·对话]" in profile and "用户 u-7" in profile
+    assert profile.count("每次只问一个问题 · 原话") == 1 and "[Supervisor · conversation]" in profile and "User u-7" in profile
 
 
 async def test_triage_sees_the_profile(kernel_settings, project_files, fake_harness):
@@ -111,5 +111,5 @@ def test_other_projects_public_facts_become_candidates(kernel_settings):
     shared.mkdir(parents=True, exist_ok=True)
     (shared / "environment.md").write_text("---\nname: environment\n---\n# 环境\n\n部署在远程主机 prod-1。\n", "utf-8")
     found = shared_candidates(kernel_settings, ["p1", "p2", "p3"], exclude="p1")
-    assert "p2：公司在上海，约 20 家门店" in found and "只做日报" not in found
+    assert "p2: 公司在上海，约 20 家门店" in found and "只做日报" not in found
     assert "prod-1" not in found                                                       # already in the shared files

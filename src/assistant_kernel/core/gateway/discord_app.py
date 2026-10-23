@@ -5,13 +5,15 @@ import asyncio
 import io
 import logging
 import os
+import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import discord
 from discord import app_commands
 
 from assistant_kernel.config import KernelSettings
+from assistant_kernel.core import i18n
 from assistant_kernel.core.gateway.config import GatewayConfig, bot_token, load_gateway_config
 from assistant_kernel.core.gateway.service import GatewayService, Reply
 from assistant_kernel.core.kernel import Kernel
@@ -20,7 +22,7 @@ log = logging.getLogger(__name__)
 STYLES = {"success": discord.ButtonStyle.success, "danger": discord.ButtonStyle.danger,
           "primary": discord.ButtonStyle.primary, "secondary": discord.ButtonStyle.secondary}
 MODAL_ACTIONS = ("answer:", "revise")
-ERROR_REPLY = "处理时出错了，请看 Supervisor 频道里最新的卡片确认是否已生效；没有生效就再点一次。"
+WAIT_SECONDS = 15
 
 
 class CoreButton(discord.ui.DynamicItem[discord.ui.Button],
@@ -45,7 +47,8 @@ class CoreModal(discord.ui.Modal):
         self.client_ref, self.inputs = client, {}
         for field in spec["fields"][:5]:
             text_input = discord.ui.TextInput(
-                label=field["label"][:45] or "回答", required=field["required"], default=field.get("default") or None,
+                label=field["label"][:45] or i18n.t("card.answer"), required=field["required"],
+                default=field.get("default") or None,
                 placeholder=(field.get("placeholder") or None),
                 style=discord.TextStyle.paragraph if field.get("paragraph") or len(field.get("long_text", "")) > 45
                 else discord.TextStyle.short, max_length=4000)
@@ -61,8 +64,9 @@ class CoreModal(discord.ui.Modal):
                 values={key: str(item.value or "") for key, item in self.inputs.items()})
         except Exception:
             log.exception("modal %s failed", self.custom_id)
-            reply = Reply(ERROR_REPLY)
-        await interaction.followup.send(reply.text or "已记录。", ephemeral=True)
+            reply = Reply(i18n.t("discord.error_reply"))
+        await interaction.followup.send(reply.text or i18n.t("done.default"),
+                                        ephemeral=True)
 
 
 class DiscordTransport:
@@ -102,32 +106,38 @@ class DiscordTransport:
 
 
 class CoreDiscordClient(discord.Client):
-    def __init__(self, kernel: Kernel, config: GatewayConfig, config_path: Path | None = None):
+    def __init__(self, kernel: Kernel, config: GatewayConfig, config_path: Path | None = None,
+                 token_source: Callable[[GatewayConfig], str | None] | None = None):
         intents = discord.Intents.none()
         intents.guilds = intents.guild_messages = intents.message_content = True
         super().__init__(intents=intents)
         self.kernel, self.config, self.config_path = kernel, config, config_path
+        # where the bot token comes from; a changed token or guild restarts the gateway (dashboard, ROUND6)
+        self.token_source = token_source
+        self.token = token_source(config) if token_source else None
         self.config_mtime = config_path.stat().st_mtime if config_path and config_path.is_file() else None
         self.service = GatewayService(kernel, config, DiscordTransport(self, config.guild_id))
         self.tree = app_commands.CommandTree(self)
         self._register_commands()
 
     def _register_commands(self) -> None:
-        @self.tree.command(name="status", description="当前项目的任务和卡片状态")
+
+        @self.tree.command(name="status", description=i18n.t("discord.cmd_status"))
         async def status(interaction: discord.Interaction):
             await interaction.response.send_message(await self.service.status_text(str(interaction.channel_id)),
                                                     ephemeral=True)
 
-        @self.tree.command(name="pending", description="列出待处理的卡片")
+        @self.tree.command(name="pending", description=i18n.t("discord.cmd_pending"))
         async def pending(interaction: discord.Interaction):
             await interaction.response.send_message(await self.service.pending_text(str(interaction.channel_id)),
                                                     ephemeral=True)
 
-        @self.tree.command(name="cancel", description="取消当前进行中的任务")
-        @app_commands.describe(confirm="确认取消")
+        @self.tree.command(name="cancel", description=i18n.t("discord.cmd_cancel"))
+        @app_commands.describe(confirm=i18n.t("discord.cmd_cancel_confirm"))
         async def cancel(interaction: discord.Interaction, confirm: bool):
             if not confirm:
-                await interaction.response.send_message("未取消。如需取消请把 confirm 选为 True。", ephemeral=True)
+                await interaction.response.send_message(i18n.t("discord.not_cancelled"),
+                                                        ephemeral=True)
                 return
             await interaction.response.defer(ephemeral=True, thinking=True)
             await interaction.followup.send(
@@ -151,6 +161,7 @@ class CoreDiscordClient(discord.Client):
             try:
                 if ticks % 5 == 0:
                     await self._reload_config()
+                    await self._check_token()
                 await self.service.deliver_outbox()
                 await self.service.sync_cards()
                 if ticks % 30 == 0:
@@ -168,11 +179,23 @@ class CoreDiscordClient(discord.Client):
         if mtime == self.config_mtime:
             return
         config = load_gateway_config(self.config_path)
+        if config.guild_id != self.config.guild_id or config.shared_bot != self.config.shared_bot:
+            await self._restart("guild changed")
+            return
         for project_id in set(config.projects) - set(self.config.projects):
             await self.kernel.ensure_project(project_id)
         self.config = self.service.config = config
         self.config_mtime = mtime
         log.info("gateway routing reloaded: %s", ", ".join(sorted(config.projects)))
+
+    async def _check_token(self) -> None:
+        if self.token_source and self.token_source(self.config) != self.token:
+            await self._restart("bot token changed")
+
+    async def _restart(self, reason: str) -> None:
+        """Exit so supervisord starts the gateway again with the new settings (autorestart)."""
+        log.info("gateway restarting: %s", reason)
+        await self.close()
 
     async def on_message(self, message: discord.Message) -> None:
         if message.author.bot or message.guild is None or str(message.guild.id) != self.config.guild_id:
@@ -189,7 +212,8 @@ class CoreDiscordClient(discord.Client):
             if reply.modal:
                 await interaction.response.send_modal(CoreModal(self, reply.modal))
             else:
-                await interaction.response.send_message(reply.text or "已记录。", ephemeral=True)
+                await interaction.response.send_message(
+                    reply.text or i18n.t("done.default"), ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
@@ -198,19 +222,27 @@ class CoreDiscordClient(discord.Client):
                                                  interaction_id=str(interaction.id), custom_id=custom_id)
         except Exception:
             log.exception("button %s failed", custom_id)
-            reply = Reply(ERROR_REPLY)
-        await interaction.followup.send(reply.text or "已记录。", ephemeral=True)
+            reply = Reply(i18n.t("discord.error_reply"))
+        await interaction.followup.send(reply.text or i18n.t("done.default"),
+                                        ephemeral=True)
 
 
 def run() -> None:
     logging.basicConfig(level=logging.INFO)
     settings = KernelSettings.from_environment()
     path = Path(os.environ.get("CORE_DISCORD_CONFIG") or settings.data_root / "config" / "core-discord.yaml")
-    config = load_gateway_config(path)
-    token = bot_token(settings, config, shared_fallback=config.shared_bot)
-    if not token:
-        raise SystemExit(f"no bot token: set {config.bot_token_env} or use shared_bot")
-    CoreDiscordClient(Kernel(settings), config, path).run(token, log_handler=None)
+
+    def token_of(config: GatewayConfig) -> str | None:
+        return bot_token(settings, config, shared_fallback=config.shared_bot)
+
+    while True:   # a fresh installation waits until the dashboard has saved a guild and a bot token (ROUND6)
+        config = load_gateway_config(path)
+        token = token_of(config)
+        if config.guild_id and token:
+            break
+        log.info("waiting for Discord settings (guild and bot token; see the dashboard)")
+        time.sleep(WAIT_SECONDS)
+    CoreDiscordClient(Kernel(settings), config, path, token_of).run(token, log_handler=None)
 
 
 if __name__ == "__main__":

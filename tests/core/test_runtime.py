@@ -68,10 +68,10 @@ async def test_service_last_at_is_change_time_not_a_health_heartbeat(
     assert context["runtime"][0]["last_at"] == old
     assert context["runtime"][0]["last_status"] == ("RUNNING" if known else None)
     text = await evolution_material(kernel, kernel_settings, "p1")
-    assert "observed_at 是本次数据库资料读取时间，不是健康检查时间" in text
-    assert "kind=job 的 last_at 是最后执行结果时间" in text
-    assert "kind=service 的 last_at 是最后状态变化时间" in text
-    assert "不能仅据此认定检查过期或服务异常" in text
+    assert "observed_at is when this database read happened, not a health check" in text
+    assert "for kind=job last_at is the time of the last run result" in text
+    assert "for kind=service the time of the last state change" in text
+    assert "that alone does not mean a check is overdue or the service is broken" in text
 
 
 @pytest.fixture
@@ -180,13 +180,13 @@ async def test_service_retirement_failure_is_retried_and_reported_once(kernel, s
     async with kernel.db.tx() as c:
         row = await (await c.execute("SELECT status,manifest_sha FROM core.jobs WHERE project_id='p1' AND job_id='listener'")).fetchone()
     assert row == {"status": "retired", "manifest_sha": ""}
-    alerts = [m for m in await sim.outbound("p1") if "保留待重试" in m["body"]["text"]]
+    alerts = [m for m in await sim.outbound("p1") if "stays pending for a retry" in m["body"]["text"]]
     assert len(alerts) == 1
     monkeypatch.setattr(control, "apply", original)
     assert await jobs.sync_runtime(kernel, kernel_settings) == 1
     assert control.applied[-1][2] == ["listener"]
     assert await jobs.sync_runtime(kernel, kernel_settings) == 0
-    assert len([m for m in await sim.outbound("p1") if "检查已恢复" in m["body"]["text"]]) == 1
+    assert len([m for m in await sim.outbound("p1") if "workspace check recovered" in m["body"]["text"]]) == 1
     assert next(r for r in await jobs.list_jobs(kernel, "p1") if r["job_id"] == "daily-report")["status"] == "paused"
 
 
@@ -232,7 +232,7 @@ async def test_sync_registers_updates_and_retires(kernel, sim, kernel_settings, 
     rows = {r["job_id"]: r for r in await jobs.list_jobs(kernel, "p1")}
     assert set(rows) == {"daily-report", "listener", "listener-restart"} and rows["daily-report"]["next_at"]
     assert control.applied == [("p1", ["listener"], [])]
-    assert any("运行时已按发布" in m["body"]["text"] for m in await sim.outbound("p1"))
+    assert any("The runtime follows the released jobs.yaml" in m["body"]["text"] for m in await sim.outbound("p1"))
 
     await release(kernel, vault, MANIFEST.split("services:")[0])   # the service is removed
     await jobs.sync_runtime(kernel, kernel_settings)
@@ -242,7 +242,7 @@ async def test_sync_registers_updates_and_retires(kernel, sim, kernel_settings, 
     await release(kernel, vault, "schema_version: runtime-manifest.v1\njobs:\n  - id: x\n")
     await jobs.sync_runtime(kernel, kernel_settings)
     await jobs.sync_runtime(kernel, kernel_settings)
-    alerts = [m for m in await sim.outbound("p1") if "有误" in m["body"]["text"]]
+    alerts = [m for m in await sim.outbound("p1") if "has errors" in m["body"]["text"]]
     assert len(alerts) == 1                                                # a broken manifest is reported once
     assert {r["job_id"] for r in await jobs.list_jobs(kernel, "p1")} == {"daily-report"}   # and changes nothing
 
@@ -265,13 +265,13 @@ async def test_due_jobs_run_once_and_failures_alert(kernel, sim, kernel_settings
     await settle(d)
     row = next(r for r in await jobs.list_jobs(kernel, "p1") if r["job_id"] == "daily-report")
     assert row["last_status"] == "failed" and row["failures"] == 1
-    alert = [m["body"]["text"] for m in await sim.outbound("p1") if "运行失败" in m["body"]["text"]]
-    assert alert and "退出码 3" in alert[0] and "/jobs run daily-report" in alert[0]
+    alert = [m["body"]["text"] for m in await sim.outbound("p1") if "failed (after" in m["body"]["text"]]
+    assert alert and "exit code 3" in alert[0] and "/jobs run daily-report" in alert[0]
 
     (vault / "scripts" / "report.py").write_text("print('fixed')\n", "utf-8")
     await jobs.run_now(kernel, "p1", "daily-report")
     await settle(d)
-    assert any("已恢复正常" in m["body"]["text"] for m in await sim.outbound("p1"))
+    assert any("is back to normal" in m["body"]["text"] for m in await sim.outbound("p1"))
 
     # the service restart job restarts only the project's own program
     await jobs.run_now(kernel, "p1", "listener-restart")
@@ -296,7 +296,7 @@ async def test_script_timeout(kernel_settings, vault):
     job = {"id": "slow", "type": "script", "entry": "scripts/slow.py", "args": [], "timezone": "Asia/Shanghai",
            "timeout_seconds": 1}
     from assistant_kernel.core.executors.job import run_script
-    with pytest.raises(JobFailed, match="超时"):
+    with pytest.raises(JobFailed, match="timeout"):
         await run_script(vault, job, {}, vault / "slow.log")
 
 
@@ -304,20 +304,20 @@ async def test_jobs_command_and_service_health(kernel, sim, kernel_settings, vau
     await release(kernel, vault, MANIFEST)
     await jobs.sync_runtime(kernel, kernel_settings)
     listing = await gateway.jobs_command("p1", [])
-    assert "daily-report" in listing and "服务 `listener`" in listing
-    assert "已暂停" in await gateway.jobs_command("p1", ["pause", "daily-report"])
-    assert "已暂停" in await gateway.jobs_command("p1", [])
+    assert "daily-report" in listing and "service `listener`" in listing
+    assert "paused" in await gateway.jobs_command("p1", ["pause", "daily-report"])
+    assert "paused" in await gateway.jobs_command("p1", [])
     assert await jobs.schedule_jobs(kernel, datetime.now(timezone.utc) + timedelta(days=2)) == []   # paused
-    assert "已恢复" in await gateway.jobs_command("p1", ["resume", "daily-report"])
-    assert "服务不能暂停" in await gateway.jobs_command("p1", ["pause", "listener"])
-    assert "已安排立即运行" in await gateway.jobs_command("p1", ["run", "daily-report"])
+    assert "resumed" in await gateway.jobs_command("p1", ["resume", "daily-report"])
+    assert "a service cannot be paused" in await gateway.jobs_command("p1", ["pause", "listener"])
+    assert "will run now" in await gateway.jobs_command("p1", ["run", "daily-report"])
 
     control.states = {"proj-p1-listener": "FATAL"}
     assert await jobs.check_services(kernel) == 1 and await jobs.check_services(kernel) == 0
     control.states = {"proj-p1-listener": "RUNNING"}
     assert await jobs.check_services(kernel) == 1
     texts = [m["body"]["text"] for m in await sim.outbound("p1")]
-    assert any("FATAL" in t for t in texts) and any("已恢复运行" in t for t in texts)
+    assert any("FATAL" in t for t in texts) and any("is running again" in t for t in texts)
 
 
 def test_validation_checks_a_published_manifest(kernel_settings, vault):
@@ -330,7 +330,7 @@ def test_validation_checks_a_published_manifest(kernel_settings, vault):
     (candidate / "project" / runtime.MANIFEST).write_text(good, "utf-8")
     assert check_runtime_manifest(kernel_settings, "p1", "t1") is None
     (candidate / "project" / runtime.MANIFEST).write_text(good.replace("scripts/new.py", "scripts/missing.py"), "utf-8")
-    assert "脚本不存在" in check_runtime_manifest(kernel_settings, "p1", "t1")
+    assert "does not exist" in check_runtime_manifest(kernel_settings, "p1", "t1")
 
 
 async def test_digest_counts_job_runs(kernel, kernel_settings, vault, control):
@@ -339,5 +339,5 @@ async def test_digest_counts_job_runs(kernel, kernel_settings, vault, control):
     await jobs.run_now(kernel, "p1", "daily-report")
     await settle(Dispatcher(kernel, {"job": execute_job}, services={"settings": kernel_settings}))
     digest = await kernel.project_digest("p1")
-    assert "定时作业 daily-report：成功 1 次，失败 0 次" in render_digest(digest)
+    assert "Scheduled job daily-report: 1 succeeded, 0 failed" in render_digest(digest)
 

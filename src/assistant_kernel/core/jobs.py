@@ -19,13 +19,13 @@ from typing import Any, Callable
 from psycopg.types.json import Jsonb
 
 from assistant_kernel.core import gitdelivery, runtime
+from assistant_kernel.core.i18n import t
 from assistant_kernel.core.db import all_rows, event, lock_project, one
 from assistant_kernel.core.machine import enqueue_job, notify
 from assistant_kernel.services import schedule_time
 from assistant_kernel.storage import ProjectRuntimeManager
 
 log = logging.getLogger(__name__)
-STATUS_NAMES = {"enabled": "启用", "paused": "已暂停", "retired": "已退役"}
 
 
 def _now() -> datetime:
@@ -147,8 +147,7 @@ async def _sync_project(kernel, settings, project_id: str) -> int:
             return 0
         async with kernel.db.tx() as c:
             await event(c, project_id, "runtime_manifest_unreleased", manifest_sha=sha)
-            await notify(c, project_id, "supervisor", f"⚠ {runtime.MANIFEST} 被直接修改过，与发布的版本不同，Kernel 没有登记"
-                         "这些变化。作业和服务的改动请通过任务发布（批准发布即登记）。")
+            await notify(c, project_id, "supervisor", t("jobs.unreleased", manifest=runtime.MANIFEST))
         return 0
     if "runtime_manifest_invalid" in seen or (sha is not None and stored["n"] and not stored["stale"] and not stored["services"]):
         return 0
@@ -157,7 +156,8 @@ async def _sync_project(kernel, settings, project_id: str) -> int:
     except runtime.ManifestError as exc:   # published but broken (validation should have caught it): say so once
         async with kernel.db.tx() as c:
             await event(c, project_id, "runtime_manifest_invalid", manifest_sha=sha, error=str(exc)[:1000])
-            await notify(c, project_id, "supervisor", f"⚠ {runtime.MANIFEST} 有误，未登记任何变化：{str(exc)[:500]}")
+            await notify(c, project_id, "supervisor", t("jobs.invalid", manifest=runtime.MANIFEST,
+                                                         error=str(exc)[:500]))
         return 0
     if home is not None and (parsed["services"] or any(j["type"] == "script" for j in parsed["jobs"])):
         try:
@@ -182,7 +182,8 @@ async def _sync_project(kernel, settings, project_id: str) -> int:
             await asyncio.to_thread(runtime.CONTROL.apply, project_id, vault, services, changes["services_removed"], home)
         except Exception as exc:   # pending marker survives for both active and retired services
             async with kernel.db.tx() as c:
-                await _apply_notice(c, project_id, sha, "runtime_apply_failed", "服务配置尚未应用，保留待重试：" + str(exc)[:300])
+                await _apply_notice(c, project_id, sha, "runtime_apply_failed",
+                                    t("jobs.apply_pending", error=str(exc)[:300]))
             raise
         else:
             async with kernel.db.tx() as c:
@@ -191,13 +192,12 @@ async def _sync_project(kernel, settings, project_id: str) -> int:
                                    WHERE project_id=%s AND job_id = ANY(%s)""",
                                 (runtime.manifest_sha(""), sha, project_id, pending))
     async with kernel.db.tx() as c:
-        await _apply_notice(c, project_id, sha, "runtime_apply_recovered", "运行配置及工作区检查已恢复；业务效果仍需核对。")
-    shown = [f"{label}：{'、'.join(changes[key])}" for key, label in (("added", "新增"), ("updated", "修改"),
-                                                                    ("retired", "退役")) if changes[key]]
+        await _apply_notice(c, project_id, sha, "runtime_apply_recovered", t("jobs.recovered"))
+    shown = [t(f"jobs.change_{key}", names=t("list.separator").join(changes[key]))
+             for key in ("added", "updated", "retired") if changes[key]]
     if shown:
         async with kernel.db.tx() as c:
-            await notify(c, project_id, "supervisor", "⚙ 运行时已按发布的 jobs.yaml 更新（" + "；".join(shown)
-                         + "）。发送 /jobs 查看。")
+            await notify(c, project_id, "supervisor", t("jobs.updated", changes="; ".join(shown)))
     return int(any(changes.values()))
 
 
@@ -290,9 +290,8 @@ async def check_services(kernel) -> int:
         async with kernel.db.tx() as c:
             await c.execute("UPDATE core.jobs SET last_status=%s, last_at=now() WHERE project_id=%s AND job_id=%s",
                             (state, service["project_id"], service["job_id"]))
-            text = (f"✅ 服务 {service['job_id']} 已恢复运行。" if state == "RUNNING"
-                    else f"⚠ 服务 {service['job_id']} 当前状态 {state}（supervisord 会自动重启崩溃的进程；持续异常请检查日志 "
-                         f"runs/services/{service['job_id']}.err.log）。")
+            text = (t("jobs.service_running", job=service["job_id"]) if state == "RUNNING"
+                    else t("jobs.service_state", job=service["job_id"], state=state))
             await notify(c, service["project_id"], "supervisor", text)
         changed += 1
     return changed
@@ -300,16 +299,17 @@ async def check_services(kernel) -> int:
 
 def render_jobs(rows: list[dict[str, Any]], zone: str = runtime.DEFAULT_TZ) -> str:
     if not rows:
-        return "本项目没有登记的作业或服务（由已发布的 jobs.yaml 决定）。"
+        return t("jobs.none")
     from zoneinfo import ZoneInfo
-    lines = ["本项目的作业和服务："]
+    lines = [t("jobs.title")]
     for r in rows:
         if r["kind"] == "service":
-            lines.append(f"- 服务 `{r['job_id']}`：{r['last_status'] or '已登记'}")
+            lines.append(t("jobs.service_line", job=r["job_id"], state=r["last_status"] or t("jobs.registered")))
             continue
         when = r["next_at"].astimezone(ZoneInfo(zone)).strftime("%m-%d %H:%M") if r["next_at"] else "—"
-        last = f"，上次 {r['last_status']}" if r["last_status"] else ""
-        fails = f"，连续失败 {r['failures']} 次" if r["failures"] else ""
-        lines.append(f"- 作业 `{r['job_id']}`（{r['spec']['type']}）：{STATUS_NAMES[r['status']]}，下次 {when}{last}{fails}")
-    lines.append("命令：/jobs pause <id> · /jobs resume <id> · /jobs run <id>")
+        last = t("jobs.last", state=r["last_status"]) if r["last_status"] else ""
+        fails = t("jobs.failures", count=r["failures"]) if r["failures"] else ""
+        lines.append(t("jobs.job_line", job=r["job_id"], type=r["spec"]["type"],
+                       status=t(f"jobs.status_{r['status']}"), when=when) + last + fails)
+    lines.append(t("jobs.footer"))
     return "\n".join(lines)

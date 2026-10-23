@@ -1,43 +1,56 @@
 ---
 name: assistant-shared-context
-description: 维护 kernel 的公共背景（组织与用户、技术环境、工作约定）：识别哪些信息是公共的，整理成更新卡片交给用户批准；从不写入密钥。
+description: Maintain kernel's shared background (organisation and user, technical environment, working conventions) — recognise what is shared and put it on an update card for the user to approve; never write keys.
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
   load: {roles: [pm, supervisor], capabilities: [shared_context]}
   changelog:
-    - "1.1.0 2026-10-19 其他项目标“公共”的背景事实由 Kernel 列成候选，用户采纳后逐节提议（记忆机制改进，0.45.5）"
-    - "1.0.0 2026-10-16 首版：所有 agent 都要用到的公共事实需要有人维护，且每次修改都要经用户确认"
+    - "1.2.0 2026-10-23 Written in English, the skills' source language; the shared marker is recognised in every supported language (ROUND6, 0.46.0)"
+    - "1.1.0 2026-10-19 Background facts other projects marked as shared are listed by Kernel as candidates; adopted ones are proposed section by section (memory improvement, 0.45.5)"
+    - "1.0.0 2026-10-16 First version: shared facts every agent uses need someone to maintain them, and every change needs the user's confirmation"
 ---
 
-# 维护公共背景
+# Maintaining the shared background
 
-## 公共背景是什么
-kernel vault 的 `knowledge/shared/` 下有三份文件，Kernel 会按场合把它们注入所有项目 agent 的上下文（只读）：
-- `organization.md` 组织与用户：组织概况、行业与细分、业务模式、用户本人的岗位和决策权、沟通偏好；
-- `environment.md` 技术环境：开发机、Docker 容器和路径对应、数据库、模型服务、Discord、远程主机及用途、部署去向和方式；
-- `conventions.md` 工作约定：语言、代码和提交规范、部署流程、安全规则。
+## What the shared background is
+Three files under `knowledge/shared/` in kernel's vault, which Kernel injects (read-only) into every project agent's
+context as the occasion requires:
+- `organization.md` organisation and user: the organisation, industry and niche, business model, the user's own role and
+  decision rights, communication preferences;
+- `environment.md` technical environment: development machine, Docker containers and path mapping, database, model
+  services, Discord, remote hosts and their purposes, deployment targets and methods;
+- `conventions.md` working conventions: language, code and commit rules, the deployment process, security rules.
 
-所有 agent 都会按这些事实工作，所以写错一条会影响所有项目。这就是为什么每次修改都要用户批准。
+Every agent works by these facts, so one wrong entry affects every project. That is why every change needs the user's
+approval.
 
-## 什么该写进来
-- 写：对两个以上项目都成立、而且相对稳定的事实。例如"开发完成的服务部署到远程主机 B（别名 prod-1）"。
-- 不写：只与某个项目有关的事实（写进该项目章程）；临时状态（例如"今天服务器在维护"）；项目路由信息（路由看各项目章程）。
-- **绝不写密钥、密码、令牌、私钥**：主机用别名和用途描述，凭据只写"存放在哪里、叫什么名字"。用户发来的消息里带有这些内容时，
-  不要转写，并提醒用户这类信息不应出现在聊天里。
+## What belongs here
+- Yes: facts that hold for two or more projects and are fairly stable. For example "finished services deploy to remote
+  host B (alias prod-1)".
+- No: facts about one project only (they go in that project's charter); temporary states (for example "the server is in
+  maintenance today"); routing information (routing comes from each project's charter).
+- **Never keys, passwords, tokens or private keys**: describe hosts by alias and purpose, and credentials only by where
+  they are stored and what they are called. When a user's message contains such things, do not copy them, and remind the
+  user they should not appear in chat.
 
-## 怎样提出更新（propose_shared_update）
-1. 判断属于哪份文件、哪一节；先读当前内容，避免重复或冲突。
-2. 写出这一节修改后的**完整内容**（Kernel 用它替换整节），每条事实末尾带来源和核实日期，例如"（用户 2026-10-16）"、
-   "（核实：docker ps 2026-10-16）"。
-3. 写明原因：用户说了什么，或者从哪里发现的。
-4. 与已有内容冲突时，在说明中指出旧说法和新说法，由用户确认以哪个为准。
-5. 一次更新只改一节；多节需要改时分几次提出，方便用户逐项确认。
+## Proposing an update (propose_shared_update)
+1. Decide which file and section it belongs to; read the current content first to avoid duplicates or conflicts.
+2. Write the section's **complete new content** (Kernel replaces the whole section with it), each fact ending with its
+   source and the date it was verified, for example "(user 2026-10-16)", "(verified: docker ps 2026-10-16)". Write it in
+   the user's language.
+3. Say why: what the user said, or where it was found.
+4. When it conflicts with existing content, name the old and the new statement and let the user confirm which holds.
+5. One section per update; when several need changing, propose them one at a time so the user can confirm each.
 
-## 信息从哪里来
-- 用户直接告诉 kernel；
-- 其他项目路由过来的交接说明；
-- 其他项目背景存档里标“公共”的事实：Kernel 把公共背景里还没有的列成候选，放进 kernel 的周度复盘材料和 Supervisor 的咨询提示；用户说采纳哪些，你就逐节用 propose_shared_update 提议，不要一次合并多节；
-- 技术环境类事实可以用只读工具核实（例如查看容器、目录）。
+## Where the information comes from
+- the user tells kernel directly;
+- handoff notes routed from other projects;
+- facts in other projects' background archives marked as shared (a line starting with `Shared:` — or `公共：`, `共有：`,
+  `Gemeinsam:`, `Compartido:` in the other supported languages): Kernel lists those the shared background does not hold
+  yet as candidates in kernel's weekly review material and the Supervisor's consultation prompt; when the user says which
+  to adopt, propose them section by section with propose_shared_update — never several sections at once;
+- technical facts can be verified with the read-only tools (for example looking at containers or folders).
 
-## 定期检查
-复盘时检查超过 90 天没有核实的条目：能用工具核实的就核实并更新日期，不能核实的列出来请用户确认。
+## Regular checks
+In reviews, check entries not verified for more than 90 days: verify and re-date those you can verify with tools; list
+the others for the user to confirm.

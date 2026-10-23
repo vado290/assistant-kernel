@@ -1,28 +1,31 @@
 ---
 name: conventions
-description: 工作约定：代码与提交规范、部署流程、安全规则
+description: "Working conventions: code and commit rules, the deployment process, security rules"
 metadata:
   version: "1"
   load: {roles: [pm], stages: [design, build, review]}
 ---
 
-# 公共背景 · 工作约定
+# Shared background · Working conventions
 
-## 1 语言
-- 面向用户的文字、文档和卡片用中文；代码标识符用英文。（用户 2026-10-16）
+## 1 Language
+- Replies, documents and card text for the user are in the language the user writes in; Kernel's own interface, skills
+  and code identifiers are in English.
 
-## 2 代码与提交
-- 代码仓库以 main 为唯一整合分支；所有改动在分支上完成，经测试后快进合并到 main。（用户 2026-10-16）
-- 提交说明写清做了什么、为什么，引用需求和设计编号。（用户 2026-10-16）
-- 数据库迁移只能新增文件，不能修改已经执行过的迁移。（核实 2026-10-16）
+## 2 Code and commits
+- A code repository has main as its only integration branch; every change is made on a branch and fast-forwarded into
+  main after testing.
+- A commit message says what was done and why, citing requirement and design ids.
+- Database migrations only add files; a migration that has run is never edited.
 
-## 3 部署
-- 正式文件只能通过候选文件、验证、用户批准、发布的流程修改。（核实 2026-10-16）
-- Kernel 自身的部署由用户执行 `deploy.ps1`；agent 不执行部署。（用户 2026-10-16）
+## 3 Deployment
+- Released files change only through candidate files, validation, the user's approval and the release.
+- The user deploys Kernel itself with `deploy.ps1`; agents never deploy.
 
-## 4 安全
-- 密钥、密码、令牌不能写进任何文档、技能、提交或聊天消息；需要时只写存放位置和名称。（用户 2026-10-16）
-- 删除数据前先归档；旧数据归档，不永久删除。（用户 2026-10-15）
+## 4 Security
+- Keys, passwords and tokens are never written into documents, skills, commits or chat messages; name only where they
+  are stored.
+- Archive data before deleting it; old data is archived, never deleted for good.
 
-## 5 变更记录
-- 2026-10-16 初稿（R1）
+## 5 Change log
+- first draft (R1)

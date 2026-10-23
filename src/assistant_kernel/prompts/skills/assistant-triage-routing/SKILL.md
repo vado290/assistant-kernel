@@ -1,41 +1,50 @@
 ---
 name: assistant-triage-routing
-description: 分诊与路由：判断用户的一条消息是闲聊、本项目的工作，还是属于另一个已有项目，并据此直接回答、开始任务或转交。
+description: Triage and routing — decide whether a user message is small talk, work for this project, or belongs to another existing project, and accordingly answer directly, start a task or hand it over.
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   load: {roles: [pm, supervisor], purposes: [triage, consult]}
   changelog:
-    - "1.0.0 2026-10-16 启用（R2），接替 assistant-butler-intake：生产上的任务全是提问，闲聊和问答不应变成交付任务"
+    - "1.1.0 2026-10-23 Written in English, the skills' source language; what the user reads follows the user's language (ROUND6, 0.46.0)"
+    - "1.0.0 2026-10-16 Enabled (R2), replacing assistant-butler-intake: in production every task was a question; small talk and Q&A should not become delivery tasks"
 ---
 
-# 分诊与路由
+# Triage and routing
 
-## 目的
-用户可能找任何一个角色说任何事。闲聊和问答不应该变成任务（任务是给需要多轮推进、有交付物的工作用的），
-属于别的项目的事应该送到对的地方，新的想法应该先商量再立项。
+## Purpose
+The user may say anything to any role. Small talk and questions should not become tasks (tasks are for work that takes
+several rounds and has a deliverable); what belongs to another project should go to the right place; new ideas are
+discussed before a project is set up.
 
-## 判断顺序
-1. **闲聊或一次性问答**：问候、问进度、问"你能做什么""有没有某个能力"、能直接回答或查一下就能回答的问题 → 直接回答，不建任务。
-   回答要具体：需要查文件、查记录就先用只读工具查，再回答。
-2. **本项目的工作**：用户要一个交付物（文档、代码、配置、方案、报告），而且与本项目章程的用途和范围相符 → 开始任务。
-   目标写成一句话，写清交付什么；原因写用户为什么要做。拿不准用户是想"聊聊"还是"开始做"时，先回答并问一句"要不要开始做？"。
-3. **属于另一个已有项目**（仅当上下文中有"项目名录"）：请求与某个项目的用途、别名或典型请求相符，且不在它"不负责"的范围内 → 转交。
-   匹配不确定时列出一两个候选项目问用户，不要硬选；本项目自己能做的事不要转交。
-4. **需要新项目**（仅 kernel）：没有项目匹配，且这是一件需要持续推进的新业务 → 先和用户讨论：用途、谁用、是不是已有项目的一部分；
-   用户确认要建时，作为本项目的任务开始，目标写"新建项目：……"。
-5. **属于公共背景的事实**（例如"以后都部署到远程主机 B"）：在 kernel 的 Supervisor 频道按 assistant-shared-context 提出更新；
-   在其他项目里，转交给 kernel，交接说明里写明"这是公共背景的更新"。
+## Order of judgement
+1. **Small talk or a one-off question**: greetings, progress questions, "what can you do", "do you have this
+   capability", anything answerable directly or after a quick look → answer directly, no task.
+   Be concrete: when files or records need checking, check them with the read-only tools first, then answer.
+2. **Work for this project**: the user wants a deliverable (document, code, configuration, plan, report) that fits the
+   purpose and scope in this project's charter → start a task. The goal is one sentence saying what is delivered; the
+   reason says why the user wants it. When you cannot tell whether the user wants to talk or to get started, answer first
+   and ask "shall I start on it?".
+3. **Belongs to another existing project** (only when the context has a project catalog): the request matches a project's
+   purpose, aliases or typical requests and is not among what it does not handle → hand it over. When the match is
+   uncertain, name one or two candidate projects and ask the user instead of forcing a choice; never hand over what this
+   project can do itself.
+4. **Needs a new project** (kernel only): no project matches and this is new work needing continuing effort → discuss it
+   with the user first: purpose, who uses it, whether it is part of an existing project; when the user confirms, start it
+   as a task of this project with the goal "New project: …".
+5. **A fact for the shared background** (for example "from now on everything deploys to remote host B"): in kernel's
+   Supervisor channel propose an update by assistant-shared-context; in other projects, hand it to kernel, saying in the
+   handoff note "this is an update to the shared background".
 
-## 交接说明的写法
+## Writing a handoff note
 ```
-用户原话：……
-我的理解：用户想要……（一两句）
-已知背景：与本次请求相关的事实
-建议先做：例如先确认……
+The user said: …
+My understanding: the user wants … (one or two sentences)
+Known background: facts relevant to this request
+Suggested first step: for example, confirm …
 ```
-对方只能看到交接说明，所以要写成独立可读的内容。
+The other project sees only the handoff note, so make it readable on its own (in the user's language).
 
-## 常见错误
-- 把"你好""在吗""现在有哪些 skill"当成任务。
-- 用户只是问某个项目的进度，却建了新任务：问进度直接回答，或转交给那个项目。
-- 为了转交而转交：本项目就能做的事不要推给别的项目。
+## Common mistakes
+- Treating "hello", "are you there", "which skills are there now" as tasks.
+- Creating a new task when the user only asked about a project's progress: answer it, or hand it to that project.
+- Handing over for its own sake: never push to another project what this project can do.

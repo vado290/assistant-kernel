@@ -1,60 +1,81 @@
 ---
 name: assistant-operation
-description: 运营健康检查清单（复盘时按需读取）：项目上线后的产物是否在正常运行——作业和服务、数据是否按时更新、产出有没有人看、用户反馈；给复盘提供"运行得怎么样"的事实。
+description: "Operating health checklist (read on demand in reviews) — whether the project's released products are running properly: jobs and services, whether data is updated on time, whether anyone uses the output, user feedback; gives the review the facts on how things are running."
 metadata:
-  version: "3.3.1"
+  version: "3.4.0"
   load: {roles: [pm], stages: [evolution], on_demand: true}
   io:
     reads: [charter, map, jobs, digest, change_stream]
     writes: []
   changelog:
-    - "3.3.1 2026-10-22 澄清作业结果、服务状态变化与资料读取时间，不把服务 last_at 当检查心跳"
-    - "3.3.0 2026-10-22 结合运行现状区分暂停、逾期与未知，检查有效版本和实际交付证据"
-    - "3.2.0 2026-10-21 按有效目录约定核对真实产出、引用及数据保留，旧项目按实际结构检查且不自动清理"
-    - "3.1.0 2026-10-21 补有效运营依据、文档产出、风险取样和失败处置交接；保持只读"
-    - "3.0.0 2026-10-17 改为复盘时按需读取的运营健康检查清单（ROUND4）：运营阶段只用于复盘，原技能实际上从未被加载"
-    - "2.1.0 2026-10-16 运营时复核定时作业和服务（ROUND3 S3）"
+    - "3.4.0 2026-10-23 Written in English, the skills' source language (ROUND6, 0.46.0)"
+    - "3.3.1 2026-10-22 Clarified job results, service state changes and the time material was read; a service's last_at is not a health-check heartbeat"
+    - "3.3.0 2026-10-22 Tell paused, overdue and unknown apart by the current state; check the version in effect and actual delivery evidence"
+    - "3.2.0 2026-10-21 Check real output, references and data retention by the folder agreements in effect; old projects are checked by their actual structure and never cleaned up automatically"
+    - "3.1.0 2026-10-21 Added the operating basis in effect, document output, risk sampling and the hand-over of failure handling; stays read-only"
+    - "3.0.0 2026-10-17 Became an operating health checklist read on demand in reviews (ROUND4): the operate stage is only used for reviews, so the old skill was never actually loaded"
+    - "2.1.0 2026-10-16 Re-check scheduled jobs and services during operation (ROUND3 S3)"
 ---
 
-# 运营健康检查
+# Operating health check
 
-## 目的
-复盘要回答两个问题：上次的改进有没有效果，以及产物本身运行得好不好。本清单回答后者。它只收集事实，结论和建议写进复盘的改进建议。
+## Purpose
+A review answers two questions: did the last improvements work, and is the product itself running well. This checklist
+answers the second. It only gathers facts; conclusions and proposals go into the review's improvement proposal.
 
-## 何时用
-项目有已发布或实际使用的产物（脚本、作业、服务、报告、文档）时，在复盘发现问题前检查其适用事项。
-纯文档检查时效、完整性、交付位置和使用情况，运行项写不适用；没有登记作业不等于没有运营对象。
-先读 Kernel 给出的发布变更入口及相应需求/设计、实施与 Review 证据，结合章程和当前产物清单确认有效约定。
-最近一次增量任务不代表整个项目；没有 Kernel 发布记录时核实人工/外部交付证据，标明来源和未知项，不补造批准。
-发布、登记、启用、执行成功和业务效果分别核对；只读收集事实，不自行补跑作业、重启/退役服务或修改业务文件。
+## When to use it
+When the project has released or actually used products (scripts, jobs, services, reports, documents), check the items
+that apply before the review looks for problems. For pure documents check timeliness, completeness, delivery location and
+use, and mark the runtime items as not applicable; no registered jobs does not mean nothing is in operation. First read
+the released change entry point Kernel gives you with the matching requirements/design, implementation and review
+evidence, and confirm the agreements in effect together with the charter and the current product list. The latest
+incremental task is not the whole project; without a Kernel release record verify manual or outside delivery evidence,
+naming sources and unknowns — never invent an approval. Release, registration, enabling, successful runs and business
+effect are checked separately; gather facts read-only — never re-run jobs, restart or retire services, or change business
+files yourself.
 
-## 检查清单（逐项，有问题就记为一个 F，写明证据）
-1. **作业**：结合登记状态、计划时间、最后运行与统计区分启用、暂停、退役、尚未到期、逾期或未知；没有运行记录不直接判故障。
-   连续失败、应运行却没有结果、耗时异常的，读 `runs/jobs/<id>/` 下最近日志，并核实实际产出。
-2. **服务**：核对登记状态、状态变化与异常提醒；`last_at` 是最后状态变化时间，不是健康检查心跳。
-   状态不变时该时间不刷新，长期稳定服务也可能为旧值或空值，不能仅据此认定检查过期或异常。
-   作业的 `last_at` 则是最后执行结果时间；材料的 `observed_at` 只是数据库资料读取时间，均不能代替实时健康证据。
-   缺少实时证据时说明尚未核实，结合已有日志/回执判断；需要时读 `runs/services/<id>.err.log` 的末尾，不补造检查时间。
-3. **数据和产出是否按时**：按章程“成功标准”的有效约定（例如"每天 9 点前的日报"），核对产出时效、完整性、位置和接收证据；
-   按产出周期、风险和最近变更选择窗口与样本，注明覆盖与局限；样本不足标待观察，不据此宣称整体正常。
-4. **有没有人用**：产出是否有人看、有人回应（频道里的用户发言、卡片操作）；长期没人用的产出，在建议里问用户是否还需要。
-5. **用户反馈**：本周用户的抱怨、修改意见、反复提到的事（运行记录里的修改和拒绝）。
-6. **地图和章程是否还对**：抽查地图里列出的关键文件是否还在、作业表是否与 jobs.yaml 一致；不一致就记为问题。
-   按 assistant-task-continuity 区分章程的长期约定、地图的当前索引和运行回执；旧项目无目录说明时核对现有配置与实际文件，
-   非标准命名或缺少说明本身不构成故障，也不以最新增量清单代替整个项目。
-   检查本次关注的产出是否到达约定位置、时效和可用性是否符合要求，引用是否仍指向有效输入；周期输出可按目录取样，
-   不要求每份输出都单独登记地图或重新发布。关注临时区误存持久数据、半成品被当成正式结果、异常增长或违反既定保留要求的残留；
-   仅记录证据与影响，不自行清理、搬迁、修改章程或替项目设定保留期限。必要修复交后续任务。
+## Checklist (item by item; each problem becomes an F with its evidence)
+1. **Jobs**: from the registered state, planned times, last run and statistics, tell enabled, paused, retired, not yet
+   due, overdue or unknown apart; no run record is not by itself a failure. For repeated failures, missing results when a
+   run was due, or unusual durations, read the latest logs under `runs/jobs/<id>/` and verify the actual output.
+2. **Services**: check the registered state, state changes and alerts; `last_at` is the time of the last state change,
+   not a health-check heartbeat. It does not refresh while the state stays the same, so a long stable service may show an
+   old or empty value — that alone does not mean a check is overdue or something is wrong. A job's `last_at` is the time of
+   its last result; the material's `observed_at` is only when the database was read — neither replaces live health
+   evidence. Without live evidence say it is not verified and judge from the logs and receipts you have; read the end of
+   `runs/services/<id>.err.log` when needed — never invent a check time.
+3. **Is data and output on time**: by the success criteria in effect in the charter (for example "the daily report before
+   9:00"), check the output's timeliness, completeness, location and evidence of receipt; choose the window and samples by
+   the output's cycle, risk and recent changes, and state coverage and limits; with too few samples mark it to be
+   observed — never claim everything is fine from it.
+4. **Does anyone use it**: whether anyone reads or responds to the output (user messages in the channels, card actions);
+   for output nobody has used for long, ask the user in the proposal whether it is still needed.
+5. **User feedback**: this week's complaints, change requests and recurring topics (changes and rejections in the run
+   records).
+6. **Are the map and charter still right**: spot-check that key files listed in the map still exist and that the job list
+   matches jobs.yaml; a mismatch is a problem. Tell the charter's long-term agreements, the map's current index and runtime
+   receipts apart by assistant-task-continuity; for old projects without folder descriptions check the existing
+   configuration against the actual files — non-standard names or missing descriptions are not failures in themselves,
+   and the latest incremental list does not stand for the whole project. Check whether the output in focus reaches the
+   agreed location with the required timeliness and usability, and whether references still point to valid inputs;
+   periodic output can be sampled by folder — not every output needs its own map entry or release. Watch for persistent
+   data saved in scratch areas, half-finished output taken as final, unusual growth or leftovers against agreed retention;
+   record only the evidence and impact — never clean up, move, change the charter or set retention periods for the project
+   yourself. Necessary fixes go to follow-up tasks.
 
-## 产出
-本清单不单独产出文档：发现的问题并入复盘的"发现的问题（F）"，证据写清来源（作业编号、日志路径、文件路径、日期）。
-没有数据时如实写"没有数据"，不要推测。
-问题交接给 Supervisor 时写清对象/版本、触发、影响、证据、已知实际效果、下一步及恢复条件。
-核实当前实际使用版本、回退/替代情况和适用窗口，不能用新规则追责旧任务；修复验证、运行恢复和业务效果分别报告。
-服务登记/退役要核对实际托管配置和进程，数据库标记不等于动作完成；Kernel 会重试已批准但未完成的服务配置，
-你只核对状态与回执，持续失败交维护者，不靠再次发布绕过未完成处置。
-需要变更产物走后续任务；发布结果不确定先核对回执和实际目标，不盲目重发或把任务取消当成副作用已撤销。
+## Output
+This checklist produces no document of its own: problems found go into the review's "problems found (F)", with the sources
+of the evidence (job id, log path, file path, date). Without data write "no data" — never guess. When handing a problem to
+the Supervisor, state the object/version, trigger, impact, evidence, the actual effect known, the next step and the
+recovery condition. Verify the version actually in use, any rollback or substitute and the applicable window — never hold
+old tasks to new rules; report fix verification, runtime recovery and business effect separately. Service registration or
+retirement is checked against the actual supervised configuration and processes — a database flag does not mean the
+action is done; Kernel retries approved but unfinished service configuration, you only check state and receipts, and
+persistent failures go to the maintainer — never work around unfinished handling by releasing again. Changes to the
+product go through follow-up tasks; when a release result is uncertain, check the receipt and the actual targets first —
+never blindly publish again or treat a cancelled task as an undone side effect.
 
-## 常见错误
-- 只看"作业成功了"就认为一切正常：作业成功不代表产出内容正确，要抽查产出。
-- 用出现次数代替风险判断：一次数据损坏、越权或关键交付失败也须处理；一般偶发波动注明影响和观察依据。
+## Common mistakes
+- Taking "the job succeeded" as "all is well": a successful job does not mean correct output — sample the output.
+- Using counts instead of risk: a single data corruption, permission breach or failed key delivery must be handled too;
+  for ordinary occasional fluctuations state the impact and the basis of observation.

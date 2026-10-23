@@ -1,35 +1,49 @@
-## 本次任务：决定下一步，并写进用户的卡片
-根据"评估原因"选择一个决定：
+## This task: decide the next step and put it on the user's card
+Choose one decision by the "reason for this evaluation":
 
-- relay_pm_questions：PM 提了问题（评估原因为 pm_questions 时必须用这个）。把 PM 的问题整理成给用户的问题；每个问题用 covers 列出它覆盖的 PM 问题 id，PM 的每个必答问题都必须被覆盖，或者在 suggested 里给出建议答案和依据。
-- ask_user：你自己需要用户澄清，才能安排下一步。
-- propose_next：安排下一轮 PM 工作。instruction 写给 PM 的完整指令；target_stage 填目标阶段（必须在"可去的阶段"里且门槛满足）。target_stage 为 release 时表示申请发布，不需要 instruction。
-  可选 track 选择流程：quick（轻量：需求文档里写简要方案，批准后直接实施，跳过设计和 Review）或 full（完整五个阶段）。
-  任务开始时判断工作量：改动小、方案明显、风险低的用 quick，其余用 full；做的过程中发现复杂了，可以提议改回 full。"可去的阶段"按当前流程计算；卡片上会提示用户流程的变化，用户点执行即确认。
-  propose_next 可以附带 inferred_intent：你推测的、用户还没说出口或没说完整的用意（最多 3 条，每条写 text 和 basis 依据；没有有依据的推测就省略）。它会单独显示在用户的卡片上，并作为"假设"交给 PM；做法见技能 assistant-goal-supervisor。
-- propose_complete：任务目标已经达成，建议结束。
-- propose_cancel：任务已无继续的意义，建议取消。
-- propose_grant：PM 需要访问本项目还没有授权的外部目录时，提议授权（directory 写路径、read/write、用途；只能在 H:\AI 下）。
-  Kernel 先检查目录，再出卡片由用户批准；批准或拒绝后会再交给你安排下一步。
-- propose_followups：把值得做的工作排成新任务（复盘中采纳的建议，ref 写它的编号如 P2，任务完成后才能复核效果；tasks 列出 1–5 个新任务，每个写 goal：一句话、能独立执行的目标；
-  reason：为什么做，例如引用改进建议的编号和现象；原因会记入迭代记录）。用户批准后这些任务
-  依次排队，当前任务随之结束。复盘任务（PM 提交了改进建议）结束时用它：只挑你认同、值得做的建议；都不值得做就用
-  propose_complete。普通任务完成时如果发现明确的后续工作，也可以用它代替 propose_complete。
+- relay_pm_questions: the PM asked questions (required when the reason is pm_questions). Turn the PM's questions into
+  questions for the user; each question lists in covers the PM question ids it covers, and every required PM question
+  must be covered or have a suggested answer with its basis in suggested.
+- ask_user: you yourself need the user to clarify something before you can arrange the next step.
+- propose_next: arrange the next PM turn. instruction is the complete instruction for the PM; target_stage is the
+  target stage (it must be among the stages it can move to, with its gate met). target_stage release means requesting
+  the release and needs no instruction.
+  Optionally choose the track with track: quick (a brief solution in the requirements document, built right after
+  approval, skipping design and review) or full (all five stages). Judge the size when the task starts: small,
+  obvious, low-risk changes take quick, everything else full; when it turns out more complex, propose switching back
+  to full. The reachable stages follow the current track; the card tells the user about a change of track, and
+  executing the card confirms it (button labels appear in the user's language).
+  propose_next may carry inferred_intent: what you infer the user means but has not said, or not completely (at most
+  3, each with text and its basis; leave it out without a well-founded inference). It is shown separately on the
+  user's card and given to the PM as assumptions; how: skill assistant-goal-supervisor.
+- propose_complete: the task's goal is reached; propose ending it.
+- propose_cancel: continuing the task no longer makes sense; propose cancelling it.
+- propose_grant: the PM needs an outside directory this project has not been granted; propose access (directory with
+  the path, read/write and the purpose; only under H:\AI). Kernel checks the directory first, then the user approves
+  it on a card; either way it comes back to you to arrange the next step.
+- propose_followups: queue work worth doing as new tasks (in a review, adopted proposals — ref is its id such as P2;
+  the effect can only be reviewed after the task is done; tasks lists 1–5 new tasks, each with goal: a one-sentence
+  goal that can be carried out on its own; reason: why, for example quoting the proposal id and what was observed;
+  the reason goes into the iteration record). Once the user approves, these tasks queue one after another and the
+  current task ends. Use it when a weekly review (the PM submitted an improvement proposal) ends: pick only proposals
+  you agree are worth doing; when none are, use propose_complete. When an ordinary task is done and clear follow-up
+  work showed up, it can also take the place of propose_complete.
 
-## 输出要求（必须遵守）
-只输出一个 JSON 对象，不要加代码块标记或其他文字：
+## Output (required)
+One JSON object only — no code fences and no other text; message, questions, options, task goals and the instruction
+for the PM in the user's language (the user sees the instruction on the card):
 
 {
   "decision": "relay_pm_questions | ask_user | propose_next | propose_complete | propose_cancel | propose_followups | propose_grant",
-  "message": "给用户看的说明",
-  "questions": [{"id": "c1", "text": "问题", "required": true, "options": ["A", "B"], "recommended": "A", "covers": ["q1"]}],
-  "suggested": {"q2": {"answer": "建议答案", "basis": "依据"}},
-  "instruction": "给 PM 的完整指令",
+  "message": "explanation for the user",
+  "questions": [{"id": "c1", "text": "question", "required": true, "options": ["A", "B"], "recommended": "A", "covers": ["q1"]}],
+  "suggested": {"q2": {"answer": "suggested answer", "basis": "basis"}},
+  "instruction": "the complete instruction for the PM",
   "target_stage": "requirements | design | build | review | release | operate",
   "track": "quick | full",
-  "inferred_intent": [{"text": "推测的用意", "basis": "依据：状态簿回合、用户原话、卡片操作或画像"}],
-  "tasks": [{"goal": "新任务目标", "reason": "为什么做", "ref": "P2"}],
-  "directory": {"path": "/home/v/AI/crypto", "access": "read", "purpose": "用途"}
+  "inferred_intent": [{"text": "the inferred intent", "basis": "basis: ledger turn, the user's words, card action or profile"}],
+  "tasks": [{"goal": "new task goal", "reason": "why", "ref": "P2"}],
+  "directory": {"path": "/home/v/AI/crypto", "access": "read", "purpose": "purpose"}
 }
 
-不用的字段可以省略。
+Unused fields may be left out.

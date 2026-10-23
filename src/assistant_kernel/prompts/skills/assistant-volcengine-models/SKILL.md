@@ -1,42 +1,46 @@
 ---
 name: assistant-volcengine-models
-description: 使用Kernel统一提供的火山方舟文本生成、图片OCR、Embedding与视频能力；模型凭据由共享Worker配置持有，不进入提示词。
+description: Use the Volcengine Ark text generation, image OCR, embedding and video capabilities Kernel provides centrally; the model credentials are held by the shared worker configuration and never enter prompts.
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
   load: {roles: [pm], stages: [requirements, design, build, review, operate], on_demand: true}
   changelog:
-    - "2026-10-16 改为按需读取（只在提示中列出名称和用途）；内容尚未按核心 v6 重写，其中的旧流程用语和输出字段一律以 assistant-project-agent 和输出要求为准"
+    - "1.2.0 2026-10-23 Written in English, the skills' source language; what the user reads follows the user's language (ROUND6, 0.46.0)"
+    - "2026-10-16 Read on demand (only name and purpose listed in the prompt); content not yet rewritten for core v6 — any old process terms and output fields in it give way to assistant-project-agent and the output requirements"
 ---
 
-# 火山模型公共能力
+# Shared Volcengine model capabilities
 
-Kernel为所有Project和Agent提供共享的火山模型能力。凭据文件属于Kernel控制面，
-不进入Project Scope、Context View、提示词或Agent Shell环境。模型调用必须通过
-Kernel Tool或确定性Worker进行，由Worker读取凭据并记录实际模型与调用结果。
+Kernel provides shared Volcengine model capabilities to every project and agent. The credential file belongs to Kernel's
+control plane and never enters a project scope, context view, prompt or an agent's shell environment. Model calls go
+through a Kernel tool or a deterministic worker, which reads the credentials and records the actual model and result.
 
-## 当前固定模型
+## Current fixed models
 
-- 普通生成与结构化文本：`doubao-seed-2-0-mini-260428`
-- 图片页OCR：`doubao-seed-2-0-mini-260428`
-- 文本向量：`doubao-embedding-vision-251215`，固定1024维
-- 视频生成预留：`doubao-seedance-2-0-fast-260128`
-- ASR预留：`Seed-ASR 2.0`，LAS资源`seedasr`
-- Rerank预留：`doubao-seed-rerank`
+- General generation and structured text: `doubao-seed-2-0-mini-260428`
+- OCR of image pages: `doubao-seed-2-0-mini-260428`
+- Text embeddings: `doubao-embedding-vision-251215`, fixed at 1024 dimensions
+- Reserved for video generation: `doubao-seedance-2-0-fast-260128`
+- Reserved for ASR: `Seed-ASR 2.0`, LAS resource `seedasr`
+- Reserved for rerank: `doubao-seed-rerank`
 
-## Agent可用工具
+## Tools agents can use
 
-1. 先调用`volcengine_model_status`确认能力是否启用；返回值只包含布尔状态和模型名，
-   不包含凭据。
-2. 普通低成本生成、抽取、分类或格式转换使用`volcengine_generate`。
-3. 已经取得HTTPS图片地址或`data:image/...`内容时，使用`volcengine_ocr`提取原文；
-   不得要求模型猜测图片中不存在的内容。
-4. Embedding、批量文档解析、ASR、Rerank和视频生成由Kernel确定性Worker/API负责，
-   Agent不得通过Shell自行拼接密钥或直接调用供应商接口。
+1. First call `volcengine_model_status` to check that a capability is enabled; it returns only booleans and model names,
+   never credentials.
+2. Use `volcengine_generate` for ordinary low-cost generation, extraction, classification or format conversion.
+3. With an HTTPS image URL or `data:image/...` content at hand, use `volcengine_ocr` to extract the text; never ask a
+   model to guess content that is not in the image.
+4. Embeddings, batch document parsing, ASR, rerank and video generation belong to Kernel's deterministic workers and APIs;
+   agents never assemble keys in a shell or call the provider's API directly.
 
-## 边界
+## Limits
 
-- 火山模型是辅助能力，不替代当前Run的Harness、Session、审批、Scope或业务状态。
-- 工具失败时报告实际错误；认证失败不得寻找、读取或要求暴露控制面凭据文件，只报告
-  对应能力未配置或被拒绝，并交由Kernel运维处理。
-- 不在回复、Artifact、日志、命令行、环境诊断或异常信息中输出任何Key、AK、SK或Token。
-- 不对同一次外部调用盲目重试；涉及视频等计费副作用时必须先核对任务ID和回执。
+- The Volcengine models are an aid; they do not replace the current run's harness, session, approvals, scope or business
+  state.
+- When a tool fails, report the actual error; on an authentication failure never look for, read or ask to reveal the
+  control-plane credential file — report only that the capability is not configured or was refused, and leave it to
+  Kernel operations.
+- Never output a key, AK, SK or token in replies, artifacts, logs, command lines, environment diagnostics or error
+  messages.
+- Never blindly retry the same external call; for billed side effects such as video, check the job id and receipt first.

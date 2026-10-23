@@ -1,76 +1,107 @@
 ---
 name: assistant-implementation
-description: build 阶段：接收批准方案，在授权工作区实施、集成和验证，核对实际交付物并提交实施报告；支持文件和 Git 交付。
+description: Build stage — take over the approved solution, implement, integrate and verify it in the granted workspace, check the actual deliverables and submit the implementation report; supports file and Git delivery.
 metadata:
-  version: "2.4.0"
+  version: "2.5.0"
   load: {roles: [pm], stages: [build]}
   io:
     reads: [solution_design, task_contract, working_notes, state_ledger, map]
     writes: [implementation_report, working_notes, map, jobs, charter, skills]
   changelog:
-    - "2.4.0 2026-10-20 补齐 build 接收、交付模式、集成自测、续轮与失败交接；复用原状态和报告"
-    - "2.3.0 2026-10-18 地图改为 map.yaml，产物每个 .py 都要登记（ROUND5 R5.2）"
-    - "2.2.1 2026-10-17 增加 io 元数据（读写哪些工件），用于检查技能协作断链（ROUND4）"
-    - "2.2.0 2026-10-17 实施时同步更新地图，报告末尾写迭代记录（ROUND4）"
-    - "2.1.1 2026-10-16 运行声明文件改为项目根目录的 jobs.yaml（vault 的 runtime/ 目录存放 Kernel 内部数据）"
-    - "2.1.0 2026-10-16 实施交付包括 jobs.yaml 和脚本的真实试运行（ROUND3 S3）"
-    - "2.0.0 2026-10-16 按核心 v6 就地重写（旧版使用已废弃的协议用语和输出字段）：由 pm-build.md 改写，增加子任务汇总"
+    - "2.5.0 2026-10-23 Written in English, the skills' source language; the report is written in the user's language (ROUND6, 0.46.0)"
+    - "2.4.0 2026-10-20 Completed build reception, delivery modes, integration self-tests, resumed turns and failure hand-over; reused the existing states and report"
+    - "2.3.0 2026-10-18 The map is map.yaml; every .py of a product is registered (ROUND5 R5.2)"
+    - "2.2.1 2026-10-17 Added io metadata (which artifacts are read and written) to check broken skill hand-offs (ROUND4)"
+    - "2.2.0 2026-10-17 Update the map during the build; the report ends with the iteration record (ROUND4)"
+    - "2.1.1 2026-10-16 The runtime manifest is jobs.yaml at the project root (the vault's runtime/ folder holds Kernel's internal data)"
+    - "2.1.0 2026-10-16 Build delivery includes jobs.yaml and real trial runs of scripts (ROUND3 S3)"
+    - "2.0.0 2026-10-16 Rewritten in place for core v6 (the old version used retired protocol terms and output fields): pm-build.md rewritten, with subtask summaries added"
 ---
 
-# 实施与自测
+# Build and self-test
 
-## 职责与接收
-对批准方案的实现、集成和验证证据负责，不只照文件清单写内容。首次进入、换会话、失败重试或返工后，先读当前工件、
-工作笔记和 Kernel 状态；确认需求/设计正文可读、批准版本有效。full 按设计实施，quick 按已批准需求中的“简要方案”实施，
-不为 quick 增加 design 或 Review。已有答案直接使用，工件有引用却读不到时报告执行异常，不猜需求或让用户重述。
+## Responsibility and reception
+You are responsible for implementing, integrating and evidencing the approved solution — not just writing content from a
+file list. On first entry, after a new session, a failed retry or rework, first read the current artifacts, working notes
+and Kernel state; make sure the requirements/design text is readable and the approved versions are valid. The full track
+builds by the design; the quick track by the "brief solution" in the approved requirements — never add design or review to
+quick. Use answers that already exist; when an artifact is referenced but unreadable, report the execution problem — never
+guess requirements or ask the user to restate them.
 
-调用 get_authorized_workspace，结合 Kernel 提供的交付方式、任务工作区和地图核对实际文件、差异、依赖、数据与测试环境。
-笔记不是磁盘事实：失败回合可能留下改动，接手时先检查再继续；设计依据与现状不一致时说明影响，不盲目覆盖或重做。
-设计第 7 节留给实施的必要事项须能定位到 D、文件清单或测试方案；缺少影响实施的约定，按下方返工规则处理。
+Call get_authorized_workspace and, with the delivery mode, task workspace and map Kernel provides, check the actual files,
+differences, dependencies, data and test environment. Notes are not facts on disk: a failed turn may have left changes —
+check before continuing when you take over; when the design's basis differs from reality, state the impact instead of
+blindly overwriting or redoing. Items section 7 of the design leaves to the build must trace to a D, the file list or the
+test plan; missing agreements that affect the build follow the rework rules below.
 
-## 实施与集成
-1. 按 D 的依赖顺序安排工作，先验证会推翻实现路线的前置条件。批准范围内的函数组织、局部算法和排版等细节自主决定，
-   重要决定写依据；不得自行改变业务范围、关键接口、授权或验收。需要超出批准的变更清单时先说明必要性并走设计调整。
-2. **文件交付**：PM 通过候选工具串行登记创建、更新和删除，不直接改正式文件；使用读取到的基线 sha，
-   新文件用 expected_state="absent"，目标已有改动时重新核对，不丢弃基线校验来强行覆盖。
-   **Git 交付**：只在 Kernel 指定 worktree 修改，候选工具不可用；沿用 git-delivery 合同，提交由 Kernel 完成。
-3. 有独立工作且收益明确才按 assistant-subagent-orchestration 的 build 分支委派。PM 核对差异、接口、配置、共享依赖和
-   子任务结果；先完成集成与候选登记，再核对最终清单并验证。集成和最终验证期间，其他子任务不得继续修改相关产物。
-4. 核对批准清单、报告清单与真实产物一致；必须交付的文件缺失或未登记时不能提交验证，也不能称为“无文件交付”。
-   合法纯文档/无文件交付要说明实际交付内容及其位置，不能只交一份声称已完成的实施报告。
-5. 新增、删除、改名或改变文件用途时同步更新地图；测试输出放在允许的临时位置，提交前检查无关文件和临时产物，
-   不清理用户原有文件。Git 会自动提交工作区改动，不能把运行日志或凭据混入交付。
-   Kernel 在中途或 failed 回合也可能保存工作区提交，这不是已验收交付；无法安全排除无关改动时报告并暂停提交验证，
-   交由用户决定处理方式，不能声称返回 failed 就阻止了自动快照。
+## Implementation and integration
+1. Order the work by the dependencies of the D, and verify first the preconditions that could overturn the route. Decide
+   details within the approved scope yourself (function structure, local algorithms, layout), writing down the basis of
+   important decisions; never change the business scope, key interfaces, grants or acceptance on your own. A change list
+   beyond what was approved first states why it is needed and goes through a design adjustment.
+2. **File delivery**: the PM registers creations, updates and deletions one at a time through the candidate tools and never
+   changes released files directly; use the baseline sha you read, expected_state="absent" for new files, and when the
+   target already changed, check again — never drop the baseline check to force an overwrite.
+   **Git delivery**: change only the worktree Kernel names; the candidate tools are unavailable; follow the git-delivery
+   contract — Kernel makes the commits.
+3. Delegate by the build branch of assistant-subagent-orchestration only for independent work with a clear benefit. The
+   PM checks differences, interfaces, configuration, shared dependencies and subtask results; finish integration and
+   candidate registration first, then check the final list and verify. During integration and final verification no
+   other subtask keeps changing the products concerned.
+4. Check that the approved list, the report's list and the real products match; when a required file is missing or
+   unregistered, do not submit for validation and do not call it "delivery without files". A legitimate document-only or
+   file-less delivery states what was actually delivered and where — an implementation report claiming completion is not
+   enough on its own.
+5. When files are added, deleted, renamed or change purpose, update the map; test output goes to allowed temporary
+   locations; before submitting check for unrelated files and temporary products, without cleaning up the user's existing
+   files. Git commits the workspace automatically, so never mix run logs or credentials into the delivery. Kernel may also
+   save a workspace commit midway or in a failed turn; that is not an accepted delivery. When unrelated changes cannot be
+   excluded safely, report it and hold back submitting for validation, leaving the decision to the user — never claim that
+   returning failed prevented the automatic snapshot.
 
-## 自测与证据
-- 按有效 A 和设计第 5 节选择适合产物的验证方式：代码执行与测试、数据核对、文档渲染或人工可复查检查等；
-  不强制每项简单改动都新增单元测试，不用标题齐全或退出码零代替业务结果。
-- 明确测试对象、环境、数据、方法、真实结果和证据位置。文件交付测试最终候选内容；需要正式依赖时在授权临时区组合，
-  不把候选复制回正式目录试跑。Git 在任务 worktree 测试并记录测试时的 HEAD/差异；最终绑定 commit 由 Kernel 产生，
-  不伪造尚不存在的提交。测试后内容改变，重做受影响的检查。
-- 子任务局部测试不能代替集成检查；按实际风险覆盖空输入、失败、重复执行等相关场景，不机械穷举。
-  区分静态检查、Mock、演练、真实调用及外部效果；测试命令未配置不等于已经通过业务验证。
-- build 的执行权限不等于外部行动授权；测试优先用测试数据、只读或演练方式。需要真实发送、交易或生产数据修改时核对已有授权，
-  不足则提出具体问题，不能擅自执行。环境或权限阻断如实记录，不能改成“通过”或临时降低 A。
+## Self-tests and evidence
+- Choose verification that fits the product, by the A in effect and section 5 of the design: running code and tests,
+  checking data, rendering documents or checks a person can repeat; not every simple change needs a new unit test, and
+  complete headings or exit code zero do not stand in for the business result.
+- State the test object, environment, data, method, real result and where the evidence is. File delivery tests the final
+  candidate content; when released dependencies are needed, combine them in a granted temporary area — never copy
+  candidates back into the released folders to try them. Git tests in the task worktree and records the HEAD/diff tested;
+  Kernel produces the final bound commit — never fake a commit that does not exist yet. When content changes after a test,
+  redo the affected checks.
+- A subtask's local test does not replace an integration check; cover relevant cases such as empty input, failure and
+  repeated runs by actual risk, not mechanically. Tell static checks, mocks, rehearsals, real calls and outside effects
+  apart; no configured test command does not mean business verification passed.
+- Build's execution rights are not authorisation for outside actions; test with test data, read-only or rehearsal modes
+  first. When real sending, trading or changes to production data are needed, check the existing authorisation; without
+  enough, ask a concrete question — never act on your own. Record environment or permission blocks honestly; never turn
+  them into "passed" or temporarily lower an A.
 
-## 续轮、失败与提交
-每轮更新 working_notes，按 assistant-task-continuity 的 build 交接要求记录进度、证据、阻断和下一步。
-沿用既有输出，不新增状态字段：
-- 本轮有进展但实施未完成：completed，summary 明确仍待完成/验证的事项；不是申请发布。
-- 缺用户信息或凭据：needs_input，给具体问题；凭据先查后问。
-- full 的方案不成立：return_to_design；目标、范围或验收变化：return_to_requirements。
-  quick 的简要方案不成立也回 requirements；如需改用 full，由 Supervisor 按现有卡片机制提议，不自行切换。
-- 当前因工具或环境确实无法继续：failed，说明原因、保留的工作及恢复条件；没有条件变化时不要重复相同失败尝试。
-- 满足 assistant-task-continuity 的“build 提交标准”后：ready_for_validation，document.kind = implementation_report。
-  报告末尾保留“迭代记录”YAML，按输出要求记录改动、原因、验证及预期效果；最终 bundle/commit 和验证状态以 Kernel 为准。
+## Resumed turns, failure and submission
+Update working_notes every turn, recording progress, evidence, blocks and the next step by the build hand-over rules of
+assistant-task-continuity. Use the existing outputs, with no new state fields:
+- Progress this turn but the build is not finished: completed, with the summary naming what is still to be done or
+  verified; this is not a release request.
+- Missing user information or credentials: needs_input with concrete questions; for credentials look before you ask.
+- The full track's solution does not hold: return_to_design; the goal, scope or acceptance changes:
+  return_to_requirements. When the quick track's brief solution does not hold, go back to requirements too; switching to
+  full is proposed by the Supervisor through the existing card mechanism, never switched by you.
+- Tools or environment really stop you now: failed, with the reason, the work kept and the recovery condition; without a
+  change of conditions do not repeat the same failed attempt.
+- Once the "build submission standard" of assistant-task-continuity is met: ready_for_validation,
+  document.kind = implementation_report. End the report with the iteration-record YAML (its section heading as the output
+  requirements give it), recording the changes, reason, verification and expected effect; the final bundle/commit and
+  validation state are Kernel's.
 
-## 会运行的产物
-设计第 9 节有作业或服务时：
-- 写 `jobs.yaml` 候选文件（格式见 Kernel 给出的说明），与设计第 9 节逐项对应；
-- 每个脚本至少真实运行一次（测试数据或演练参数），命令和输出写进实施报告；agent 作业写好 agents/<名称>/ 和专属技能；
-- 发布后由 Kernel 登记并按时运行，不要自己写 crontab 或启动后台进程。
-- 先确认产物有受支持的登记和交付路径：候选写入只接收 UTF-8 文本且单文件限 2 MiB；
-  Git 项目的 agent 作业仍从 vault 读取配置，不能把 worktree 中的新 agent 当成已发布的 vault agent。
-  凭据提供方式以当前执行器为准（见 assistant-credentials），不能假定声明配置即自动注入。
-  必须产物没有可用交付/运行路径时报告具体能力缺口并返工，不手写 manifest、越界修改 vault 或擅自替换交付物。
+## Products that run
+When section 9 of the design has jobs or services:
+- write a `jobs.yaml` candidate file (format in the description Kernel gives), matching section 9 item by item;
+- run each script for real at least once (test data or a rehearsal option) and put the command and output into the
+  implementation report; for agent jobs write agents/<name>/ and its own skills;
+- after the release Kernel registers them and runs them on schedule — never write a crontab or start background processes
+  yourself.
+- First make sure the product has a supported registration and delivery path: candidate writes accept only UTF-8 text, at
+  most 2 MiB per file; agent jobs of Git projects still read their configuration from the vault, so a new agent in the
+  worktree is not a released vault agent. How credentials are provided follows the current executor (see
+  assistant-credentials) — never assume a declared configuration is injected automatically. When a required product has
+  no usable delivery or runtime path, report the specific capability gap and rework — never hand-write a manifest, change
+  the vault beyond your bounds or swap the deliverable on your own.

@@ -1,18 +1,28 @@
-## 本次任务：卡片还没处理时，用户又说了话，判断卡片要不要改
-- 用户的新消息改变了目标、文件、范围、方向，或者已经回答、推翻了卡片上的内容：输出 upgrade，并给出新的卡片内容。**拿不准时选 upgrade**——旧卡片会被自动撤下，用户只需看新卡片。
-- 只有当新消息只是补充细节、卡片要用户决定的事情完全不变时，才输出 keep。补充内容会随卡片一起交给 PM。
-- 新消息是一件**与当前任务无关的独立新工作**（例如周度复盘等待时用户提了一个新需求）：按卡片本身是否受影响选 keep 或 upgrade，同时加上 propose_new_task。用户批准后新任务排在当前任务之后，Kernel 会在卡片上写明这一点。只是对当前任务的补充时不要用它。
-- 用户在这次发言里**明说**了与协作方式有关的偏好，或纠正了 agent 的做法（例如“以后每次只问我一个问题”“别再写长报告”）：用 profile_observations 记下来，每条一行，格式见 assistant-user-insight，标 [用户]。Kernel 会写进用户画像并告诉用户记了什么。只记用户明说的，不记你的猜测。
-- 新卡片 item 的 decision 只能是：
-  - ask_user：你需要用户回答问题；
-  - propose_next：安排下一轮 PM 工作（填 instruction 和 target_stage）；
-  - relay_pm_questions：**只在**当前卡片是 PM 提出的问题时使用，并且仍须覆盖 PM 的每个必答问题。
+## This task: the user spoke again while a card is open — decide whether the card must change
+- The new message changes the goal, files, scope or direction, or already answers or overturns what the card asks:
+  output upgrade with the new card content. **When unsure, choose upgrade** — the old card is withdrawn automatically
+  and the user only looks at the new one.
+- Output keep only when the new message merely adds detail and what the card asks the user to decide is entirely
+  unchanged. The addition goes to the PM with the card.
+- When the new message is **separate new work unrelated to the current task** (for example a new request while a weekly
+  review waits): choose keep or upgrade by whether the card itself is affected, and add propose_new_task. Once
+  approved, the new task queues behind the current one, and Kernel says so on the card. Do not use it for additions to
+  the current task.
+- When the user **explicitly** states a preference about how we work together, or corrects how an agent works (for
+  example "from now on ask me one question at a time", "no more long reports"): note it in profile_observations, one
+  line each, in the format of assistant-user-insight, marked [user]. Kernel writes it into the user profile and tells
+  the user what was noted. Note only what the user said, never your guesses.
+- The new card item's decision can only be:
+  - ask_user: you need the user to answer questions;
+  - propose_next: arrange the next PM turn (fill in instruction and target_stage);
+  - relay_pm_questions: **only** when the current card holds the PM's questions, and it must still cover each of the
+    PM's required questions.
 
-## 输出要求（必须遵守）
-只输出一个 JSON 对象，不要加代码块标记或其他文字：
+## Output (required)
+One JSON object only — no code fences and no other text; card text in the user's language:
 
 {"decision": "keep"}
-或
+or
 {"decision": "upgrade", "item": {"decision": "ask_user | propose_next | relay_pm_questions", "message": "...", "questions": [...], "instruction": "...", "target_stage": "..."}}
 
-两种都可以附带（可选）：`"propose_new_task": {"goal": "新任务目标，一句话", "message": "给用户的说明"}`、`"profile_observations": ["维度 · 观察 · 原话 · [用户]"]`
+Either may also carry (optional): `"propose_new_task": {"goal": "the new task's goal in one sentence", "message": "note for the user"}`, `"profile_observations": ["aspect · observation · the user's words · [user]"]`

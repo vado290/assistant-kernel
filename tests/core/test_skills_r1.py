@@ -52,17 +52,17 @@ def shared(kernel_settings):
 
 def test_each_turn_loads_matching_skills_and_shared_context(kernel_settings, project_files, shared):
     requirements = load_agent(kernel_settings, "p1", "pm", stage="requirements")
-    assert "技能 assistant-requirements" in requirements.skills_text
-    assert "技能 assistant-implementation" not in requirements.skills_text
-    assert "assistant-history-retrieval" not in requirements.skills_text.split("## 公共背景")[0]   # Codex lists it
-    assert "你的工作目录是 `agents/pm`" in requirements.skills_text
+    assert "Skill assistant-requirements" in requirements.skills_text
+    assert "Skill assistant-implementation" not in requirements.skills_text
+    assert "assistant-history-retrieval" not in requirements.skills_text.split("## Shared background")[0]   # Codex lists it
+    assert "Your working directory is `agents/pm`" in requirements.skills_text
     in_worktree = load_agent(kernel_settings, "p1", "pm", stage="requirements", native=False)
-    assert "assistant-history-retrieval：" in in_worktree.skills_text          # no native discovery: Kernel lists it
-    assert "路径说明" not in in_worktree.skills_text
-    assert "公共背景 · 组织与用户" in requirements.skills_text
-    assert "公共背景 · 技术环境" not in requirements.skills_text               # environment is for design onwards
+    assert "assistant-history-retrieval:" in in_worktree.skills_text          # no native discovery: Kernel lists it
+    assert "## Paths" not in in_worktree.skills_text
+    assert "Shared background · Organisation and user" in requirements.skills_text
+    assert "Shared background · Technical environment" not in requirements.skills_text               # environment is for design onwards
     build = load_agent(kernel_settings, "p1", "pm", stage="build")
-    assert "公共背景 · 技术环境" in build.skills_text and "公共背景 · 工作约定" in build.skills_text
+    assert "Shared background · Technical environment" in build.skills_text and "Shared background · Working conventions" in build.skills_text
     assert "assistant-shared-context" not in " ".join(build.skill_labels)       # needs the shared_context capability
     assert requirements.config_sha256 != build.config_sha256
 
@@ -91,7 +91,7 @@ async def test_approved_background_is_archived_into_background_md_once(kernel, k
     assert (await sync_vaults(kernel, kernel_settings))["archived"] == 1
     assert (await sync_vaults(kernel, kernel_settings))["archived"] == 0
     text = (project_files / "knowledge" / "background.md").read_text("utf-8")
-    assert text.count("公司做连锁零售") == 1 and "（任务 " in text and text.startswith("# 背景信息存档")
+    assert text.count("公司做连锁零售") == 1 and "(task " in text and text.startswith("# Background archive")
     assert charter.read_text("utf-8") == "# 章程\n\n## 1 项目用途\n日报\n"            # the charter file is left alone
 
 
@@ -105,7 +105,7 @@ async def test_shared_update_card_then_write(kernel, sim, kernel_settings, share
     item = await sim.item("p1")
     assert item["content"]["decision"] == "shared_update"
     shown = render.render_item(item)["text"]
-    assert "现在的内容" in shown and "prod-1" in shown and "environment.md" in shown
+    assert "Current content" in shown and "prod-1" in shown and "environment.md" in shown
     await kernel.act("p1", item["item_id"], "approve")
     assert (await sync_vaults(kernel, kernel_settings))["shared"] == 1
     assert (await sync_vaults(kernel, kernel_settings))["shared"] == 0
@@ -114,7 +114,7 @@ async def test_shared_update_card_then_write(kernel, sim, kernel_settings, share
     record = (await kernel.iterations("p1"))[0]                             # the reason is in the stream
     assert record["kind"] == "shared_context" and record["reason"] == "用户在 Supervisor 频道说明"
     notices = [m["body"]["text"] for m in await sim.outbound("p1")]
-    assert any("公共背景已更新" in n for n in notices)
+    assert any("Shared background updated" in n for n in notices)
 
 
 async def test_shared_update_needs_the_capability(kernel, sim, shared):

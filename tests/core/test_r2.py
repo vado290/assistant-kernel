@@ -64,7 +64,7 @@ async def test_route_hands_over_to_the_other_supervisor(triaging):
     await sim.drain()
     assert await tasks(kernel) == []
     note, answer = await outbound(kernel, "p2")
-    assert note["body"]["text"].startswith("📨 来自 p1 的转交") and answer["body"]["text"].startswith("收到转交")
+    assert note["body"]["text"].startswith("📨 Handed over from p1:") and answer["body"]["text"].startswith("收到转交")
     reply = (await outbound(kernel, "p1"))[-1]
     assert reply["body"]["link_message"] == str(note["message_id"])
 
@@ -80,7 +80,7 @@ async def test_route_needs_the_capability_and_a_real_target(triaging):
     sim.script("triage", *bad)
     await sim.drain()
     assert await tasks(kernel) == [] and await outbound(kernel, "p2") == []
-    assert "暂时无法处理" in (await outbound(kernel, "p1"))[-1]["body"]["text"]
+    assert "cannot be handled right now" in (await outbound(kernel, "p1"))[-1]["body"]["text"]
 
 
 async def test_consult_can_route_too(triaging):
@@ -110,8 +110,8 @@ async def test_triage_prompt_has_catalog_and_contract(kernel_settings, project_f
     fake_harness.script("triage", {"decision": "chat", "reply": "我去问问"})
     await settle(d)
     prompt = fake_harness.calls[-1].prompt
-    assert "PM 分诊" in prompt and "项目 `p2`" in prompt and "交易机器人" in prompt and "route" in prompt
-    assert "技能 assistant-triage-routing" in prompt and "技能 assistant-requirements" not in prompt
+    assert "PM triage" in prompt and "Project `p2`" in prompt and "交易机器人" in prompt and "route" in prompt
+    assert "Skill assistant-triage-routing" in prompt and "Skill assistant-requirements" not in prompt
 
 
 def test_quick_track_rules():

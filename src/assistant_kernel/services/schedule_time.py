@@ -65,6 +65,7 @@ def preview(rule, zone='Asia/Shanghai', *, after=None, count=5):
         times.append({'utc': cursor.isoformat(), 'local': cursor.astimezone(ZoneInfo(zone)).isoformat()})
     if not times:
         raise ValueError('The schedule has no future occurrence; choose a new time')
-    descriptions = {'once': '指定时间执行一次', 'interval': '按固定起点与秒数间隔执行', 'cron': '按本地日历规则执行；日期与星期均受限时采用 OR'}
+    descriptions = {'once': 'runs once at the given time', 'interval': 'runs at a fixed start and interval in seconds',
+                    'cron': 'runs by a local calendar rule; when both day of month and weekday are restricted, either matches'}
     return {'timezone': zone, 'rule': rule, 'as_of': after.isoformat(), 'times': times,
             'description': descriptions[rule['kind']], 'misfire_policy': 'skip', 'overlap_policy': 'skip'}

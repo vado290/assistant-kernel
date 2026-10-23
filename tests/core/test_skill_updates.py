@@ -446,7 +446,7 @@ async def test_unknown_edit_during_interruption_stays_in_reconciliation(kernel, 
     assert (await su.recover(kernel, row['update_id']))['status'] == 'reconciling'
     assert trees(kernel, release) == changed
     messages = [m for m in await sim.outbound('p1') if str(row['update_id']) in m['body']['text']]
-    assert len(messages) == 1 and '维护者' in messages[0]['body']['text']
+    assert len(messages) == 1 and 'maintainer' in messages[0]['body']['text']
     await su.recover(kernel, row['update_id'])
     assert len([m for m in await sim.outbound('p1') if str(row['update_id']) in m['body']['text']]) == 1
 

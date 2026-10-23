@@ -25,7 +25,7 @@ async def test_supervisor_questions_and_answers_reach_the_ledger(kernel, sim):
     await kernel.act("p1", item["item_id"], "submit", {"answers": {"q1": "门店经理和区域经理"}})
     await execute_next(kernel, sim, task_id, "requirements")
     text = await ledger_text(kernel, sim, task_id)
-    assert "Supervisor 提问（已回答）" in text and "问：日报发给谁？ → 答：门店经理和区域经理" in text
+    assert "asked by the Supervisor (answered)" in text and "Q: 日报发给谁？ → A: 门店经理和区域经理" in text
 
 
 async def test_pm_questions_are_listed_once(kernel, sim):
@@ -40,8 +40,8 @@ async def test_pm_questions_are_listed_once(kernel, sim):
     sim.script("supervisor:evaluate", next_step("requirements"))
     await sim.drain()
     text = await ledger_text(kernel, sim, task_id)
-    assert "PM 提问，经 Supervisor 转述（已回答）" in text and text.count("Markdown") == 1
-    assert "用户回答：" not in text and "PM 提出了 1 个问题" in text
+    assert "asked by the PM, relayed by the Supervisor (answered)" in text and text.count("Markdown") == 1
+    assert "User answered:" not in text and "The PM asked 1 questions" in text
 
 
 async def test_unanswered_questions_say_why(kernel, sim):
@@ -56,10 +56,10 @@ async def test_unanswered_questions_say_why(kernel, sim):
     second = await sim.item("p1", task_id)
     assert second["item_id"] != first["item_id"]
     text = await ledger_text(kernel, sim, task_id)
-    assert "（已被新卡片替换）" in text and "（等待回答）" in text
+    assert "(replaced by a newer card)" in text and "(waiting for an answer)" in text
     await kernel.act("p1", second["item_id"], "revise", {"text": "先只做汇总表"})
     text = await ledger_text(kernel, sim, task_id)
-    assert "未回答：用户改为提出修改「先只做汇总表」" in text
+    assert 'not answered: the user asked for a change instead "先只做汇总表"' in text
 
 
 def test_tasks_without_card_records_render_as_before():
@@ -70,4 +70,4 @@ def test_tasks_without_card_records_render_as_before():
             "result": {"outcome": "completed", "summary": "好"}, "created_at": datetime.now(timezone.utc),
             "supplements": []}
     text = render_state(task, {"turns": [turn], "actions": []}, STAGE_NAMES)
-    assert "用户回答：格式？ → 表格" in text and "卡片问答" not in text
+    assert "User answered: 格式？ → 表格" in text and "Card questions" not in text

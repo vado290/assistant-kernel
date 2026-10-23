@@ -1,82 +1,103 @@
 ---
 name: assistant-domain-research
-description: 行业调研（通常由"行业调研"子 agent 执行）：按固定维度联网收集用户所在行业、地区和企业规模的关键情况，写成行业速写、候选问题库和候选需求清单，作为需求提问的基础。
+description: Industry research (usually done by an industry-research subagent) — collect online, along fixed dimensions, the key facts of the user's industry, region and company size, and write them up as an industry brief, a question bank and a list of candidate requirements to base the requirements questions on.
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
   load: {roles: [pm], stages: [requirements, design], on_demand: true}
   io:
     reads: [charter, user_profile, domain_brief]
-    writes: [domain_brief]  # 此索引写项属于 requirements；design 只返回证据，由 PM 写设计文档
+    writes: [domain_brief]  # this write belongs to requirements; design only returns evidence and the PM writes the design document
   changelog:
-    - "1.1.0 2026-10-20 增加仅 design 使用的定向调查分支：返回证据，由 PM 写设计，不编辑 domain_brief"
-    - "1.0.2 2026-10-19 按标题引用章程各节（各项目章程的节号不同）（记忆机制改进，0.45.5）"
-    - "1.0.1 2026-10-17 增加 io 元数据（读写哪些工件），用于检查技能协作断链（ROUND4）"
-    - "1.0.0 2026-10-16 首版（ROUND3 S2）：先调研再提问，用固定维度快速定位、缩小需求范围；结果随需求批准存档复用"
+    - "1.2.0 2026-10-23 Written in English, the skills' source language; the brief is written in the user's language (ROUND6, 0.46.0)"
+    - "1.1.0 2026-10-20 Added a targeted-investigation branch for design only: it returns evidence, the PM writes the design, domain_brief is not edited"
+    - "1.0.2 2026-10-19 Charter sections are referred to by heading (section numbers differ between projects' charters) (memory improvement, 0.45.5)"
+    - "1.0.1 2026-10-17 Added io metadata (which artifacts are read and written) to check broken skill hand-offs (ROUND4)"
+    - "1.0.0 2026-10-16 First version (ROUND3 S2): research before asking, use fixed dimensions to locate quickly and narrow the requirements; the result is archived with the approved requirements for reuse"
 ---
 
-# 行业调研
+# Industry research
 
-## design 阶段的定向调查
-仅在当前阶段为 design 时使用本节，替代下方行业调研的触发、步骤和写入方式；其他阶段继续按原规则执行。
-从已批准需求和当前设计问题出发，查明会影响方案选择或成立的事实，适用于个人、内容、研究、软件及运营等任务。
-不因缺少行业速写就重做完整行业调研，不强套企业规模或固定检索维度；只调查当前决策需要的内容。
+## Targeted investigation in the design stage
+Use this section only when the current stage is design; it replaces the triggers, steps and writing of the industry
+research below; other stages follow the original rules. Starting from the approved requirements and the current design
+question, establish the facts that affect whether and how a solution works — for personal, content, research, software and
+operating tasks alike. Do not redo a full industry study because there is no brief, and do not force company size or fixed
+search dimensions; investigate only what the current decision needs.
 
-- 输入：PM 给出的具体问题、相关 R/A/D、有效约束、资料路径和可用权限；章程按章节标题定位，不依赖节号。
-- 证据：优先查实际接口/服务的官方资料、已有实现和适用样例；必要时在当前授权内作只读验证。
-  复用仍适用的旧结论，费用、访问条件、接口能力等易变关键事实重新核查，不能以速写未满 180 天代替验证。
-- 输出：直接结论、证据出处与日期、适用范围和限制、尚未查清的事项及其影响、需要 PM 或用户决定的问题。
-  分清文档声明、样例和真实调用各自能证明什么；不能访问或缺少权限时如实说明，不扩大授权或执行外部变更。
-- 交接：design 调研只返回结果，不编辑 domain_brief 或其他任务文档；PM 核对后写入 solution_design，
-  未完成事项写入 working_notes。若结论要求改变需求，由 PM 提议 return_to_requirements。
+- Input: the specific question from the PM, the relevant R/A/D, the constraints in effect, paths to material and the
+  permissions available; charter sections are located by heading, not by number.
+- Evidence: prefer official documentation of the actual interface or service, existing implementations and applicable
+  samples; verify read-only within the current grants when needed. Reuse old conclusions that still apply; re-check
+  volatile key facts such as costs, access conditions and interface capabilities — a brief younger than 180 days does not
+  replace verification.
+- Output: direct conclusions, sources of evidence with dates, scope and limits, what is still unclear and its impact,
+  questions the PM or the user must decide. Distinguish what documentation claims, samples and real calls can each prove;
+  when you cannot access something or lack permission, say so — never widen grants or make outside changes.
+- Hand-over: design research only returns results and edits neither domain_brief nor any other task document; the PM
+  checks them and writes them into solution_design, with unfinished items in working_notes. When a conclusion requires
+  changing the requirements, the PM proposes return_to_requirements.
 
-## 目的
-用户往往只说出一个症状。先了解用户所在行业的常见做法、约束和痛点，提问才能问在点上，也能主动补充用户没想到的需求。
-调研结果是**提问的基础**，不是需求本身：用户的话永远优先。
+## Purpose
+Users often name only a symptom. Knowing the common practices, constraints and pain points of the user's industry first
+makes the questions hit the point and lets you add requirements the user had not thought of. The research is **the basis
+for questions**, not the requirements themselves: the user's words always win.
 
-## 什么时候调研
-满足任一条件就调研；都不满足就直接使用现有的行业速写，不重复调研：
-- 项目还没有 `knowledge/domain-brief.md`；
-- 现有速写超过 180 天；
-- 本任务涉及的行业、地区、企业规模或业务领域与现有速写的定位参数不同。
+## When to research
+Research when any of these holds; otherwise use the existing industry brief directly, without researching again:
+- the project has no `knowledge/domain-brief.md` yet;
+- the existing brief is older than 180 days;
+- the industry, region, company size or business area of this task differs from the existing brief's locating
+  parameters.
 
-## 第一步：确定定位参数
-从章程的"组织与行业背景"和"背景信息存档"两节、用户画像、公共背景中读出以下参数；缺的项先按最可能的情况假设，标 `[推断]`，并把它列进候选问题库第 1 组：
+## Step 1: settle the locating parameters
+Read these parameters from the charter's "Organisation and industry background" and "Background archive" sections (by
+heading, in whatever language the charter is written), the user profile and the shared background; assume the most likely
+value for missing ones, mark it `[inferred]`, and put it into group 1 of the question bank:
 
-| 参数 | 例子 |
+| Parameter | Examples |
 |---|---|
-| 行业与细分领域 | 零售 · 连锁便利店；制造 · 汽车零部件 |
-| 地区 | 国家、省市（决定监管和习惯） |
-| 语言 | 用户和最终使用者的语言、行业用语 |
-| 企业规模 | 微型（<10 人）/ 小型（10–99）/ 中型（100–999）/ 大型（≥1000） |
-| 业务模式 | 面向企业 / 面向个人 / 内部管理 |
-| 用户角色 | 老板、业务负责人、一线人员、技术人员 |
+| Industry and niche | retail · convenience store chain; manufacturing · automotive parts |
+| Region | country, province or city (decides regulation and habits) |
+| Language | the language of the user and the end users, industry terms |
+| Company size | micro (<10 people) / small (10–99) / medium (100–999) / large (≥1000) |
+| Business model | business-to-business / business-to-consumer / internal management |
+| User's role | owner, business lead, front-line staff, technical staff |
 
-## 第二步：按固定维度检索
-用联网搜索，每个维度找 2–3 个来源，优先：政府和监管机构、行业协会、上市公司公告和年报、权威研究机构；其次是主流媒体和专业社区。
-只用最近两年的资料，除非是长期有效的规范。中文和英文关键词都试一下。查不到就写"未查到"，**绝不编造**。
+## Step 2: search along fixed dimensions
+Search online, 2–3 sources per dimension, preferring government and regulators, industry associations, listed companies'
+announcements and annual reports, authoritative research institutes; then mainstream media and professional communities.
+Use only material from the last two years unless it is a long-standing rule. Try keywords in English and in the user's
+language. When nothing is found write "not found" — **never invent**.
 
-| 维度 | 要回答的问题 |
+| Dimension | Questions to answer |
 |---|---|
-| 1 行业现状与趋势 | 市场规模和增长、主要参与者、最近两年的变化 |
-| 2 典型业务流程 | 这类企业的核心流程、常见角色、关键单据和数据 |
-| 3 指标与术语 | 行业常用的经营指标和术语（提问时用用户的行话） |
-| 4 监管与合规（按地区） | 适用的法规、许可、数据和隐私要求、近期政策变化 |
-| 5 工具与竞品 | 同类企业常用的软件和服务、典型做法 |
-| 6 常见痛点与机会 | 这类企业最常抱怨的问题、自动化和数字化的常见切入点 |
-| 7 规模差异 | 不同规模的企业在做法、预算、人手上的区别 |
-| 8 语言与本地化 | 用语、格式（日期、货币、单位）、使用习惯 |
+| 1 State and trends | market size and growth, main players, changes in the last two years |
+| 2 Typical business processes | core processes of such companies, common roles, key documents and data |
+| 3 Metrics and terms | the industry's usual operating metrics and terms (ask in the user's jargon) |
+| 4 Regulation and compliance (by region) | applicable laws, licences, data and privacy requirements, recent policy changes |
+| 5 Tools and competitors | software and services such companies commonly use, typical practices |
+| 6 Common pain points and opportunities | what such companies complain about most, common entry points for automation and digitisation |
+| 7 Differences by size | how companies of different sizes differ in practice, budget and staff |
+| 8 Language and localisation | terms, formats (date, currency, units), usage habits |
 
-## 第三步：写成行业速写（domain_brief）
-用 `edit_task_document(kind="domain_brief", content=...)` 写入，固定章节：
-0 定位参数与有效期（写明调研日期，有效期 180 天）· 1 行业速写（一页以内的要点）· 2 业务流程与术语 · 3 监管合规要点 ·
-4 工具与竞品 · 5 痛点与机会 · 6 规模差异 · 7 候选问题库 · 8 候选需求清单 · 9 来源
+## Step 3: write the industry brief (domain_brief)
+Write it with `edit_task_document(kind="domain_brief", content=...)`, in the user's language, with fixed sections:
+0 locating parameters and validity (state the research date; valid for 180 days) · 1 industry brief (key points within one
+page) · 2 business processes and terms · 3 regulation and compliance · 4 tools and competitors · 5 pain points and
+opportunities · 6 differences by size · 7 question bank · 8 candidate requirements · 9 sources
 
-- **7 候选问题库**：按"定位 → 细化 → 取舍"分组，每题写：问题、为什么问（会影响什么）、2–5 个选项、建议答案及依据。
-  按用户的地区、语言和规模选用措辞；已知答案的不要列。
-- **8 候选需求清单**：3–8 条用户可能需要的需求，标 `[建议]`，写依据（来自哪个维度、哪个来源）。
-- **9 来源**：标题 · 网址 · 发布或访问日期 · 可信度（官方 / 行业 / 媒体 / 社区）。正文中的事实标 `[调查:来源编号]`。
+- **7 Question bank**: grouped as "locate → refine → trade-off"; each question with the question, why ask (what it
+  affects), 2–5 options, a suggested answer and its basis. Word it for the user's region, language and size; leave out
+  questions whose answers are known.
+- **8 Candidate requirements**: 3–8 requirements the user may need, marked `[suggested]`, with their basis (which
+  dimension and source).
+- **9 Sources**: title · URL · published or accessed date · credibility (official / industry / media / community). Facts
+  in the text are marked `[research:source number]`.
 
-## 使用纪律
-- 速写是背景，不是结论：与用户的话冲突时以用户为准，并在需求文档"已澄清的矛盾"中记录。
-- 不要把整份速写贴给用户；从候选问题库挑最关键的问题，按 assistant-user-questions 组成卡片。
-- 子 agent 完成后，PM 抽查关键来源，确认没有张冠李戴，再使用。
+## Discipline
+- The brief is background, not a conclusion: where it conflicts with the user's words the user wins, recorded in the
+  requirements document under resolved contradictions.
+- Never paste the whole brief to the user; pick the key questions from the question bank and build cards by
+  assistant-user-questions.
+- When a subagent has finished, the PM spot-checks the key sources to make sure nothing is attributed wrongly before using
+  it.

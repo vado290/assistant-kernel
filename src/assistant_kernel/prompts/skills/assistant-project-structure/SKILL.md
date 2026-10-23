@@ -1,49 +1,68 @@
 ---
 name: assistant-project-structure
-description: design/build 涉及新增资源或结构调整时，区分系统固定位置与项目业务目录，确定工作区、正式目标和必要配套；普通内容编辑不使用。
+description: When design/build adds resources or restructures, tell system-fixed locations from the project's business folders and settle the workspace, the released target and the necessary companions; not for ordinary content edits.
 metadata:
-  version: "1.2.0"
+  version: "1.3.0"
   load: {roles: [pm], stages: [design, build], on_demand: true}
   changelog:
-    - "1.2.0 2026-10-21 统一两种交付模式与目录职责，修正旧运行及失败表述；不迁移旧目录"
-    - "1.1.1 2026-10-18 技能改为每个 agent 一个平级目录 agents/<agent>/.agents/skills/（ROUND5 R5.1）"
-    - "2026-10-16 改为按需读取（只在提示中列出名称和用途）；内容尚未按核心 v6 重写，其中的旧流程用语和输出字段一律以 assistant-project-agent 和输出要求为准"
+    - "1.3.0 2026-10-23 Written in English, the skills' source language (ROUND6, 0.46.0)"
+    - "1.2.0 2026-10-21 Unified the two delivery modes and folder responsibilities, corrected old wording on runs and failures; old folders are not migrated"
+    - "1.1.1 2026-10-18 Skills moved to one flat folder per agent, agents/<agent>/.agents/skills/ (ROUND5 R5.1)"
+    - "2026-10-16 Read on demand (only name and purpose listed in the prompt); content not yet rewritten for core v6 — any old process terms and output fields in it give way to assistant-project-agent and the output requirements"
 ---
 
-# Project资源结构
+# Project resource structure
 
-## 任务目标
+## Goal
 
-为本次需要的资源确定可交付、可使用的位置。先沿用项目现有约定和框架结构，无约定时才选默认位置；
-不扫描其他项目、不强制套 product/、不制造空目录，也不因旧命名与推荐不同而迁移。
-Kernel 的 `resource_guide` 说明资源位置和系统限制；本技能不替代 Agent、MCP 或运行方式专项技能。
+Settle deliverable, usable locations for the resources this task needs. Follow the project's existing conventions and
+framework structure first; choose a default location only without one. Do not scan other projects, do not force a
+product/ folder, do not create empty folders, and do not migrate just because an old name differs from the
+recommendation. Kernel's `resource_guide` describes resource locations and system limits; this skill does not replace the
+agent, MCP or runtime skills.
 
-## 使用方法
+## How to use it
 
-结构性任务调用 `get_authorized_workspace(include_resource_guide=true)`，核对交付模式、授权根、地图和实际同类文件。
-章程中的长期约定与具体交接按 assistant-task-continuity；计划位置不是已经存在的事实。
-没有新式目录说明不单独阻塞旧项目；仅冲突影响本次交付时查明原因，需要用户取舍用 needs_input，工具或布局能力阻断用 failed，
-必须改变批准需求/方案时按当前阶段的既有返工出口处理。目录说明不扩大权限，也不表示资源已经发布或可以执行。
+For structural tasks call `get_authorized_workspace(include_resource_guide=true)` and check the delivery mode, granted
+roots, the map and the actual files of the same kind. Long-term agreements in the charter and concrete hand-overs follow
+assistant-task-continuity; a planned location is not an existing fact. A missing new-style folder description does not by
+itself block an old project; only when a conflict affects this delivery, find out why — use needs_input when the user must
+choose, failed when tools or layout capabilities block, and the current stage's usual rework exit when the approved
+requirements or solution must change. Folder descriptions do not widen permissions and do not mean a resource is released
+or executable.
 
-### 工作区与正式目标
-- 文件交付：正式目标为 `workspace://<root-key>/<相对路径>`；build 通过候选工具登记，候选区不是正式输出位置。
-- Git 交付：build 只修改 Kernel 指定的 worktree，正式代码位置由 `project.yaml` 的 repository 决定；不另套一份 vault 业务目录。
-  项目管理 agent 和其技能、章程仍在 vault；不能把仓库中的同名路径当成这些资源已更新，也不能越界补写 vault。
-- 外部目录沿用已有授权根并写明对应关系，不因本规范复制或扩展授权。相对路径须注明相对 vault、仓库还是授权根。
-- design 只在设计工件中说明目标和必要配套；build 才在本次批准范围和交付能力内实施。
+### Workspace and released target
+- File delivery: the released target is `workspace://<root-key>/<relative path>`; build registers it through the
+  candidate tools; the candidate area is not a released output location.
+- Git delivery: build changes only the worktree Kernel names; the released code location is set by repository in
+  `project.yaml`; no second copy of business folders in the vault. The project's managing agents, their skills and the
+  charter stay in the vault; a same-named path in the repository does not mean those resources were updated, and the vault
+  is not written from outside its bounds.
+- Outside directories use their existing granted roots with the mapping stated; this guide neither copies nor widens
+  grants. A relative path says whether it is relative to the vault, the repository or a granted root.
+- design only states targets and necessary companions in the design artifact; build implements them within this task's
+  approved scope and delivery capabilities.
 
-### 系统资源与业务目录
-当前 v2 的系统资源位置：
+### System resources and business folders
+Current v2 system resource locations:
 
-- Kernel 加载的 Agent：vault 的 `agents/<agent-id>/config.yaml` 与 `role.md`；引用资源须已可用或有本次支持的交付路径。
-- Skill：放在使用它的 agent 自己的目录 `agents/<agent>/.agents/skills/<skill>/SKILL.md`（多个 agent 用就各放一份）；项目根目录和 `agents/` 这一级不放 `.agents/skills`；只在需要时添加`scripts/`、`references/`、`templates/`或`evals/`。
-- MCP：`mcp/<server-id>/mcp-manifest.yaml`和实际入口；同步更新受影响Agent的enabled tools。
-- 运行声明：文件交付在 vault 根目录、Git 交付在仓库根目录的 `jobs.yaml`；发布后由 Kernel 同步，登记与实际运行分开核实。
-  `workflows/`、`services/`、历史 `schedules/` 文件本身不触发执行，不要求旧项目删除它们；运营 agent 不负责登记启用。
-- `runs/`与`runtime/`由Kernel生成，不作为人工正式资源模板。
+- Agents Kernel loads: the vault's `agents/<agent-id>/config.yaml` and `role.md`; resources they reference must be usable
+  or have a delivery path supported in this task.
+- Skills: in the folder of the agent that uses them, `agents/<agent>/.agents/skills/<skill>/SKILL.md` (one copy per agent
+  that uses it); no `.agents/skills` at the project root or at the `agents/` level; add `scripts/`, `references/`,
+  `templates/` or `evals/` only when needed.
+- MCP: `mcp/<server-id>/mcp-manifest.yaml` and the actual entry point; update the enabled tools of the affected agents too.
+- Runtime manifest: `jobs.yaml` at the vault root for file delivery, at the repository root for git delivery; Kernel syncs
+  it after the release, and registration and actual runs are verified separately. `workflows/`, `services/` and historical
+  `schedules/` files trigger nothing by themselves; old projects need not delete them; operating agents do not register or
+  enable anything.
+- `runs/` and `runtime/` are generated by Kernel and are not templates for hand-made released resources.
 
-没有既有约定时，业务源码/内容可用 `src/` 或 `content/`，共享脚本可用 `scripts/`，Schema 可用 `schemas/`，
-持久数据可用 `data/`，面向用户的交付可用 `artifacts/`；只建本次需要的目录。Skill 专用脚本仍放该 Skill 的 `scripts/`。
-运行数据、静态交付和临时材料按用途区分，不按目录名判断批准状态；具体运行边界见 assistant-workflow-design。
-目录移动涉及入口、引用、数据或消费者时，把影响、验证和回退写进原设计/实施章节，不新增目录审批环节。
-普通 direct 授权根仍按现有交付规则处理；本技能不改变读写权限、候选发布方式或审批机制。
+Without an existing convention, business source or content may use `src/` or `content/`, shared scripts `scripts/`,
+schemas `schemas/`, persistent data `data/`, deliverables for the user `artifacts/`; create only the folders this task
+needs. A skill's own scripts still go in that skill's `scripts/`. Keep runtime data, static deliverables and temporary
+material apart by purpose, and never judge approval status by folder name; runtime boundaries are in
+assistant-workflow-design. When moving folders affects entry points, references, data or consumers, write the impact,
+verification and rollback into the existing design/implementation sections — no extra folder-approval step. Ordinary
+direct granted roots follow the existing delivery rules; this skill changes no read/write permissions, candidate release
+method or approval mechanism.

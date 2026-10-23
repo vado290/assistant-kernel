@@ -1,118 +1,157 @@
 ---
 name: assistant-capability-maintenance
-description: 编写和修改技能（以及 agent 的 config.yaml）的规范：技能的固定结构、写法原则、模板与项目副本的关系和修改流程。提出或实施技能改进时使用。
+description: Rules for writing and changing skills (and agents' config.yaml) — a skill's fixed structure, writing principles, how templates relate to project copies, and the change process. Use when proposing or implementing skill improvements.
 metadata:
-  version: "2.6.0"
+  version: "2.7.0"
   load: {roles: [pm], stages: [build, evolution]}
   io:
     reads: [improvement_proposal, skills]
-    writes: [skills]  # 仅获批 build 的写项；evolution 只写改进建议
+    writes: [skills]  # written only in an approved build; evolution only writes the improvement proposal
   changelog:
-    - "2.6.0 2026-10-22 恢复 D24：没改过的副本随 Kernel 版本自动更新；技能采用批次只用于改过的副本等特殊情况（0.45.11）"
-    - "2.5.0 2026-10-22 补仅 evolution 的自身 skills/roles/加载审查与获批变更交接"
-    - "2.4.0 2026-10-21 技能采用按固定批次、完整目录与项目策略核对；受阻和效果沿既有任务/复盘交接"
-    - "2.3.0 2026-10-19 模板更新改为按 ROUND5 D20 的实际做法描述；增加 agent 配置（config.yaml）的有效字段和工具名规则（0.45.3）"
-    - "2.2.0 2026-10-18 技能改为每个 agent 一个平级目录 agents/<agent>/.agents/skills/（ROUND5 R5.1）"
-    - "2.1.0 2026-10-17 固定结构增加 io 元数据和'交接'一节；技能之间只通过工件协作；修改原因写进迭代记录（ROUND4）"
-    - "2.0.1 2026-10-17 增加 io 元数据（读写哪些工件），用于检查技能协作断链（ROUND4）"
-    - "2.0.0 2026-10-16 按核心 v6 就地重写（旧版使用已废弃的协议用语和输出字段）：技能决定 agent 的表现，修改技能要有统一规范才能长期稳定迭代"
+    - "2.7.0 2026-10-23 Written in English, the skills' source language; skills stay language-neutral, models reply in the user's language (ROUND6, 0.46.0)"
+    - "2.6.0 2026-10-22 D24 restored: unchanged copies are updated automatically with each Kernel version; skill adoption batches only for special cases such as changed copies (0.45.11)"
+    - "2.5.0 2026-10-22 Added the evolution-only review of the agents' own skills, roles and loading, and the hand-over of approved changes"
+    - "2.4.0 2026-10-21 Skill adoption is checked by fixed batch, full directory and project policy; blocks and effects are handed over through existing tasks and reviews"
+    - "2.3.0 2026-10-19 Template updates described by the actual practice of ROUND5 D20; added the valid fields of agent configuration (config.yaml) and tool name rules (0.45.3)"
+    - "2.2.0 2026-10-18 Skills moved to one flat folder per agent, agents/<agent>/.agents/skills/ (ROUND5 R5.1)"
+    - "2.1.0 2026-10-17 The fixed structure gains io metadata and a 'hand-over' section; skills collaborate only through artifacts; reasons for changes go into the iteration record (ROUND4)"
+    - "2.0.1 2026-10-17 Added io metadata (which artifacts are read and written) to check broken skill hand-offs (ROUND4)"
+    - "2.0.0 2026-10-16 Rewritten in place for core v6 (the old version used retired protocol terms and output fields): skills decide how agents behave, so changing them needs common rules to stay stable over long iteration"
 ---
 
-# 编写技能
+# Writing skills
 
-## 技能是什么
-技能是一段给 agent 的工作方法说明。Kernel 根据技能开头的 `load` 规则，在合适的角色、阶段和场合自动加载它。
-技能决定了 agent 的表现，也决定了多个 agent 之间、agent 与工件之间能否严谨地衔接。
+## What a skill is
+A skill is a description of a working method for an agent. Kernel loads it automatically for the right roles, stages and
+occasions by the `load` rules at its top. Skills decide how agents behave, and whether agents hand over to each other and to
+artifacts rigorously.
 
-## 模板与项目副本
-- **公共模板**：kernel 维护的一套基础技能。创建项目时，Kernel 按模板的 load.roles 把它们复制到对应 agent 自己的目录 `agents/<agent>/.agents/skills/`
-  （PM、Supervisor 各一份，同一技能可以重复），并在每个副本中记下
-  来源 `template: {name, version}`。打磨公共模板是 kernel 自我升级的一部分。
-- **项目副本**：复制之后归项目所有。项目在自己的运营和复盘中修改副本，可以大改甚至推翻模板；Kernel 只加载项目自己的副本。
-- **模板更新（ROUND5 D24）**：Kernel 每个版本同步一次模板：新增的模板技能补装到对应 agent；项目**没改过**的副本
-  （正文和元数据都与安装时的指纹一致）自动换成新版；项目改过的副本保留不动，周度复盘会看到"模板有更新"及其变更记录，
-  由项目自己决定是否采用、采用哪些部分；项目主动删掉的技能不会被补回。
-- **技能采用批次（特殊情况，默认关闭）**：需要把模板合并进项目改过的副本、或要求可回退的整批替换时，可由维护者配置经批准的
-  精确策略，通过 Kernel 技能更新批次执行。合并候选须保留项目约定并有对应批准，不能把定制合并结果伪装成纯模板。
-- **交接与效果**（仅技能采用批次）：用 list_skill_updates 读取本项目 update_id、固定清单、受阻原因和回执；只有维护执行器能改变采用状态。
-  需开发/合并时，需求仍写目标与必须保留的行为；设计写基线、兼容条件及回退；build 交固定候选和完整目录差异；Review 核对同一候选。
-  这些内容写进既有工件，不新增阶段或审批。仅有模板发布不代表项目允许采用；无配置路径/权限时交维护者，不让模型直接改策略或数据库。
-  Operation 区分文件已应用、技能已加载/按需可发现、业务效果已复核；受阻项写原因、接手者和恢复条件，P/后续任务引用 update_id。
-  回退/延期目标不盲目重试；修复后核对原问题。技能采用不搬迁业务目录，不删除运行数据，也不使旧任务批准自动失效。
-- **加载方式**：`load` 写明场合的技能每轮自动加载全文；写 `on_demand: true` 的技能只在提示中列出名称、用途和路径，
-  需要时用 `vault_read_text` 读取全文（适合不常用的领域方法，节省上下文）。
+## Templates and project copies
+- **Shared templates**: a set of base skills kernel maintains. When a project is created, Kernel copies them by each
+  template's load.roles into the matching agent's own folder `agents/<agent>/.agents/skills/` (one for the PM and one for
+  the Supervisor; the same skill may appear twice) and records in each copy where it came from,
+  `template: {name, version}`. Polishing the shared templates is part of kernel's self-improvement.
+- **Project copies**: once copied they belong to the project. The project changes its copies in its own operation and
+  reviews, and may rework or even overturn the template; Kernel loads only the project's own copies.
+- **Template updates (ROUND5 D24)**: Kernel syncs the templates once per version: new template skills are installed for the
+  matching agents; copies the project **never changed** (body and metadata matching the fingerprint taken at installation)
+  are replaced with the new version automatically; changed copies stay as they are, and the weekly review sees "template
+  updated" with its changelog, so the project decides whether and what to adopt; skills the project deleted are not put
+  back.
+- **Skill adoption batches (special cases, off by default)**: when a template must be merged into a copy the project
+  changed, or a whole batch must be replaced with a way back, a maintainer can configure an exact approved policy executed
+  through Kernel's skill update batches. A merge candidate keeps the project's conventions and has a matching approval —
+  never disguise a customised merge as the pure template.
+- **Hand-over and effect** (skill adoption batches only): read this project's update_id, fixed list, reasons for blocks and
+  receipts with list_skill_updates; only the maintenance executor can change an adoption state. When development or a
+  merge is needed, the requirements still state the goal and the behaviour that must stay; the design states the baseline,
+  compatibility conditions and rollback; build delivers the fixed candidate and the full-directory diff; review checks the
+  same candidate. All of this goes into the existing artifacts, with no new stage or approval. A released template alone
+  does not mean the project allows adoption; without a configured path or permission, hand it to the maintainer — never let
+  a model change the policy or the database directly. Operation tells "files applied", "skill loaded / discoverable on
+  demand" and "business effect reviewed" apart; blocked items state the reason, who takes over and the recovery condition,
+  and P / follow-up tasks cite the update_id. Never blindly retry a rolled-back or deferred target; after a fix, check the
+  original problem. Skill adoption moves no business folders, deletes no runtime data and does not void old tasks'
+  approvals.
+- **Loading**: a skill whose `load` names occasions is loaded in full every turn there; a skill with `on_demand: true` is
+  only listed by name, purpose and path, and read in full with `vault_read_text` when needed (for rarely used domain
+  methods, to save context).
 
-## agent 配置（config.yaml）
-每个 agent 目录下的 `config.yaml` 只有这些字段生效：`schema_version: agent-config.v2`、`agent_id`、`agent_key`、`kind`、`status`、
-`role`（默认 role.md）、`harness`（provider、model、reasoning_effort、context_policy、timeout_seconds）和 `tools`。
-- `tools` 只能写当前的工具名（发布前的校验会拒绝未知名称，名称以校验报错里列出的为准）：它只能收窄执行器给的工具，不能扩大。
-- 平台工具总会给，不用写：get_authorized_workspace、list_recent_history、list_iterations、map_lookup、list_credentials、
-  get_credential，以及 PM 的任务文档工具。所以 Supervisor 写 `tools: []` 就是"只用平台工具"。
-- 沙箱、能否写候选文件由 Kernel 按角色和阶段决定，不在配置里写；别的字段写了也不会生效，不要添加。
+## Agent configuration (config.yaml)
+Only these fields of an agent folder's `config.yaml` take effect: `schema_version: agent-config.v2`, `agent_id`,
+`agent_key`, `kind`, `status`, `role` (role.md by default), `harness` (provider, model, reasoning_effort, context_policy,
+timeout_seconds) and `tools`.
+- `tools` may only name current tools (the check before release rejects unknown names; the names listed in its error are
+  authoritative): it can only narrow the tools the executor offers, never widen them.
+- Platform tools are always given and need not be listed: get_authorized_workspace, list_recent_history, list_iterations,
+  map_lookup, list_credentials, get_credential, and the PM's task document tools. So `tools: []` for the Supervisor means
+  "platform tools only".
+- The sandbox and whether candidate files can be written are decided by Kernel per role and stage, not in the
+  configuration; other fields have no effect — do not add them.
 
-## evolution：审查自身角色与技能
-只针对实际问题读取相关 agent 的 config.yaml、其 role 指定文件（默认 role.md）、项目技能副本和必要的模板差异；不全量重写。
-role 表达职责与项目特别要求，skill 表达工作方法，章程表达长期业务约定；检查责任遗漏/重叠、冲突、不可用输入工具及无人接手的产出。
-io 断链只是元数据线索，须核对阶段、适用条件和真实消费者，不能把可选/平台提供的输入判为缺陷。
+## evolution: reviewing the agents' own roles and skills
+Read, only for an actual problem, the relevant agent's config.yaml, the file its role points to (role.md by default), the
+project's skill copies and the necessary template differences; no full rewrite. The role expresses responsibilities and the
+project's special requirements, skills express working methods, the charter expresses long-term business agreements; check
+for gaps or overlaps in responsibility, conflicts, unavailable inputs or tools, and output nobody takes over. Broken io
+hand-offs are only metadata hints — check the stage, conditions and real consumers; never judge optional or
+platform-provided inputs as defects.
 
-分别判断文件存在、加载规则选中、按需可发现、全文实际读取、实际遵循和业务效果。用已有运行记录中的 skills/config_sha256
-及证据核对版本；哈希不是内容快照，没有可靠旧基线就标未知，不能用当前 role/skill 解释旧回合。
-检查上下文是否遗漏关键输入或加载无关内容；不能为了评分更好而删验收条件、扩大权限或隐去失败。
+Judge separately: the file exists, the load rule selects it, it is discoverable on demand, it was actually read in full,
+actually followed, and the business effect. Check versions with the skills/config_sha256 in existing run records and their
+evidence; a hash is not a content snapshot — without a reliable old baseline mark it unknown, and never explain old turns
+with the current role or skill. Check whether the context misses key inputs or loads irrelevant content; never delete
+acceptance conditions, widen permissions or hide failures for a better score.
 
-建议写目标路径/章节、问题证据、具体新文本或差异、必须保留的定制、受影响角色/阶段、验证和恢复办法。
-evolution 仅在 improvement_proposal 提议；项目 role/config 的修改走用户批准的正常任务，不属于技能更新表的自动覆盖对象。
-项目副本与公共模板分开处理，不代其他项目批准。修改后分别核对文件采用、后续回合加载/按需读取、行为和效果；
-尚未采用或已回退时说明实际版本。审批、候选验证和权限仍由现有流程控制；本节不改变 build 的修改规范。
+A proposal states the target path/section, the evidence of the problem, the concrete new text or diff, the customisation
+that must stay, the affected roles/stages, verification and recovery. evolution only proposes in improvement_proposal;
+changes to a project's role/config go through a normal task the user approves and are not automatic overwrites of the
+skill update table. Project copies and shared templates are handled separately — never approve for another project. After
+a change, check separately that the file was adopted, that later turns load or read it on demand, the behaviour and the
+effect; when not yet adopted or rolled back, state the actual version. Approvals, candidate validation and permissions stay
+with the existing process; this section does not change build's rules for making changes.
 
-## 固定结构
+## Fixed structure
 ```
 ---
-name: 英文短名（小写字母和连字符），与目录名相同
-description: 一句话：什么时候用、产出什么
+name: short English name (lowercase letters and hyphens), the same as the folder name
+description: one sentence: when to use it, what it produces
 metadata:
-  version: "主.次.修"
+  version: "major.minor.patch"
   load: {roles: [...], stages: [...], purposes: [...], capabilities: [...], task_kinds: [...], on_demand: false}
-  # stages 匹配 PM 的阶段回合，purposes 匹配其他场合（Supervisor 的 evaluate / review_input / consult 和分诊 triage），
-  # 两者同时写时满足其一即可；roles、capabilities、task_kinds 必须满足；没写的键不限制
-  io: {reads: [工件名, ...], writes: [工件名, ...]}   # 可选，用下面的工件名；复盘据此检查协作断链
-  template: {name: 模板名称, version: 复制时的模板版本}   # 仅项目副本有，由 Kernel 写入
-  changelog: ["版本 日期 改了什么、为什么（引用改进建议编号）"]   # 公共模板必写；项目副本可省略（原因在迭代记录里）
+  # stages match the PM's stage turns, purposes the other occasions (the Supervisor's evaluate / review_input / consult and
+  # triage); when both are given either one is enough; roles, capabilities and task_kinds must hold; missing keys do not restrict
+  io: {reads: [artifact names, ...], writes: [artifact names, ...]}   # optional, with the artifact names below; reviews use it to check hand-offs
+  template: {name: template name, version: template version when copied}   # only project copies, written by Kernel
+  changelog: ["version date what changed and why (citing the proposal id)"]   # required for shared templates; project copies may omit it (the reason is in the iteration record)
 ---
-# 标题
-## 目的（为什么要这样做）
-## 何时使用 / 不适用
-## 输入（读哪些工件的哪一节）与事实优先级
-## 做法（编号步骤，每步可检查）
-## 产出（写到哪个工件的哪个章节）
-## 交接（下一个读它的技能或角色需要什么）
-## 自检清单
-## 常见错误（反例）
+# Title
+## Purpose (why it is done this way)
+## When to use / not to use
+## Inputs (which sections of which artifacts) and fact priority
+## How (numbered steps, each checkable)
+## Output (which section of which artifact)
+## Hand-over (what the next skill or role that reads it needs)
+## Self-check
+## Common mistakes (counter-examples)
 ```
-不需要的章节可以省略，但顺序不变。
+Sections that are not needed may be left out, but the order stays.
 
-**io 的工件名**（与 assistant-task-continuity 一致）：task_contract · solution_design · implementation_report ·
-review_report · improvement_proposal · domain_brief · working_notes · charter · map · jobs · skills；
-平台提供的（只读）：digest（运行记录）· change_stream（变更流水）· state_ledger（状态簿）· user_profile ·
-template_updates · shared_context · user_answers。
-**技能之间只通过工件协作**：A 写出的东西，必须有 B 在"输入"里读；改了某个工件的章节名或格式，就检查所有读它的技能。
-复盘材料里的"技能协作断链"列出有人写没人读、有人读没人写的工件，是检查交接问题的起点。
+**io artifact names** (the same as in assistant-task-continuity): task_contract · solution_design · implementation_report ·
+review_report · improvement_proposal · domain_brief · working_notes · charter · map · jobs · skills; provided by the
+platform (read-only): digest (run record) · change_stream · state_ledger · user_profile · template_updates ·
+shared_context · user_answers.
+**Skills collaborate only through artifacts**: what A writes must be read by B in its inputs; when you change an artifact's
+section names or format, check every skill that reads it. The review material's "broken skill hand-offs" lists artifacts
+written but never read, or read but never written — the starting point for checking hand-over problems.
 
-## 写法原则
-1. **一个技能只管一类工作**；同一件事只在一个技能里规定，其他技能引用它的名字，不要复制。
-2. **说明为什么**：每条要求后面用半句话写原因，agent 理解原因后才能处理没写到的情况。
-3. **可检查**：用"每个 R 至少有一个 A"这类可核对的要求，不用"尽量完善"这类说法。
-4. **与工件对齐**：产出部分写明工件和章节名称（以 assistant-task-continuity 为准），改了章节名称就要同步修改所有引用它的技能。
-5. **给反例**："常见错误"写真实出现过的问题，最好来自复盘记录。
-6. **控制长度**：一个技能通常不超过 3000 字；太长说明它管的事太多，应该拆分。
-7. **用用户的语言**：中文、具体、少用术语；不要出现已废弃的旧流程用语。
-8. **不和合同冲突**：输出 JSON 的格式和可选的决定由 Kernel 规定（"输出要求"），技能不能增加或改变字段。
+## Writing principles
+1. **One skill covers one kind of work**; a rule lives in one skill only, and others refer to it by name instead of copying
+   it.
+2. **Say why**: follow each requirement with half a sentence of reason — an agent that understands the reason can handle
+   cases not written down.
+3. **Checkable**: use checkable requirements such as "every R has at least one A", not "make it as complete as possible".
+4. **Aligned with artifacts**: the output part names the artifact and section (as in assistant-task-continuity); when a
+   section name changes, update every skill that refers to it.
+5. **Give counter-examples**: "common mistakes" describes problems that really happened, ideally from review records.
+6. **Keep it short**: a skill is usually within about 3000 words; longer means it covers too much and should be split.
+7. **Plain and language-neutral**: skills are written in English, concrete, with little jargon; models reply in the
+   language the user writes in (the language note at the end of every prompt), so a skill never fixes the user's language;
+   document headings come from the output requirements and assistant-task-continuity and stay in English. No retired
+   process terms.
+8. **No conflict with the contracts**: the output JSON format and the allowed decisions are set by Kernel (the output
+   requirements); a skill cannot add or change fields.
 
-## 修改流程
-1. 复盘或用户反馈提出问题 → 改进建议写明要改的技能、章节和新写法，以及原因。
-2. 用户批准后作为任务实施：改技能文件，版本号加一（模板更新的判断依赖版本号）；原因写进实施报告的迭代记录
-   （公共模板另在 changelog 写一行）。
-3. 项目只改自己的副本；公共模板的修改属于 kernel 项目的任务。kernel 打磨模板时参考各项目的复盘建议和它们对副本的改动：
-   多个项目都做了同类修改，往往说明模板本身该改。
-4. 采用模板更新时，逐段比较模板新版与本项目副本：本项目特有的修改保留，模板的改进合并进来，在 changelog 写明
-   "采用模板 X.Y.Z 的哪些部分、保留了哪些本地修改"，并更新 `template.version`。
-5. 修改后观察下一次复盘的记录，确认问题是否改善。
+## Change process
+1. A review or user feedback raises a problem → the improvement proposal names the skill, section and new wording to
+   change, and why.
+2. Once the user approves it, it is implemented as a task: change the skill file and raise the version (template-update
+   decisions depend on the version); the reason goes into the implementation report's iteration record (shared templates
+   also get a changelog line).
+3. A project changes only its own copies; changes to shared templates are tasks of the kernel project. When polishing the
+   templates, kernel draws on the projects' review proposals and their changes to their copies: when several projects made
+   the same kind of change, the template itself usually needs changing.
+4. When adopting a template update, compare the new template with this project's copy section by section: keep this
+   project's own changes, merge the template's improvements, write in the changelog "adopted which parts of template X.Y.Z,
+   kept which local changes", and update `template.version`.
+5. After the change, watch the next review's records to confirm whether the problem improved.

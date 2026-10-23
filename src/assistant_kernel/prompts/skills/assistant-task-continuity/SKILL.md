@@ -1,207 +1,293 @@
 ---
 name: assistant-task-continuity
-description: 所有工件（章程、需求、行业速写、设计、实施报告、Review 报告、改进建议）的固定章节和编号规则；PM 写工件、Supervisor 读工件时都以此为准。
+description: The fixed sections and numbering rules of every artifact (charter, requirements, industry brief, design, implementation report, review report, improvement proposal); the PM writes and the Supervisor reads artifacts by them.
 metadata:
-  version: "2.14.0"
+  version: "2.15.0"
   load: {roles: [pm, supervisor]}
   changelog:
-    - "2.14.0 2026-10-23 状态簿增加“卡片问答”：经卡片提出的所有问题（PM 和 Supervisor 提的）及回答或未回答原因，问过、答过以此为准（0.45.12）"
-    - "2.13.0 2026-10-22 变更流水也包含 Kernel 导入的任务之外的提交（外部、手工、系统），查近期改动时一并看（0.45.11）"
-    - "2.12.0 2026-10-21 明确目录约定的工件分工、阶段边界及旧项目兼容，不扩大地图自动门禁"
-    - "2.11.0 2026-10-21 仅补发布到运营、复盘到后续任务的交接；沿用已有工件"
-    - "2.10.0 2026-10-21 仅补 Review 输入、复审闭环和发布交接，保留其他阶段格式"
-    - "2.9.0 2026-10-20 补 build 的进度、证据和提交检查，将设计遗留事项接入原 D/A 与报告；不新增工件或状态"
-    - "2.8.0 2026-10-20 仅补 design 文档的交接内容和 PM/Supervisor 共用完成标准，保留其他工件与阶段规则"
-    - "2.7.0 2026-10-20 背景信息存档改存 knowledge/background.md，章程文件不再被 Kernel 追加内容（0.45.6）"
-    - "2.6.1 2026-10-19 地图可用 project: 和 grant: 前缀索引项目目录与外部目录的文件（ROUND5 R5.2 补）"
-    - "2.6.0 2026-10-18 项目地图改为每个项目一份 map.yaml 索引（ROUND5 R5.2）"
-    - "2.5.0 2026-10-17 增加项目地图格式和'变更与历史'规则：工件就地修改，原因写进迭代记录，历史用 list_iterations 按需查（ROUND4）"
-    - "2.4.1 2026-10-16 运行声明文件改为项目根目录的 jobs.yaml（vault 的 runtime/ 目录存放 Kernel 内部数据）"
-    - "2.4.0 2026-10-16 设计文档增加第 9 节'运行方式'（ROUND3 S3）"
-    - "2.3.0 2026-10-16 需求文档增加第 11 节'用户画像观察'；增加行业速写（domain_brief）的章节（ROUND3 S2）"
-    - "2.2.0 2026-10-16 增加任务状态簿与 PM 工作笔记的分工：会话可能随时换新，交接只能依靠状态簿、笔记和工件（ROUND3 S1）"
-    - "2.1.0 2026-10-16 文档改为草稿 + edit_task_document 就地修订，不再每次输出全文（节省输出 token）"
-    - "2.0.0 2026-10-16 按核心 v6 就地重写（旧版使用已废弃的协议用语和输出字段）：统一工件章节与编号，让多个 agent 之间、agent 与工件之间按同一结构交接"
+    - "2.15.0 2026-10-23 Written in English, the skills' source language; artifacts are written in the user's language, and headings Kernel parses come from the output requirements (ROUND6, 0.46.0)"
+    - "2.14.0 2026-10-23 The ledger gains 'Card questions': every question asked through cards (by the PM and the Supervisor) with the answer or why there is none — the reference for what was asked and answered (0.45.12)"
+    - "2.13.0 2026-10-22 The change stream also holds commits outside tasks that Kernel imports (outside, manual, system); look at them too for recent changes (0.45.11)"
+    - "2.12.0 2026-10-21 Clarified which artifact holds which folder agreement, stage boundaries and compatibility with old projects, without widening the map's automatic gate"
+    - "2.11.0 2026-10-21 Only added the hand-over from release to operation and from review to follow-up tasks, using existing artifacts"
+    - "2.10.0 2026-10-21 Only added review inputs, the re-review loop and the release hand-over; other stages keep their formats"
+    - "2.9.0 2026-10-20 Added build progress, evidence and submission checks, linking items the design left open to the existing D/A and report; no new artifacts or states"
+    - "2.8.0 2026-10-20 Only added the design document's hand-over content and the completion standard shared by PM and Supervisor; other artifacts and stage rules unchanged"
+    - "2.7.0 2026-10-20 The background archive is stored in knowledge/background.md; Kernel no longer appends to the charter file (0.45.6)"
+    - "2.6.1 2026-10-19 The map can index files of the project folder and outside directories with project: and grant: prefixes (ROUND5 R5.2 follow-up)"
+    - "2.6.0 2026-10-18 The project map became one map.yaml index per project (ROUND5 R5.2)"
+    - "2.5.0 2026-10-17 Added the project map format and 'changes and history' rules: artifacts are changed in place, reasons go into the iteration record, history is looked up with list_iterations as needed (ROUND4)"
+    - "2.4.1 2026-10-16 The runtime manifest is jobs.yaml at the project root (the vault's runtime/ folder holds Kernel's internal data)"
+    - "2.4.0 2026-10-16 The design document gains section 9 'how it runs' (ROUND3 S3)"
+    - "2.3.0 2026-10-16 The requirements document gains section 11 'user-profile observations'; added the sections of the industry brief (domain_brief) (ROUND3 S2)"
+    - "2.2.0 2026-10-16 Added the division between the task ledger and the PM's working notes: sessions may be replaced any time, so hand-over relies only on the ledger, notes and artifacts (ROUND3 S1)"
+    - "2.1.0 2026-10-16 Documents became drafts revised in place with edit_task_document instead of full text every time (saves output tokens)"
+    - "2.0.0 2026-10-16 Rewritten in place for core v6 (the old version used retired protocol terms and output fields): unified artifact sections and numbering so agents hand over to each other and to artifacts by one structure"
 ---
 
-# 工件约定
+# Artifact conventions
 
-## 目的
-工件是 agent 之间唯一可靠的交接方式：你看不到别人的会话，别人也看不到你的。下一位读者只能依靠工件，
-所以每种工件的章节名称和编号固定不变，读者可以按章节查找、按编号引用、逐条核对。
+## Purpose
+Artifacts are the only reliable hand-over between agents: you cannot see another's session, and they cannot see yours. The
+next reader can only rely on the artifacts, so each artifact's section names and numbers stay fixed — readers find things
+by section, cite by number and check item by item.
 
-## 通用规则
-1. **编号**：需求条目 `R1`、`R2`…；验收标准 `A1`…；设计要点 `D1`…；改进建议 `P1`…。编号一经出现就不再改变，
-   删除的条目保留编号并标注"（已删除：原因）"，新增条目接着往后编。
-2. **引用**：引用其他工件时写编号，例如"满足 R3、A3"，不要复述原文。
-3. **来源标记**：事实性陈述在句末标注来源：`[用户]` 用户原话或用户确认、`[调查:出处]` 你查到的、`[推断]` 你的推断、
-   `[建议]` 你提出、尚待用户取舍的内容。没有标记的内容会被读者当作未经证实。
-4. **就地修订**：修改已有文档时用 edit_task_document 只改需要改的段落，其余内容原样保留（Kernel 保存的始终是完整文档）；
-   在文末"修订记录"中写一行本次改了什么、为什么。
-5. **不确定就写不确定**：放进"待定事项"，不要用模糊措辞掩盖。
+**Language**: the text of artifacts is written in the language the user writes in; section headings stay in English
+exactly as listed here and in the output requirements (Kernel parses some of them: background archive, user-profile
+observations, iteration record, effect review, creation parameters). Section numbers stay as listed.
 
-## 交接：状态簿与工作笔记
-PM 的会话会在换阶段、或连续多轮之后换成全新的会话。新会话看不到之前的对话，只能看到三样东西：
-- **任务状态簿**（Kernel 自动记录，`runs/<任务>/state.md`）：每一轮的指令、用户的回答和补充、PM 的结果和提问、卡片上的操作。
-  这是事实，与你的记忆冲突时以它为准。其中“卡片问答”一节列出本任务经卡片提出的所有问题（PM 和 Supervisor 提的都在）
-  及用户的回答，或未回答的原因（改为提出修改、卡片被替换、任务结束）；判断某个问题是否问过、答过，以这一节为准。
-- **PM 工作笔记**（`working_notes`，你自己维护）：每轮结束前用 edit_task_document 更新。固定章节：
-  1 当前理解（用户真正要什么、为什么）· 2 已定事项（结论及依据：引用状态簿回合或工件编号）·
-  3 开放问题（还没问或还没答的，以及准备怎么问）· 4 假设与默认（尚未确认就先采用的，注明待确认）·
-  5 下一步（下一轮要做什么、需要先读什么）。
-  不要抄写状态簿里已有的原话和回答；写你的理解、判断和打算。写到"换一个人接手也能马上继续"为止。
-- **工件**：正式结论以工件为准；笔记里的结论定下来后要写进工件。
+## General rules
+1. **Numbering**: requirement items `R1`, `R2`…; acceptance criteria `A1`…; design points `D1`…; improvement proposals
+   `P1`…. A number never changes once it appears; a deleted item keeps its number marked "(deleted: reason)", and new items
+   continue the numbering.
+2. **References**: cite other artifacts by number, for example "meets R3, A3" — do not restate the text.
+3. **Source marks**: end factual statements with their source: `[user]` the user's words or confirmation,
+   `[research:source]` what you found, `[inferred]` your inference, `[suggested]` what you propose and the user still has to
+   decide. Readers treat unmarked content as unverified.
+4. **Revise in place**: when changing an existing document, change only the paragraphs that need it with
+   edit_task_document and leave the rest as it is (Kernel always stores the complete document); add a line to the revision
+   log at the end saying what changed and why.
+5. **When unsure, say so**: put it under open items — never hide it in vague wording.
 
-Supervisor 读笔记了解 PM 的思路，但安排下一步时以工件和状态簿为准。
+## Hand-over: ledger and working notes
+The PM's session is replaced by a brand-new one when the stage changes or after several turns in a row. A new session cannot
+see earlier conversation; it sees only three things:
+- **The task ledger** (recorded by Kernel automatically, `runs/<task>/state.md`): each turn's instruction, the user's
+  answers and additions, the PM's results and questions, card actions. These are facts and win over your memory. Its
+  "Card questions" section lists every question asked through cards in this task (by the PM and the Supervisor alike) with
+  the user's answer, or why there is none (a change was asked for instead, the card was replaced, the task ended); it
+  decides whether a question was asked and answered.
+- **The PM's working notes** (`working_notes`, kept by you): update them with edit_task_document before every turn ends.
+  Fixed sections: 1 current understanding (what the user really wants and why) · 2 decided (conclusions and their basis,
+  citing ledger turns or artifact numbers) · 3 open questions (not yet asked or answered, and how you plan to ask) ·
+  4 assumptions and defaults (adopted before confirmation, marked to be confirmed) · 5 next step (what to do next turn, what
+  to read first). Do not copy the words and answers the ledger already holds; write your understanding, judgement and
+  plans — until someone else could take over at once.
+- **Artifacts**: formal conclusions are those in the artifacts; once a conclusion in the notes is settled, write it into
+  the artifact.
 
-## 变更与历史
-- 所有长期工件（章程、地图、技能副本、画像、行业速写、jobs.yaml）**就地修改，只保留当前内容**；
-  每次改了什么、为什么，统一写进本任务实施报告的"迭代记录"，发布后存入项目的**变更流水**。
-- 变更流水还包含 Kernel 导入的**任务之外的提交**（手工修改、其他工具、Kernel 自己的维护，例如模板同步），类型为 imported，
-  日期是提交时间，原因以提交说明为准，不代表经过任务审批；判断"最近改了什么"时两者都看。
-- 任务文档（需求、设计、报告）的修订版由 Kernel 保存，是批准机制的需要，平时不用回看。
-- 判断时以**最新状态**为准，历史只作参考。需要历史时用 `list_iterations` 按需查，只查和当前问题有关的：
-  - 某个工件为什么是现在这样：`list_iterations(artifact="skill:<名称>")`、`artifact="map"`、`artifact="charter"`；
-  - 某件事以前做过没有：`list_iterations(query="关键词")`；
-  - 最近有哪些重大改动：`list_iterations(major_only=True, days=180)`。
-  不要每次把所有工件的历史都查一遍。
+The Supervisor reads the notes to follow the PM's thinking, but arranges the next step by the artifacts and the ledger.
 
-## 各工件的固定章节
+## Changes and history
+- Every long-lived artifact (charter, map, skill copies, profile, industry brief, jobs.yaml) is **changed in place and holds
+  only its current content**; what changed each time and why goes into this task's implementation report's iteration
+  record, stored in the project's **change stream** after the release.
+- The change stream also holds **commits outside tasks** that Kernel imports (manual edits, other tools, Kernel's own
+  maintenance such as template syncs), of type imported, dated by the commit, with the commit message as the reason — they
+  were not approved through a task; look at both when judging "what changed recently".
+- Revisions of task documents (requirements, design, reports) are stored by Kernel for the approval mechanism; you need not
+  look at them normally.
+- Judge by the **latest state**; history is only a reference. When you need history, look it up with `list_iterations`,
+  only for the question at hand:
+  - why an artifact is the way it is: `list_iterations(artifact="skill:<name>")`, `artifact="map"`, `artifact="charter"`;
+  - whether something was done before: `list_iterations(query="keywords")`;
+  - recent major changes: `list_iterations(major_only=True, days=180)`.
+  Do not look through every artifact's history each time.
 
-### 项目章程（`knowledge/charter.md`，长期存在，每个项目一份）
-1 项目用途 · 2 业务目标与成功标准 · 3 使用者与使用场景 · 4 组织与行业背景 · 5 范围（负责 / 不负责）·
-6 约束（预算、时间、合规、技术） · 7 路由信息（别名、典型请求、不负责的请求） ·
-背景信息存档不在章程文件里，而在 `knowledge/background.md`：Kernel 在需求文档获批时，自动把其第 10 节追加到那里，注明日期和任务；
-每轮随章程一起提供给你（显示为章程末尾的"背景信息存档"一节），读的时候以最新条目为准。
-早期项目的章程可能还有"变更记录"一节，不再更新；修改原因写进迭代记录。
-已知且长期有效的目录/交付位置约束、数据保留要求和重要例外，可简写在“约束”内；不新增必填章节、不记录完整文件清单。
-缺少这项说明的旧项目仍按配置、地图和实际文件核实，不要求先补章程。具体结构优先用地图及已有 README/业务文档表达。
-只有本次范围需要且交付路径支持时才更新章程；Git build 只改 worktree，不能为补约定越界改 vault 章程。
+## Fixed sections of each artifact
 
-### 项目地图（每个项目一份 `map.yaml`：文件交付在 `knowledge/map.yaml`；代码交付在仓库内，默认 `docs/map.yaml`）
-纯索引，每个文件或目录一条，路径相对地图所在的根目录（文件交付是项目目录，代码交付是仓库）：
+### Project charter (`knowledge/charter.md`, long-lived, one per project)
+1 Purpose · 2 Business goals and success criteria · 3 Users and usage scenarios · 4 Organisation and industry background ·
+5 Scope (in scope / out of scope) · 6 Constraints (budget, time, compliance, technology) · 7 Routing (aliases, typical
+requests, requests it does not handle).
+The background archive is not in the charter file but in `knowledge/background.md`: when a requirements document is
+approved, Kernel appends its section 10 there automatically with date and task; it is given to you every turn with the
+charter (shown as the charter's last section, the background archive), and the latest entry wins. Charters of early
+projects may still have a change-log section that is no longer updated; reasons for changes go into the iteration record.
+Known, long-lasting constraints on folders or delivery locations, data retention requirements and important exceptions may
+be noted briefly under constraints; no new required section and no complete file list. Old projects without such a note
+are still checked against their configuration, map and actual files — no need to complete the charter first. The detailed
+structure is best expressed in the map and existing READMEs or business documents. Update the charter only when this
+task's scope needs it and the delivery path supports it; a Git build changes only the worktree and cannot reach beyond it
+to change the vault's charter.
+
+### Project map (one `map.yaml` per project: `knowledge/map.yaml` for file delivery; in the repository for code delivery, `docs/map.yaml` by default)
+A pure index, one entry per file or folder, paths relative to the map's root (the project folder for file delivery, the
+repository for code delivery):
 ```yaml
 schema_version: project-map.v1
 entries:
-  - {path: product/entries/, kind: directory, purpose: 本项目的功能入口脚本（示例路径，非系统唯一入口位置）}
-  - {path: product/entries/daily_report.py, name: 日报, kind: entry, purpose: 汇总前一天的交易并通知,
-     summary: 读 data/trades/，写 data/reports/，调用 analyst, related: [product/lib/report.py]}
+  - {path: product/entries/, kind: directory, purpose: the project's entry scripts (an example path, not the only system entry location)}
+  - {path: product/entries/daily_report.py, name: daily report, kind: entry, purpose: totals yesterday's trades and notifies,
+     summary: reads data/trades/, writes data/reports/, calls analyst, related: [product/lib/report.py]}
 ```
-- 必填 path、purpose；kind 取 directory / entry / module / script / config / doc / skill / agent / data / test / other。
-- 受维护的业务 Python 文件应有条目；当前自动检查范围为文件交付的 product/ 或 Git 交付的仓库，
-  排除项以现有检查为准（如 __init__.py、测试、数据和生成目录）。范围外本次新增/实质修改的业务脚本和关键入口，
-  由 build 自检、主管核对，有 Review 时再独立检查；自动通过不等于全部索引完整，不追补无关历史文件。
-- 目录条目说明结构及数据/周期产出的用途和读取入口，不逐次登记每份日报、原始数据或缓存；不把预期但尚未产生的输出列为现存文件。
-- 地图索引整个项目：代码交付的地图在仓库里，项目目录里的文件（章程、技能等）写成 `project:knowledge/charter.md`；
-  授权的外部目录里的文件写成 `grant:<目录 key>/<路径>`。
-- 地图只记当前状态：文件什么时候改的看 git（`map_lookup` 会附上），为什么改的看变更流水（`list_iterations`）。
-- 实施阶段新增、删除、改名文件或改变用途时同步更新（文件交付通过候选文件，代码交付直接在工作区里改），
-  并在迭代记录的 changes 里写一项 `type: map`。需维护项目文件而地图缺失时，在本次相关范围内建立，仍满足已有验证要求；
-  纯任务文档交付不额外创建地图或业务目录。
+- path and purpose are required; kind is one of directory / entry / module / script / config / doc / skill / agent /
+  data / test / other.
+- Maintained business Python files should have entries; the automatic check covers product/ for file delivery or the
+  repository for Git delivery, with the exclusions of the existing check (such as __init__.py, tests, data and generated
+  folders). Business scripts and key entry points added or substantially changed in this task outside that scope are
+  checked by the build's self-check, the Supervisor and, where there is one, the review; an automatic pass does not mean
+  the index is complete, and unrelated historical files are not chased.
+- Folder entries describe the structure and the purpose and entry point of data or periodic output, without registering
+  each daily report, raw data or cache; output expected but not yet produced is not listed as existing.
+- The map indexes the whole project: for code delivery the map is in the repository, and files in the project folder
+  (charter, skills, …) are written as `project:knowledge/charter.md`; files in granted outside directories as
+  `grant:<directory key>/<path>`.
+- The map holds only the current state: when a file changed is in git (`map_lookup` adds it), why it changed in the change
+  stream (`list_iterations`).
+- When the build adds, deletes, renames files or changes their purpose, update the map at the same time (through candidate
+  files for file delivery, directly in the workspace for code delivery), and add an item `type: map` to the iteration
+  record's changes. When project files must be maintained and the map is missing, create it within this task's relevant
+  scope, still meeting the existing validation requirements; deliveries of task documents only create no map or business
+  folders.
 
-#### 目录信息怎样交接
-章程承载长期约定，地图承载当前索引，设计写本次计划，实施报告写实际交付，Kernel 状态与回执说明批准/发布/运行事实；
-地图不是权限或成功证明，目录名不能覆盖真实配置和证据。仅展开与本次目标有关的信息，不给普通需求、quick 或纯文档任务新增门槛。
-- 需求阶段沿用现有现状与约束收集，不要求预先设计目录；design 在既有文件清单、发布影响、运行方式及回退章节说明必要位置。
-- build 核对实际工作根、正式目标、运行输入输出与消费者，更新本次受影响的地图和可交付文档；未发布的计划不写成生效约定。
-- Review 只读核对入口、引用、数据保护与批准方案；运营只读核对真实产出及失效引用，发现需要修改的事项交后续任务。
-- 子任务说明带相关根位置、相对路径、读写范围与交回位置，不假定子 agent 已读章程；目录约定本身不构成必须委派的理由。
-- 代码/模板等静态交付走原发布流程；已批准作业的周期产出按运行约定生成、核验和保留，不逐次走 build。
-  候选、临时工作区及 Kernel 内部目录不充当持久业务数据的默认存放地；代码回退不自动回退或删除业务数据。
+#### Handing over folder information
+The charter holds long-term agreements, the map the current index, the design this task's plan, the implementation report
+the actual delivery, and Kernel's states and receipts the facts of approval, release and runtime; the map is neither a
+permission nor proof of success, and folder names never override real configuration and evidence. Expand only what this
+goal needs, and add no hurdles to ordinary requirements, quick or document-only tasks.
+- The requirements stage keeps its existing collection of current state and constraints, with no up-front folder design;
+  design states the necessary locations in its existing file list, release impact, how it runs and rollback sections.
+- build checks the actual working root, released targets, runtime inputs/outputs and consumers, and updates the map and
+  deliverable documents this task affects; plans not yet released are not written as agreements in force.
+- review checks entry points, references, data protection and the approved solution read-only; operation checks real output
+  and broken references read-only, and anything needing change goes to a follow-up task.
+- Subtask briefs carry the relevant roots, relative paths, read/write scope and where to return results — never assume a
+  subagent has read the charter; folder agreements are no reason in themselves to delegate.
+- Static deliverables such as code and templates go through the existing release; periodic output of approved jobs is
+  produced, checked and kept by the runtime agreements, not through a build each time. Candidates, temporary workspaces and
+  Kernel's internal folders are not default homes for persistent business data; reverting code does not revert or delete
+  business data automatically.
 
-### 需求文档（task_contract）
-1 背景与现状 · 2 目标 · 3 使用者与场景 · 4 范围（包含 / 不包含）· 5 需求条目（R，每条写明优先级：必须 / 应该 / 可选）·
-6 验收标准（A，每条注明对应的 R）· 7 约束与假设 · 8 已澄清的矛盾（矛盾内容 → 用户的决定）· 9 待定事项 ·
-10 背景信息存档（本次收集到、以后可复用的组织与行业事实，每条带来源和日期）·
-11 用户画像观察（与协作方式有关的用户特点，格式见 assistant-user-insight；没有写"无"）· 修订记录
+### Requirements document (task_contract)
+1 Background and current state · 2 Goals · 3 Users and scenarios · 4 Scope (in / out) · 5 Requirement items (R, each with
+its priority: must / should / could) · 6 Acceptance criteria (A, each naming its R) · 7 Constraints and assumptions ·
+8 Resolved contradictions (the contradiction → the user's decision) · 9 Open items · 10 Background archive (organisation and
+industry facts collected now and reusable later, each with source and date) · 11 User-profile observations (traits of the
+user that matter for collaboration, format in assistant-user-insight; "None" (or the word for it in the user's language) if there are none) · Revision log
 
-### 行业速写（domain_brief，需求阶段，随需求批准存为 `knowledge/domain-brief.md`）
-章节和写法见 assistant-domain-research：0 定位参数与有效期 · 1 行业速写 · 2 业务流程与术语 · 3 监管合规要点 · 4 工具与竞品 ·
-5 痛点与机会 · 6 规模差异 · 7 候选问题库 · 8 候选需求清单 · 9 来源
+### Industry brief (domain_brief, requirements stage, stored as `knowledge/domain-brief.md` when the requirements are approved)
+Sections and how to write them in assistant-domain-research: 0 locating parameters and validity · 1 industry brief ·
+2 business processes and terms · 3 regulation and compliance · 4 tools and competitors · 5 pain points and opportunities ·
+6 differences by size · 7 question bank · 8 candidate requirements · 9 sources
 
-### 设计文档（solution_design）
-1 方案概述 · 2 需求覆盖（每个 R 对应哪些 D）· 3 设计要点（D）· 4 文件变更清单（目标路径、新建 / 修改 / 删除）·
-5 测试方案（每个 A 怎么验证）· 6 发布目标与影响 · 7 风险与回退 · 8 可并行的子任务 ·
-9 运行方式（产物需要定时或长期运行时：每个作业和服务一行，字段与 jobs.yaml 对应；不需要写"无"）· 修订记录
+### Design document (solution_design)
+1 Overview · 2 Requirement coverage (which D for each R) · 3 Design points (D) · 4 File change list (target path, new /
+change / delete) · 5 Test plan (how each A is verified) · 6 Release target and impact · 7 Risks and rollback ·
+8 Parallel subtasks · 9 How it runs (when the product runs on a schedule or keeps running: one line per job and service,
+fields matching jobs.yaml; "None" otherwise) · Revision log
 
-#### design 阶段的填写与检查
-以下仅用于 PM 编写 design 文档、Supervisor 评估 design 结果；不增加 requirements、quick、bootstrap 或其他阶段的门槛。
-保留上述九章和 R/A/D 编号，在原章节内补充，不另建交接文件；不适用项注明原因，篇幅随任务复杂度调整。
+#### Filling in and checking in the design stage
+The following is only for the PM writing the design document and the Supervisor evaluating design results; it adds no
+hurdles to requirements, quick, bootstrap or other stages. Keep the nine sections above and the R/A/D numbers, adding
+within the existing sections — no separate hand-over file; state why an item does not apply, and scale the length to the
+task's complexity.
 
-- 第 1 节：所依据的需求版本（沿用 Kernel 提供的 sha）、输入检查结论、主要路线和重要取舍。
-- 第 2 节：R → D → A，以及本期覆盖情况；延期或调整引用有效用户决定，不能用“说明原因”代替批准。
-- 第 3 节：关键业务步骤的输入、执行者、输出与接收方，必要的接口、依赖选择及证据，重要决策的依据。
-- 第 4–6 节：具体变更及用途；每个 A 的验证方法、数据或环境、通过条件和所需证据；交付接收方、使用方式、启用条件及影响。
-- 第 7 节：实际相关的失败与恢复；未决事项写内容、影响、解决者、完成时点、通过条件和失败处理，区分阻断与可交实施。
-  交给实施且必须完成的事项关联对应 D；涉及改动的进入第 4 节，涉及验证的进入第 5 节并关联已有 R/A，
-  本节引用它们，不作为另一份无人验收的任务清单。改变验收要求仍须回需求确认。
-- 第 8 节：实施子任务的目标、输入、写集、输出、接收方和验收；设计阶段的调查/审查另设小节，记关键证据位置及采纳、
-  驳回或待解决结论，不把临时子 agent 当作下一阶段仍在运行的执行者。
-- 第 9 节：需要运行时沿用现有约定；纯文档等任务写“无”。
+- Section 1: the requirements version it is based on (the sha Kernel provides), the input check result, the main route and
+  important trade-offs.
+- Section 2: R → D → A and what this round covers; deferrals or adjustments cite the user's decisions in effect — "stating
+  a reason" does not replace approval.
+- Section 3: inputs, actors, outputs and receivers of the key business steps, the necessary interfaces, dependency choices
+  and evidence, and the basis of important decisions.
+- Sections 4–6: the concrete changes and their purposes; for each A the verification method, data or environment, pass
+  condition and evidence needed; the deliverable's receiver, how it is used, enabling conditions and impact.
+- Section 7: failures and recovery that actually matter; open items state content, impact, who resolves them, when, the
+  pass condition and failure handling, telling blockers from items that can go to the build. Items handed to the build that
+  must be done link to their D; changes go into section 4, verification into section 5 linked to existing R/A, and this
+  section refers to them — never a separate task list nobody accepts. Changing acceptance requirements still goes back to
+  the requirements for confirmation.
+- Section 8: the goal, inputs, write set, output, receiver and acceptance of build subtasks; design-stage investigations and
+  reviews get their own subsection recording where the key evidence is and whether it was adopted, rejected or left open —
+  a temporary subagent is never treated as an executor still running in the next stage.
+- Section 9: follows the existing agreements when it must run; "None" for document-only and similar tasks.
 
-#### 设计完成标准
-仅评估 design 是否完成时使用；PM 自检和 Supervisor 判断下一步共用这份标准，不另设批准或状态：
-1. 对应当前有效需求；目标、范围、硬约束和重要用户决定没有未解决的冲突。
-2. 所有本期必须需求有方案，延期、取消或降级有有效用户决定；重要 D 能追溯到需求或授权范围。
-3. 必要业务步骤及交接有人负责，输出可供接收方使用。
-4. 关键依赖的证据足以支撑方案，声明、实测、假设和未知没有混淆。
-5. 业务范围、关键路线、授权边界和验收口径已确定；实施者可自行处理约束内的局部实现细节。
-6. 每个 A 有可执行的验证方法和通过条件；区分可控交付与受外部因素影响的效果。
-7. 无未解决的设计阻断项；可交实施的事项和相关失败处理满足第 7 节的交接要求。
-8. 本次新增或实质改变关键跨系统/角色交接、关键外部依赖，且错误可能导致必须需求失败、越权或难以恢复的结果，
-   或涉及资金、重要权限、不可逆外部动作的高影响决策时，未参与方案编写的子 agent 已完成独立反例审查，必须修改项已处理。
-   原样复用且适用条件未变、验证证据仍有效的部分可引用原证据，不重复审查；普通小方案可由 PM 自查，
-   不因网站或文件数量自动触发。委派操作见 assistant-subagent-orchestration 的设计分支。
+#### Design completion standard
+Only for judging whether design is complete; the PM's self-check and the Supervisor's decision on the next step share this
+standard, with no separate approval or state:
+1. It matches the requirements currently in effect; goals, scope, hard constraints and important user decisions have no
+   unresolved conflicts.
+2. Every required requirement of this round has a solution; deferral, cancellation or downgrading has a valid user
+   decision; important D trace to requirements or the granted scope.
+3. Necessary business steps and hand-overs have owners, and their output is usable by the receivers.
+4. The evidence for key dependencies is enough to support the solution, without mixing claims, measurements, assumptions
+   and unknowns.
+5. Business scope, key route, permission boundaries and acceptance definitions are settled; the builder may handle local
+   implementation details within the constraints.
+6. Every A has an executable verification method and pass condition; controllable deliverables are told apart from effects
+   influenced by outside factors.
+7. No unresolved design blockers; items that can go to the build and the related failure handling meet section 7's
+   hand-over requirements.
+8. When this task adds or substantially changes key cross-system or cross-role hand-overs or key outside dependencies whose
+   errors could make a required requirement fail, exceed permissions or be hard to recover, or involves high-impact
+   decisions on money, important permissions or irreversible outside actions, a subagent that did not write the solution has
+   completed an independent counter-example review and the required changes are handled. Parts reused unchanged whose
+   conditions have not changed and whose verification evidence is still valid may cite the original evidence without a new
+   review; ordinary small solutions may be self-checked by the PM, and the number of sites or files triggers nothing by
+   itself. How to delegate: the design branch of assistant-subagent-orchestration.
 
-### 实施报告（implementation_report）
-1 完成情况（逐条 D：已完成 / 部分完成 / 未做及原因）· 2 候选文件清单 · 3 自测（命令或方法、真实结果）·
-4 与设计不一致之处及原因 · 5 已知问题 · 6 子任务结果汇总（如有委派）·
-迭代记录（YAML，格式见输出要求；随发布批准存入项目的变更流水）
+### Implementation report (implementation_report)
+1 Completion (per D: done / partly done / not done and why) · 2 Candidate files · 3 Self-tests (command or method, real
+result) · 4 Deviations from the design and why · 5 Known problems · 6 Subtask results (if delegated) · Iteration record
+(YAML, format in the output requirements; stored in the project's change stream with the release approval)
 
-#### build 的续轮与交付
-仅用于 build 及后续对本次交付的核验，不改变 requirements、bootstrap 的格式或为 quick 增加阶段。
-沿用现有文档章节，信息可简写并互相引用，不另建进度表：
-- working_notes：在“已定事项”记录当前批准依据、实际工作区、D 的实现/验证进度及证据；在“开放问题”“下一步”
-  记录阻断、恢复条件和接手顺序。区分已实现未验证、验证失败、未实现；以实际文件/差异核实，不用笔记覆盖 Kernel 状态。
-- 实施报告第 1 节：依据的需求/设计版本（quick 为需求及简要方案）、逐条 D 完成情况及关联 A；
-  第 2 节：实际交付位置和增删改清单（Git 为改动文件）；第 3 节：测试对象、环境、方法、结果和证据位置；
-  第 4–6 节：设计偏差及处理决定、未解决/未验证事项、子任务结果与 PM 集成复核。
-  本轮来不及得到的最终 bundle/commit 不猜写，由 Kernel 回执补足；尚未发布/运行不得写成已生效。
+#### Resumed turns and delivery in build
+Only for build and later checks of this delivery; it changes no requirements or bootstrap formats and adds no stage to
+quick. Use the existing document sections, writing briefly and cross-referencing — no separate progress table:
+- working_notes: under "decided" record the current approval basis, the actual workspace, the implementation/verification
+  progress of each D and its evidence; under "open questions" and "next step" record blocks, recovery conditions and the
+  order of take-over. Tell implemented-but-unverified, verification failed and not implemented apart; check against the
+  actual files/diffs — notes never override Kernel's state.
+- Implementation report section 1: the requirements/design versions it is based on (for quick the requirements and brief
+  solution), completion per D with the related A; section 2: the actual delivery location and the list of additions,
+  changes and deletions (changed files for Git); section 3: test object, environment, method, result and where the evidence
+  is; sections 4–6: design deviations and how they were decided, unresolved or unverified items, subtask results and the
+  PM's integration check. A final bundle/commit not available this turn is not guessed — Kernel's receipt fills it in;
+  nothing not yet released or running is written as in force.
 
-#### build 提交标准
-PM 提交 ready_for_validation 前与 Supervisor 评估 build 结果共用；这些是语义检查，不增加批准或数据库状态：
-1. 当前批准依据有效且正文可读；full 的必须 D、quick 简要方案中的必须工作完成，设计遗留的必要事项已有落实证据。
-2. 批准范围、报告清单与实际产物一致；需文件交付却缺失/未登记时不得当作无文件交付，无关改动已排除。
-3. 最终内容已集成并完成本次交付所需的 A 检查，证据可复查；未执行检查、环境阻断和外部效果如实列明，
-   不临时把必须验收改成上线后观察。有效需求明确分阶段验收时按其约定，不声称后续效果已实现。
-4. 配置、运行前置条件和相关失败处理有据可依；当前执行器不支持的能力不得写成已具备。
-5. 地图、报告、迭代记录与实际改动一致，笔记足以续接；Kernel 封存/验证/发布结果各自说明，不相互替代。
+#### Build submission standard
+Shared by the PM before submitting ready_for_validation and by the Supervisor evaluating build results; these are semantic
+checks, adding no approval or database state:
+1. The current approval basis is valid and its text readable; the required D of full, or the required work of quick's brief
+   solution, is done, and the necessary items the design left open have evidence of being done.
+2. The approved scope, the report's list and the actual products match; when files must be delivered but are missing or
+   unregistered, it is not a delivery without files; unrelated changes are excluded.
+3. The final content is integrated and the A checks this delivery needs are done with re-checkable evidence; checks not run,
+   environment blocks and outside effects are listed honestly — required acceptance is never turned into "observe after
+   go-live" on the spot. When the requirements in effect explicitly stage acceptance, follow that, without claiming later
+   effects are achieved.
+4. Configuration, runtime preconditions and the related failure handling are grounded; capabilities the current executor
+   does not support are never written as available.
+5. The map, report and iteration record match the actual changes, and the notes suffice to continue; Kernel's sealing,
+   validation and release results are each stated and do not stand in for each other.
 
-### Review 报告（review_report）
-1 结论（pass / changes）· 2 逐条核对（每个 A：证据 → 通过 / 不通过）· 3 必须修改 · 4 建议修改 · 5 发布风险
+### Review report (review_report)
+1 Conclusion (pass / changes) · 2 Item-by-item check (each A: evidence → pass / fail) · 3 Must change · 4 Suggested
+changes · 5 Release risks
 
-仅 full 交付任务的 Review 使用以下补充；不为 quick、bootstrap、evolution 增加阶段或门槛。
-输入复用有效需求/设计、实施报告、Kernel 验证及固定交付清单；还应能找到未验证事项、设计遗留项与上轮必修问题。
-在原五节内按任务规模简写，不另建交接文件：
-- 第 1 节：所审查版本、实际交付对象和结论适用范围；技术基线由 Kernel 绑定，不手工编造 SHA。
-- 第 2 节：关联 R/A/D 的证据、通过/不通过/未验证；复审注明必修问题的关闭证据和受影响回归。
-- 第 3 节：必修问题的触发条件、影响、证据位置、修复或补证的验收条件。
-- 第 4 节：不阻塞本次批准范围的建议，不把新愿望混入必须修改。
-- 第 5 节：发布前置条件、剩余风险、有效需求约定的后续观察和接收方；有待完成的本次必需条件不能判 pass。
-working_notes 只保留续轮的证据引用、阻塞及下一步；旧报告/笔记不能覆盖 Kernel 的基线失效结论。
-Review → Supervisor 交接明确：通过可申请发布、实施问题回 build、方案/需求问题回对应阶段、能力阻断及恢复条件。
+The following additions apply only to the review of full delivery tasks; no stages or hurdles are added to quick,
+bootstrap or evolution. Inputs reuse the requirements/design in effect, the implementation report, Kernel's validation and
+the fixed delivery list; unverified items, items the design left open and last round's required issues must also be
+findable. Write briefly within the five sections by task size — no separate hand-over file:
+- Section 1: the versions reviewed, the actual delivery and the scope of the conclusion; the technical baseline is bound by
+  Kernel — never invent a SHA.
+- Section 2: evidence for the related R/A/D, pass/fail/unverified; a re-review states the closing evidence of required
+  issues and the affected regressions.
+- Section 3: required issues with trigger, impact, where the evidence is, and the acceptance condition of the fix or the
+  missing evidence.
+- Section 4: suggestions that do not block this approval; new wishes are not mixed into must-change.
+- Section 5: release preconditions, remaining risks, later observations the requirements in effect agree and their
+  receivers; with required conditions of this task still open it cannot be pass.
+working_notes keep only evidence references, blocks and the next step for later turns; old reports or notes never override
+Kernel's verdict that a baseline is void. The review → Supervisor hand-over is explicit: pass may request the release,
+implementation problems go back to build, solution/requirements problems to their stage, capability blocks with their
+recovery condition.
 
-### 改进建议（improvement_proposal）
-0 本期概况 · 1 上期效果复核（YAML，格式见输出要求）· 2 发现的问题（F：现象和证据）·
-3 改进建议（P：针对的 F · 根因 · 具体改法 · 预期效果 · 衡量方法 · 工作量 · 风险）· 4 考虑过但不建议的 · 5 需要用户决定的（方法见 assistant-evolution-review）
+### Improvement proposal (improvement_proposal)
+0 Overview · 1 Effect review (YAML, format in the output requirements) · 2 Problems found (F: what was observed and the
+evidence) · 3 Proposals (P: the F addressed · root cause · concrete change · expected effect · how to measure · effort ·
+risk) · 4 Considered but not proposed · 5 For the user to decide (method in assistant-evolution-review)
 
-仅 evolution/运营交接使用：核实章程、实际产物及 Kernel 提供的发布变更入口（任务、版本、文档引用、回执）。
-区分本次增量与既有约定；缺少发布来源时标未知，不把无文件交付或无登记作业当成所有运营职责消失。
-在原章节内写清效果比较基线、观察窗口、样本和证据位置；未验证/待观察项注明缺什么、下一次核对条件。
-P 交后续任务时保留源复盘/P 编号、所依据版本、目标、范围、验收与衡量方法；goal/reason/ref 可简写并引用原工件。
-接手者按来源核对再开展现有流程，不把改进建议等同于需求已批准；续轮信息仍写 working_notes，不另建交接账本。
+For evolution and operating hand-overs only: verify the charter, the actual products and the released change entry point
+Kernel provides (task, version, document references, receipts). Tell this increment from existing agreements; without a
+release source mark it unknown, and never take a file-less delivery or unregistered jobs as all operating duties gone.
+Within the existing sections state the baseline of effect comparison, the observation window, the sample and where the
+evidence is; for unverified or observed items say what is missing and the condition for the next check. When P go to
+follow-up tasks, keep the source review/P id, the version it is based on, the goal, scope, acceptance and measure;
+goal/reason/ref may be brief and cite the original artifact. Whoever takes over checks against the source before running
+the existing process — an improvement proposal is not approved requirements; information for later turns still goes into
+working_notes, with no separate hand-over ledger.
 
-## 常见错误
-- 把结论只写在 summary 里：summary 只是给用户看的简报，下一位 agent 读的是工件。
-- 改了需求却重新编号：会让设计、Review 中的引用全部失效。
-- 把推断写成事实：必须标 `[推断]`。
+## Common mistakes
+- Writing conclusions only in the summary: the summary is a brief for the user; the next agent reads the artifacts.
+- Renumbering after changing requirements: it breaks every reference in the design and review.
+- Writing inferences as facts: mark them `[inferred]`.

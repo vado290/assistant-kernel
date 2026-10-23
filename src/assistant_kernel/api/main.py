@@ -1,6 +1,7 @@
-"""kernel-api: health and version for the container health check and deploy.ps1.
+"""kernel-api: health and version for the container health check and deploy.ps1, and the dashboard (ROUND6).
 
-The rebuilt core has no HTTP business API; Discord is its only entry (plan 7.1).
+The rebuilt core has no HTTP business API; Discord is the entry for tasks (plan 7.1). The dashboard
+(api/dashboard.py) configures the installation: Discord settings and the language.
 """
 from __future__ import annotations
 
@@ -8,10 +9,12 @@ import uvicorn
 from fastapi import FastAPI, Response
 
 from assistant_kernel import __schema_version__, __version__
+from assistant_kernel.api.dashboard import build_router
 from assistant_kernel.config import KernelSettings
 
 settings = KernelSettings.from_environment()
 app = FastAPI(title="Assistant Kernel", version=__version__)
+app.include_router(build_router(settings))
 
 
 @app.get("/health/live")

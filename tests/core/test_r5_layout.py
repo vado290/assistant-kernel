@@ -77,4 +77,4 @@ async def test_a_task_waiting_too_long_ends_on_its_own(kernel, sim):
     task = await sim.task(task_id)
     assert (task["state"], task["close_reason"]) == ("cancelled", "expired_no_response")
     assert await sim.item("p1", task_id) is None
-    assert any("超过 7 天" in m["body"]["text"] for m in await sim.outbound("p1"))
+    assert any("more than 7 days" in m["body"]["text"] for m in await sim.outbound("p1"))

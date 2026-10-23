@@ -45,9 +45,9 @@ def owner() -> str:
     try:
         login = run("gh", "api", "user", "--jq", ".login", cwd=Path.cwd(), timeout=60)
     except (GitError, OSError, subprocess.TimeoutExpired) as exc:
-        raise GitError(f"不知道推送到哪个 GitHub 账号（gh 未登录？）：{exc}") from exc
+        raise GitError(f"no GitHub account to push to (is gh logged in?): {exc}") from exc
     if not login:
-        raise GitError("gh 没有返回登录的 GitHub 账号")
+        raise GitError("gh returned no logged-in GitHub account")
     return login
 
 
@@ -58,7 +58,7 @@ def _env() -> dict[str, str]:
 def run(*args: str, cwd: Path, timeout: int = 120) -> str:
     done = subprocess.run(list(args), cwd=str(cwd), capture_output=True, text=True, timeout=timeout, env=_env())
     if done.returncode != 0:
-        raise GitError(f"{' '.join(args[:3])} 失败：{(done.stderr or done.stdout).strip()[-500:]}")
+        raise GitError(f"{' '.join(args[:3])} failed: {(done.stderr or done.stdout).strip()[-500:]}")
     return done.stdout.strip()
 
 
@@ -102,7 +102,7 @@ def ignored(path: Path, paths: list[str]) -> set[str]:
     done = subprocess.run(["git", "check-ignore", "--", *paths], cwd=str(path), capture_output=True, text=True,
                           timeout=60, env=_env())
     if done.returncode not in (0, 1):   # 1: none of them is ignored
-        raise GitError(f"git check-ignore 失败：{(done.stderr or done.stdout).strip()[-500:]}")
+        raise GitError(f"git check-ignore failed: {(done.stderr or done.stdout).strip()[-500:]}")
     return {line.strip() for line in done.stdout.splitlines() if line.strip()}
 
 

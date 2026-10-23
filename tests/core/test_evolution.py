@@ -50,14 +50,14 @@ async def test_evolution_review_to_followups(kernel, sim, dispatcher, fake_harne
                                                               "需求阶段先问报告周期"]})
     await settle(dispatcher)
     prompt = fake_harness.calls[-1].prompt
-    assert "PM 回合（周度复盘）" in prompt and "改成周报" in prompt and "行业：零售" in prompt
-    assert "技能 assistant-evolution-review" in prompt and "技能 assistant-requirements" not in prompt
+    assert "PM turn (weekly review)" in prompt and "改成周报" in prompt and "行业：零售" in prompt
+    assert "Skill assistant-evolution-review" in prompt and "Skill assistant-requirements" not in prompt
     assert fake_harness.calls[-1].multi_agent_enabled
     assert fake_harness.calls[-1].max_concurrent_subagents == 3
     assert fake_harness.calls[-1].sandbox == "read-only"
-    assert "自足输入" in prompt and "数据库摘要无可读文件时附相关原文片段" in prompt
-    assert "不沿用需求阶段写 domain_brief" in prompt and "evolution：审查自身角色与技能" in prompt
-    assert "[] 不证明无待办" in prompt and "配置指纹不保存旧 role 内容" in prompt
+    assert "Self-contained input" in prompt and "database summary has no readable file, attach the relevant original text" in prompt
+    assert "of writing domain_brief does not apply" in prompt and "evolution: reviewing the agents' own roles and skills" in prompt
+    assert "[] does not prove" in prompt and "config fingerprints do not keep old role texts" in prompt
     evidence = (await kernel.evolution_context("p1"))["recent_agent_runs"]
     assert any(r["run_type"] == "pm_turn" and r["config_sha256"]
                and any(s.startswith("assistant-evolution-review@") for s in r["skills"]) for r in evidence)
@@ -66,7 +66,7 @@ async def test_evolution_review_to_followups(kernel, sim, dispatcher, fake_harne
 
     item = await sim.item("p1", evolution["task_id"])
     shown = render.render_item(item)["text"]
-    assert "1. 日报工具默认生成周报（原因：P1 用户把日报改成了周报）" in shown and "2. 需求阶段先问报告周期" in shown
+    assert "1. 日报工具默认生成周报 (reason: P1 用户把日报改成了周报)" in shown and "2. 需求阶段先问报告周期" in shown
     await kernel.act("p1", item["item_id"], "approve")
     assert (await sim.task(evolution["task_id"]))["close_reason"] == "followups_queued"
     async with kernel.db.tx() as c:
@@ -82,7 +82,7 @@ async def test_evolution_review_to_followups(kernel, sim, dispatcher, fake_harne
     assert sorted(r["kind"] for r in records) == ["review", "task"]          # the cancelled task and the review
     review = next(r for r in records if r["kind"] == "review")
     assert "日报工具默认生成周报" in review["followups"] and review["source"] == "user"
-    assert next(r for r in records if r["kind"] == "task")["outcome"] == "停止（cancelled_by_user）"
+    assert next(r for r in records if r["kind"] == "task")["outcome"] == "stopped (cancelled_by_user)"
 
 
 def project_files_root(settings):
@@ -116,12 +116,12 @@ async def test_review_material_lists_template_updates_and_other_projects(kernel,
     copy = project_files / "agents" / "pm" / ".agents" / "skills" / "assistant-requirements" / "SKILL.md"
     copy.write_text(copy.read_text("utf-8").replace('\n  version: "', '\n  version: "0.0.', 1), "utf-8")   # older copy
     text = await evolution_material(kernel, kernel_settings, "p1")
-    assert "公共模板有更新" in text and "assistant-requirements" in text and "其他项目" not in text
+    assert "Shared templates were updated" in text and "assistant-requirements" in text and "How the other projects are doing" not in text
     (project_files / "project.yaml").write_text(
         "schema_version: project.v2\nproject_id: p1\nlayout_version: 2\ncapabilities: [kernel_maintenance]\n", "utf-8")
     await kernel.receive("p2", role="pm", text="p2 的一个需求")
     text = await evolution_material(kernel, kernel_settings, "p1")
-    assert "其他项目的运营概况" in text and "- p2（improvements）：任务 1" in text and "p2 的一个需求" in text
+    assert "How the other projects are doing" in text and "- p2 (improvements): 1 tasks" in text and "p2 的一个需求" in text
 
 
 async def test_effect_reference_error_can_be_corrected_in_operate(kernel, sim, dispatcher, fake_harness):
@@ -131,7 +131,7 @@ async def test_effect_reference_error_can_be_corrected_in_operate(kernel, sim, d
     dispatcher.scripts.add("supervisor:evaluate", next_step("operate", "按反馈补正记录引用"))
     await settle(dispatcher)
     saved = await sim.task(task["task_id"])
-    assert "不能唯一匹配" in saved["documents"]["improvement_proposal"]["effect_review_error"]
+    assert "match no single record" in saved["documents"]["improvement_proposal"]["effect_review_error"]
     await kernel.act("p1", (await sim.item("p1"))["item_id"], "execute")
     fake_harness.script("pm", {"outcome": "completed", "document": {"kind": "improvement_proposal", "markdown": "## 上期效果复核\n[]"}})
     dispatcher.scripts.add("supervisor:evaluate", {"decision": "propose_complete", "message": "无需要复核的有效记录"})
@@ -152,7 +152,7 @@ async def test_operating_handoff_references_and_followup_source_stay_project_sco
         await c.execute("UPDATE core.tasks SET documents=%s WHERE task_id=%s", (Jsonb({"task_contract": requirement}), release["task_id"]))
         await c.execute("UPDATE core.projects SET operational_baseline=%s WHERE project_id='p1'", (Jsonb({"task_id": str(release["task_id"]), "bundle_sha": "git:bound"}),))
     text = await evolution_material(kernel, kernel_settings, "p1")
-    assert requirement["sha256"] in text and "最近增量" in text and "git:bound" in text
+    assert requirement["sha256"] in text and "the latest increment" in text and "git:bound" in text
     proposal = write_document(kernel_settings, "p1", str(release["task_id"]), "r2", "improvement_proposal", {"markdown": "P1 with acceptance and evidence"}, "pm")
     async with kernel.db.tx() as c:
         await c.execute("UPDATE core.tasks SET documents=%s WHERE task_id=%s", (Jsonb({"improvement_proposal": proposal}), release["task_id"]))
@@ -239,4 +239,4 @@ async def test_evolution_context_is_bounded_and_exposes_original_proposal(kernel
     text = await evolution_material(kernel, kernel_settings, "p1")
     assert str(child["task_id"]) in text and "review:source:P1" in text
     assert "retain customized role" in text and "p2-" not in text
-    assert "缺衡量方法" in text and "[] 不证明无待办" in text
+    assert "without a way to measure it" in text and "[] does not prove" in text

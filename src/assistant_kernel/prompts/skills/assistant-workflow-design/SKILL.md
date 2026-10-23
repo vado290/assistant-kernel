@@ -1,57 +1,75 @@
 ---
 name: assistant-workflow-design
-description: 设计会自动运行的产物：定时脚本、产物内的 agent、常驻服务怎样拆分、怎样声明到 jobs.yaml、怎样保证可重复运行和故障恢复；产物需要定时或长期运行时使用。
+description: Design products that run on their own — how to split scheduled scripts, agents inside the product and long-running services, how to declare them in jobs.yaml, how to make them safe to re-run and recover from failures; use when a product must run on a schedule or keep running.
 metadata:
-  version: "2.1.0"
+  version: "2.2.0"
   load: {roles: [pm], stages: [design, build], on_demand: true}
   io:
     reads: [task_contract, map]
     writes: [solution_design, jobs]
   changelog:
-    - "2.1.0 2026-10-21 明确运行数据、周期输出、静态交付及工作目录边界，沿用原发布与执行机制"
-    - "2.0.2 2026-10-17 增加 io 元数据（读写哪些工件），用于检查技能协作断链（ROUND4）"
-    - "2.0.1 2026-10-16 运行声明文件改为项目根目录的 jobs.yaml（vault 的 runtime/ 目录存放 Kernel 内部数据）"
-    - "2.0.0 2026-10-16 按核心 v6 和通用运行时（ROUND3 S3）重写：运行方式一律声明在 jobs.yaml，发布即登记"
+    - "2.2.0 2026-10-23 Written in English, the skills' source language (ROUND6, 0.46.0)"
+    - "2.1.0 2026-10-21 Clarified the boundaries of runtime data, periodic output, static deliverables and working directories; kept the existing release and execution mechanisms"
+    - "2.0.2 2026-10-17 Added io metadata (which artifacts are read and written) to check broken skill hand-offs (ROUND4)"
+    - "2.0.1 2026-10-16 The runtime manifest is jobs.yaml at the project root (the vault's runtime/ folder holds Kernel's internal data)"
+    - "2.0.0 2026-10-16 Rewritten for core v6 and the general runtime (ROUND3 S3): every way of running is declared in jobs.yaml and registered on release"
 ---
 
-# 运行方式设计
+# Designing how it runs
 
-## 先选最简单的运行方式
-| 需求 | 用什么 | 说明 |
+## Choose the simplest way to run first
+| Need | Use | Notes |
 |---|---|---|
-| 确定性的计算、汇总、转换、拉取数据 | **script 作业** | 首选。便宜、可测试、结果稳定 |
-| 需要理解、判断、写分析或建议 | **agent 作业** | 每次运行一轮模型，只读；结果发到频道 |
-| 持续监听、长连接、高频采集 | **service** | supervisord 托管、崩溃自动重启；可加定期重启 |
-| 一次性或人工触发 | 不登记 | 由任务完成，或用户用 `/jobs run` 手动运行已登记的作业 |
+| Deterministic computing, totals, conversion, fetching data | **script job** | First choice. Cheap, testable, stable results |
+| Understanding, judgement, writing analysis or advice | **agent job** | One read-only model turn per run; the result goes to a channel |
+| Continuous listening, long connections, high-frequency collection | **service** | Supervised by supervisord, restarted on crashes; optional scheduled restarts |
+| One-off or triggered by hand | not registered | Done by a task, or the user runs a registered job with `/jobs run` |
 
-能用脚本就不用 agent；能定时就不用常驻服务。一条流水线可以拆成几个作业：脚本先准备数据，agent 再基于数据写分析。
+Prefer scripts to agents and schedules to long-running services. One pipeline can be split into several jobs: a script
+prepares the data, then an agent writes the analysis from it.
 
-## 设计文档"运行方式"一节要写清
-对每个作业或服务写一行，字段与 `jobs.yaml` 一一对应：id · 类型 · 入口 · 时间规则（含时区）· 超时 · 重试 · 告警频道；
-agent 作业再写 prompt 要点和结果发到哪里；服务写启动命令和是否定期重启。并说明：
-- **输入输出**：读什么、写到哪里、由谁使用；路径注明所属根和相对位置，外部目录须有现有授权。
-  文件交付的脚本工作目录为 vault，Git 交付为仓库；业务 agent 配置仍从 vault 读取。核对实际路径配置方式，
-  不假定 Kernel 会自动挂载数据目录或注入新的路径环境变量。
-- **可重复运行**：同一时间点被重跑不会重复发送、重复记账（例如先检查当天结果是否已存在）。
-- **增量**：周期作业从上次成功的边界继续，不每次全量重算；边界存在项目文件里。
-- **失败时**：重试几次、失败告警发给谁、人工如何补救（`/jobs run <id>`）、会不会留下半成品需要清理。
-- **配置和凭据**：脚本拿不到 Kernel 的数据库和密钥；外部服务的凭据怎么提供要在设计中写明，请用户确认。
+## What the design's "how it runs" section states
+One line per job or service, the fields matching `jobs.yaml`: id · type · entry · schedule (with time zone) · timeout ·
+retries · alert channel; for agent jobs also the gist of the prompt and where the result goes; for services the start
+command and whether it restarts on a schedule. Also state:
+- **Inputs and outputs**: what is read, where it is written, who uses it; paths name their root and relative location,
+  and outside directories need an existing grant. Scripts run in the vault for file delivery and in the repository for
+  git delivery; business agent configuration is still read from the vault. Check how paths are actually configured — do
+  not assume Kernel mounts data folders or injects new path environment variables.
+- **Safe to re-run**: re-running the same time does not send or book anything twice (for example check first whether
+  today's result exists).
+- **Incremental**: periodic jobs continue from the last successful boundary instead of recomputing everything; the
+  boundary is kept in project files.
+- **On failure**: how many retries, who gets the alert, how a person repairs it (`/jobs run <id>`), whether half-finished
+  output needs cleaning up.
+- **Configuration and credentials**: scripts cannot reach Kernel's database or keys; how outside services' credentials
+  are provided is stated in the design for the user to confirm.
 
-## 运行数据与交付
-- 代码、模板、配置及本次承诺的静态文档沿用任务交付/发布；已经批准的作业在约定范围内生成周期数据和报告，
-  不逐次重新走 build。是否属于正式交付按用途、生产者和有效约定判断，不仅看 artifacts/、data/ 等目录名。
-- 持久业务数据与运行输出使用项目既有约定或明确的持久位置，不只保存在会被清理的 worktree、候选区或测试临时区。
-  无既有约定时可按需选择 data/、artifacts/；Git 项目须明确实际数据根、读取配置及提交排除，不能把相对路径默认为 vault。
-- 说明哪些内容受版本控制、哪些是运行中可变的数据、哪些可重建；测试数据与真实业务数据分开，凭据不进入提交。
-  不占用 Kernel 的 runs/、runtime/ 管理区作为业务资源模板或默认数据目录。
-- 目录移动须核对入口、引用和消费者；代码回退不自动撤销运行产出，也不删除业务数据。
-  涉及覆盖、迁移或清理时写明已授权的保留与恢复办法，未约定时保留现有数据，不自行设定清理期限或新增清理作业。
-  只读业务 agent 仍只读取、交回结果，需要写文件的生产步骤由有相应授权的脚本/服务完成。
+## Runtime data and deliverables
+- Code, templates, configuration and static documents promised in this task go through the task's delivery/release;
+  approved jobs produce periodic data and reports within the agreed scope without a new build each time. Whether
+  something is a released deliverable is judged by its purpose, producer and the agreements in effect — not just by
+  folder names such as artifacts/ or data/.
+- Persistent business data and runtime output use the project's existing convention or an explicit persistent location,
+  never only a worktree, candidate area or test scratch area that gets cleaned up. Without a convention data/ or
+  artifacts/ may be chosen as needed; Git projects state the actual data root, how it is configured and that it is
+  excluded from commits — never assume a relative path means the vault.
+- State what is version-controlled, what is mutable runtime data and what can be rebuilt; keep test data apart from real
+  business data, and credentials out of commits. Do not use Kernel's managed runs/ and runtime/ areas as business resource
+  templates or default data folders.
+- Moving folders requires checking entry points, references and consumers; reverting code does not undo runtime output
+  or delete business data. For overwriting, migration or clean-up, state the authorised retention and recovery method;
+  without an agreement keep the existing data — never set clean-up deadlines or add clean-up jobs on your own. Read-only
+  business agents still only read and hand back results; production steps that write files belong to scripts or
+  services with the matching grant.
 
-## 产物内的 agent
-需要 agent 作业时，按 assistant-agent-design 设计它的 `agents/<名称>/config.yaml`、`role.md` 和专属技能。
+## Agents inside the product
+When an agent job is needed, design its `agents/<name>/config.yaml`, `role.md` and its own skills by
+assistant-agent-design.
 
-## 验证与 Review
-- 实施阶段：每个脚本至少真实运行一次（用测试数据或"只读/演练"参数），把命令和输出写进实施报告。
-- Kernel 在验证阶段检查 manifest 的格式、时间规则和入口文件是否存在。
-- Review 检查：可重复运行、失败处理、告警去向、凭据不入库、时间规则与需求一致。
+## Verification and review
+- Build stage: run each script for real at least once (with test data or a read-only/dry-run option) and put the command
+  and output into the implementation report.
+- During validation Kernel checks the manifest's format, schedules and that entry files exist.
+- The review checks: safe re-runs, failure handling, where alerts go, credentials not stored, schedules matching the
+  requirements.

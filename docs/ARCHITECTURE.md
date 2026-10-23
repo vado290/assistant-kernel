@@ -59,9 +59,17 @@ A project-creation task (`bootstrap`) only drafts its charter; approval creates 
 | `projectgit.py` | each project folder (and each folder it may write to) is a repository: snapshot before a release, commit after it, private GitHub remote via `gh` |
 | `projectmap.py` | the project map `map.yaml` (one index entry per file; every product Python file listed), checked at validation, `map_lookup` tool |
 | `credentials.py` | the project's credentials `runtime/credentials.json`: look first, ask with a `credential` question, never in the conversation |
-| `gateway/` | Discord gateway: messages, cards, buttons, text commands (`/status /pending /cancel /evolve /jobs /iterations /grants /secrets`) |
+| `gateway/` | Discord gateway: messages, cards, buttons, text commands (`/status /pending /cancel /evolve /jobs /iterations /grants /secrets`); `setup.py` checks a bot token for the dashboard |
+| `i18n.py` | text and language rules (ROUND6): interface text from `i18n/en.yaml`, the English headings Kernel parses (older Chinese headings still found), contract placeholders (`{{heading:key}}`), the language note that makes models reply in the user's language |
 | `sql/` | migrations, applied in order, never edited after applying |
 
 ## Processes (supervisord in the AI container)
-`kernel-core-dispatcher`, `kernel-core-gateway`, `kernel-api` (health/version), plus project services
-`proj-<project>-<service>` registered by the job runtime. Deploy: `scripts/deploy.ps1` (the user runs it).
+`kernel-core-dispatcher`, `kernel-core-gateway`, `kernel-api` (health/version and the dashboard at `/dashboard`), plus
+project services `proj-<project>-<service>` registered by the job runtime. Deploy: `scripts/deploy.ps1` (the user runs it).
+
+## Languages (ROUND6)
+The interface is English: Kernel's own text (cards, buttons, notices, commands, the dashboard, files Kernel writes into
+projects) comes from `i18n/en.yaml`, never from literals in code. Contracts, skills, roles and templates are English. Every
+model turn ends with a language note: models reply in the language the user writes in (the latest message, otherwise the
+language the user mostly writes in, otherwise English), and the text of documents follows it, while document headings stay
+in English — the parser also accepts the Chinese headings of older documents.

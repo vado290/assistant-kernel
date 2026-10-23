@@ -1,0 +1,356 @@
+# Interface text and the headings Kernel parses (ROUND6). The interface is English; models reply in the user's language.
+heading.purpose: Purpose
+heading.goals: Business goals and success criteria
+heading.users: Users and usage scenarios
+heading.background: Organisation and industry background
+heading.scope: Scope
+heading.constraints: Constraints
+heading.routing: Routing
+heading.archive: Background archive
+heading.creation: Creation parameters
+heading.profile: User profile observations
+heading.revision_log: Revision log
+heading.pm_notes: Project-specific notes for the PM
+heading.supervisor_notes: Project-specific notes for the Supervisor
+heading.iteration_record: Iteration record
+heading.effect_review: Review of last period's effects
+dashboard.title: Super Assistant
+dashboard.subtitle: Dashboard · settings of this installation
+dashboard.access_title: Dashboard access
+dashboard.access_help: Enter the dashboard token. It is in the file {path} of your installation.
+dashboard.access_input: Dashboard token
+dashboard.access_button: Open
+dashboard.sign_out: Forget token
+dashboard.discord_title: Discord
+dashboard.discord_intro: You talk to the assistant in your own Discord server. Discord lets only you create the bot; after that the dashboard does the rest.
+dashboard.step1_title: 1 · Create the bot
+dashboard.step1_body: 'In the Discord Developer Portal: New Application → Bot → Reset Token, then copy the token. You also need a Discord server of your own (in the Discord app: + → Create My Own).'
+dashboard.step1_link: Open the Developer Portal
+dashboard.step2_title: 2 · Enter the token
+dashboard.token_label: Bot token
+dashboard.token_placeholder: Paste the token (leave empty to keep the saved one)
+dashboard.token_saved: Current token {hint} · {source}
+dashboard.token_source_env: from an environment variable
+dashboard.token_source_file: saved by the dashboard
+dashboard.token_none: No token saved yet.
+dashboard.check_button: Check
+dashboard.checking: Checking…
+dashboard.bot_line: Bot {bot} · application {app} · owner {owner}
+dashboard.intent_on: Message Content intent is on.
+dashboard.intent_off: Message Content intent is off — without it the assistant cannot read your messages.
+dashboard.intent_button: Turn it on
+dashboard.intent_manual: Discord did not allow turning it on from here. Open the bot page and switch on "Message Content Intent", then press Check again.
+dashboard.bot_page: Open the bot page
+dashboard.step3_title: 3 · Invite the bot to your server
+dashboard.step3_body: Open the invite link, choose your server and authorise. Then refresh the server list.
+dashboard.invite_button: Open the invite link
+dashboard.refresh_button: Refresh servers
+dashboard.step4_title: 4 · Choose the server and save
+dashboard.guild_label: Server
+dashboard.guild_none: The bot is not in any server yet.
+dashboard.users_label: Allowed Discord user ids
+dashboard.users_help: Comma-separated. Empty means everyone in the server. The application owner (you) is filled in.
+dashboard.save_button: Save
+dashboard.saved: Saved. The gateway restarts with the new settings within half a minute.
+dashboard.env_overrides: Saved, but an environment variable provides a different token; the gateway keeps using it until that variable is removed.
+dashboard.projects_title: Project channels
+dashboard.projects_help: 'Kernel creates a category with #pm and #supervisor for each project.'
+dashboard.projects_empty: No project channels yet.
+dashboard.col_project: Project
+dashboard.error.invalid_token: Discord rejected the token.
+dashboard.error.discord_error: 'Discord returned an error: {detail}'
+dashboard.error.unreachable: Discord could not be reached.
+dashboard.error.no_token: Enter a bot token first.
+dashboard.error.bad_id: Server and user ids are numbers.
+dashboard.error.bot_not_in_guild: The bot is not in this server yet — invite it first.
+dashboard.error.dashboard_token: The dashboard token is not correct.
+dashboard.error.unknown: 'Something went wrong: {detail}'
+list.separator: ', '
+stage.requirements: Requirements
+stage.design: Design
+stage.build: Build and self-test
+stage.review: Independent review
+stage.release: Release
+stage.operate: Operation
+approval.requirements: the requirements document
+approval.design: the design document
+action.execute: Go
+action.revise: Change…
+action.stop: Stop task
+action.approve: Approve
+action.reject: Decline
+action.retry: Retry
+action.continue: Continue
+action.published: Confirm it was published
+action.failed: Confirm the release failed
+decision.release: Release request
+decision.complete: 'Proposal: finish the task'
+decision.cancel: 'Proposal: cancel the task'
+decision.new_task: 'Proposal: a new task'
+decision.run_failed: Run failed
+decision.reconcile: The release result needs checking
+decision.create_project: Create the project from the charter
+decision.project_task: Start creating a project
+decision.grant: Directory access
+decision.followups: Proposed follow-up tasks
+decision.shared_update: Change the shared background
+done.execute: Confirmed — the PM starts now.
+done.approve: Approved.
+done.reject: 'Noted: declined.'
+done.stop: Task stopped.
+done.retry: Retry scheduled.
+done.continue: Continued.
+done.published: 'Noted: published.'
+done.failed: 'Noted: the release failed.'
+done.submit: Answers submitted.
+done.revise: Your thoughts went to the Supervisor, who will re-plan accordingly.
+done.default: Noted.
+track.quick: '⚡ Suggested: the quick track — a brief solution goes into the requirements document, then straight to the build, skipping design and review (the release still needs your approval).'
+track.full: '📐 Suggested: switch to the full track: requirements → design → build → review → release.'
+card.long: …(long — the full text is attached)
+card.questions_title: ❓ Your answers needed
+card.optional: ' (optional)'
+card.options: 'Options: '
+card.recommended: 'Suggested: '
+card.answer: Answer
+card.answer_range: Answer {start}-{end}
+card.other_thoughts: Other thoughts…
+card.next_step: '▶ Next step: {stage}'
+card.approve_with_execute: ⚠ Pressing "Go" also approves {names}.
+card.inferred: My inference (not confirmed by you — if it is wrong, press "Change" and tell me)
+card.basis: ' (basis: {basis})'
+card.instruction: Instruction to the PM
+card.followups_note: Once approved, these tasks are queued one after another and this task ends.
+card.shared_file: 'File: `{file}` · section: {section}
+
+  Reason: {reason}'
+card.unspecified: (not given)
+card.shared_now: Current content
+card.shared_new_section: (this section does not exist yet and will be added)
+card.shared_after: Content after the change
+card.shared_note: Once approved, Kernel writes it and every project uses the new content from its next turn.
+card.project_spec: 'Project ID: `{project_id}`
+
+  Name: {name}
+
+  Purpose: {purpose}
+
+  Capabilities: {capabilities} · delivery: {delivery} · sharing level: {share}
+
+  The full charter is this task''s requirements document.
+
+
+  Approving approves this charter: Kernel creates the project folder, charter, PM/Supervisor configuration, skills and Discord channels from it.'
+card.none: none
+card.access_write: write
+card.access_read: read-only
+card.spec_directory: 'Directory access: {path} ({access}) — {purpose}'
+card.release_record: 'Iteration record: {record}'
+card.major: ' [major change]'
+card.no_record: (The PM wrote no iteration record; the platform adds one from the task after the release.)
+card.grant: 'Directory: {path}
+
+  Access: {access}
+
+  Purpose: {purpose}
+
+  Takes effect from the next turn once approved; revoke it with /grants revoke {key}.'
+card.project_task: 'New task: {goal}
+
+  Once approved, the project charter is agreed with you first; the project is created only after the charter is approved. The current task ends.'
+card.followup_reason: ' (reason: {reason})'
+card.closed_questions: ~~Question card~~ handled or replaced by a newer card.
+card.closed_next_step: ~~Next-step card~~ handled or replaced by a newer card.
+card.closed_decision: ~~Decision card~~ handled or replaced by a newer card.
+card.pointer: '📌 Something needs your attention — see the Supervisor channel: {link}'
+cmd.confirm_word: confirm
+gw.stale: This card was updated or handled — see the latest card in the Supervisor channel.
+gw.evolve: 'A review is scheduled: the PM looks back at recent runs and proposes improvements; you decide on the card in the Supervisor channel.'
+gw.cancel_confirm: 'Cancel the current task? Send: /cancel {word}'
+gw.no_permission: You may not act on this card.
+gw.modal_answer: Answer the questions
+gw.modal_other: Other thoughts
+gw.modal_revise: Change the next step
+gw.other_label: No need to answer — tell me what you think
+gw.revise_label: How would you like to change it?
+gw.other_placeholder: 'e.g. I don''t know these, look them up for me; or: not this now, do … instead'
+gw.page_saved: This page is saved — continue with "Answer {start}-…".
+gw.missing: 'Required questions still unanswered: {list}'
+gw.cannot: 'Cannot do that: {error}'
+gw.no_channel: (the target project's channel is not configured)
+gw.reminder: '⏰ A card has been waiting about {hours} hours: {link}'
+gw.credential_placeholder: Saved as project credential {key}; never in the conversation record
+gw.optional_options: 'Optional: {options}'
+cmd.secrets_usage: 'Usage: /secrets · /secrets delete <key>'
+cmd.secrets_confirm: 'Delete credential {key}? Send: /secrets delete {key} {word}'
+cmd.secrets_deleted: Credential {key} deleted.
+cmd.secrets_missing: No credential {key}. Send /secrets to see them.
+cmd.grants_usage: 'Usage: /grants · /grants revoke <key>'
+cmd.grants_confirm: 'Revoke directory access {key}? From the next turn this project can no longer reach it. Send: /grants revoke {key} {word}'
+cmd.grants_revoked: Directory access {key} revoked (from the next turn).
+cmd.grants_missing: No active directory access {key}. Send /grants to see them.
+cmd.iterations: 'Changes in the last {days} days (at most 20):'
+cmd.jobs_usage: 'Usage: /jobs · /jobs pause <id> · /jobs resume <id> · /jobs run <id>'
+cmd.job_run: Job {job} will run now (its schedule is unchanged); a failure is reported in the Supervisor channel.
+cmd.job_missing: No job {job}.
+cmd.job_missing_service: No job {job} (a service cannot be paused; disable it in jobs.yaml).
+cmd.job_paused: Job {job} paused.
+cmd.job_resumed: Job {job} resumed.
+cmd.no_project: This channel belongs to no project.
+cmd.status_idle: 'Project {project} has no active task. Open cards: {pending}.'
+cmd.status: 'Project {project}
+
+  Task: {goal}
+
+  Stage: {stage}   State: {state}   PM turns so far: {turns}
+
+  Open cards: {pending}'
+cmd.no_pending: No open cards.
+cmd.sending: (being sent)
+cmd.pending: 'Open cards:'
+cmd.no_permission: You may not do this.
+cmd.no_task: No active task.
+cmd.cancel_publishing: The task is being released (or a project is being created); this step cannot be cancelled midway. You will be told when it finishes and can then decide whether to undo it.
+cmd.cancel_published: The task has entered the release and cannot be cancelled midway; check the result when it arrives — cancelling does not undo a release that already happened.
+cmd.cancelled: 'Task cancelled: {goal}'
+discord.error_reply: Something went wrong. Check the latest card in the Supervisor channel to see whether it took effect; if not, press again.
+discord.cmd_status: Tasks and cards of this project
+discord.cmd_pending: List the open cards
+discord.cmd_cancel: Cancel the active task
+discord.cmd_cancel_confirm: Confirm the cancellation
+discord.not_cancelled: Not cancelled. To cancel, set confirm to True.
+secrets.none: This project has no saved credentials yet.
+secrets.title: 'Credentials saved for this project (values not shown):'
+secrets.line: '- `{key}`: {service} · {purpose} (updated {date})'
+secrets.footer: 'Delete: /secrets delete <key> (asks for confirmation). New ones: the PM asks when needed and you fill them in on the card.'
+grants.none: This project has no extra directory access (only its own vault).
+grants.title: 'Directories this project may access:'
+grants.line: '- `{key}`: {path} ({access}) — {purpose}'
+grants.footer: 'Revoke: /grants revoke <key> (asks for confirmation). New ones: tell the Supervisor channel the directory, read or write, and the purpose.'
+jobs.none: This project has no registered jobs or services (the released jobs.yaml decides).
+jobs.title: 'Jobs and services of this project:'
+jobs.service_line: '- service `{job}`: {state}'
+jobs.registered: registered
+jobs.job_line: '- job `{job}` ({type}): {status}, next {when}'
+jobs.last: ', last {state}'
+jobs.failures: ', {count} failures in a row'
+jobs.status_enabled: enabled
+jobs.status_paused: paused
+jobs.status_retired: retired
+jobs.footer: 'Commands: /jobs pause <id> · /jobs resume <id> · /jobs run <id>'
+jobs.unreleased: ⚠ {manifest} was changed directly and differs from the released version; Kernel did not register these changes. Change jobs and services through a task release (approving the release registers them).
+jobs.invalid: '⚠ {manifest} has errors; no change was registered: {error}'
+jobs.apply_pending: 'The service configuration is not applied yet and stays pending for a retry: {error}'
+jobs.recovered: The runtime configuration and workspace check recovered; the business effect still needs checking.
+jobs.change_added: 'added: {names}'
+jobs.change_updated: 'changed: {names}'
+jobs.change_retired: 'retired: {names}'
+jobs.updated: ⚙ The runtime follows the released jobs.yaml ({changes}). Send /jobs to see it.
+jobs.service_running: ✅ Service {job} is running again.
+jobs.service_state: ⚠ Service {job} is now {state} (supervisord restarts crashed processes; if it persists, check runs/services/{job}.err.log).
+iter.major: '[major] '
+iter.origin: ' ({kind}, from {source})'
+iter.reason: 'Reason: {text}'
+iter.change: 'Change: {text}'
+iter.more_changes: 'Change: {count} more'
+iter.verification: 'Verification: {text}'
+iter.expected_effect: 'Expected effect: {text}'
+iter.measure: 'Measure: {text}'
+iter.followups: 'Left open: {text}'
+iter.effect: 'Effect review: {status} ({note})'
+iter.effect_effective: effective
+iter.effect_ineffective: ineffective
+iter.effect_pending: to be observed
+iter.generated: (The PM's iteration record was missing or malformed; the platform wrote this one from the task.)
+iter.empty: (no records)
+mx.task_completed: '✅ Task completed: {goal}'
+mx.published_files: 'Published: {files}'
+mx.task_stopped: '⏹ Task stopped: {goal}'
+mx.unread_intro: '📝 You added these before the task ended, and they were not handled yet:'
+mx.unread_outro: Send them again if needed; they will be handled as a new request.
+mx.grant_title: Directory access {key} ({access})
+mx.revoke_title: Directory access {key} revoked
+mx.revoked_by_user: revoked by the user
+mx.outcome_completed: completed ({reason})
+mx.outcome_stopped: stopped ({reason})
+mx.review_title: Weekly review {date}
+mx.no_followups: no follow-up tasks
+mx.adopted: '{count} proposals adopted'
+mx.effect_invalid: Some effect-review entries were invalid, ambiguous or duplicated and were not written back; valid, unique verdicts were written back as usual, the rest stay for checking.
+mx.pm_summary: 'PM ({stage}): {summary}'
+mx.pm_credentials: The PM needs the following (credentials go to the project's credential store and never appear in the conversation record)
+mx.release_q: Approve the release?
+mx.followups_q: Queue these improvements as new tasks?
+mx.grant_q: Grant access to this directory?
+mx.project_task_q: Start a project-creation task and agree the project charter first?
+mx.create_project_q: Create project {project_id} from the charter?
+mx.pm_raw: The PM's questions
+mx.reconcile_unsure: The release result is uncertain — check it and choose what actually happened.
+mx.project_created: 🆕 Project {project_id} created.
+mx.created_grant_reason: 'approved with the project''s creation: {purpose}'
+mx.created_title: 'Project created: {name}'
+mx.new_task_q: Create a new task?
+mx.new_task_after: (Once approved, it queues behind the current task "{after}" and starts when that one ends; or send /cancel to end the current task first.)
+mx.shared_q: Change the shared background like this?
+mx.grant_refused: '⚠ This directory cannot be granted: {error}'
+mx.profile_noted: '📝 Noted in your user profile: {notes} (if this is wrong, just tell me and I will correct it)'
+mx.attached: A task is already in progress; this message went to the PM as an addition to it.
+mx.starting: 'OK, starting on it: {goal}'
+mx.routed: This fits another project better and has been handed over.
+mx.handoff: '📨 Handed over from {source}:
+
+  {handoff}'
+mx.job_recovered: ✅ Job {job} is back to normal.
+mx.job_failed: '⚠ Job {job} failed (after {attempts} attempts): {reason}
+
+  Logs are in runs/jobs/{job}/; send /jobs run {job} to retry or /jobs pause {job} to pause it.'
+mx.consult_failed: ⚠ The Supervisor cannot answer this message right now; please ask again later. ({reason})
+mx.triage_failed: ⚠ This message cannot be handled right now; please send it again later. ({reason})
+mx.publish_broken: The release failed or was interrupted — check what actually happened.
+mx.run_failed: '{run_type} failed repeatedly: {error}'
+mx.release_not_approved: 'Not approved this time: {error}. {recovery}'
+mx.release_ref_stale: the release card's references are out of date
+mx.recovery_review: Press "Decline" and the Supervisor will rearrange the review.
+mx.recovery_release: Press "Decline" and check the actual release result; the release stage cannot go straight back to review.
+mx.shared_title: 'Shared background: {file} · {section}'
+mx.no_reason: (no reason given)
+files.background_header: '# Background archive
+
+
+  Organisation, industry and project facts this project has collected. Kernel appends a requirements document''s background-archive section when it is approved, each entry dated and naming its task; the latest entry wins.
+
+  '
+files.profile_header: '# User profile
+
+
+  One section per user. Kernel appends a requirements document''s user-profile observations (when the requirements are approved; also, marked as such, when a task ends without approval) and the preferences and corrections the Supervisor noted in conversation; the weekly review may propose tidying it up. Items marked [inferred] are not confirmed by the user; for the same aspect the latest entry wins, and the user''s corrections win.
+
+  '
+files.user_section: User {user}
+files.brief_title: Industry brief
+files.entry_heading: '{date} · {goal} (task {task})'
+files.brief_heading: '{heading} research, archived with the approved requirements'
+files.unapproved_heading: '{date} · {goal} (task {task}; requirements not approved, collaboration observations only)'
+files.observed_tag: Supervisor · conversation
+files.observed_heading: '{date} · noted by the Supervisor in conversation'
+files.shared_updated: '✅ Shared background updated: {file} · {section} (every project uses the new content from its next turn)'
+files.push_failed: '⚠ Pushing to GitHub failed (local commits are not affected; retried every hour): {error}'
+files.charter_header: '# {name} · Project charter
+
+
+  > Project ID: `{project_id}` · created {created} (task {task}). The PM and the Supervisor read this charter every turn; its purpose, scope and routing sections are also used for routing by kernel.
+
+  > Sections change through tasks (the reason is recorded in the project''s change stream). The background archive is in `knowledge/background.md`; Kernel appends to it when requirements are approved.'
+files.see_charter: (see the charter)
+files.created_archive: '{date} · collected while creating the project'
+files.created_profile: '{date} · observed while creating the project'
+files.created_brief: '{date} · research done while creating the project'
+files.topic_pm: 'PM: requests and additional information go here'
+files.topic_supervisor: 'Supervisor: cards and questions'
+files.release_git_warning: '⚠ The release is done, but there were git commit problems (the release is not affected): {problems}'
+files.unreleased_git_warning: '⚠ The release did not finish, and there were also git snapshot problems: {problems}'
+pm.review_not_taken: This turn's review verdict was not accepted; the working notes are kept only as leads to re-check.
+pm.review_workspace: The review workspace is missing or differs from the validated commit, so this turn cannot pass the review; keep the changes and restore the workspace, or go back to build and submit for validation again.
+kernel.evolution_goal: 'Weekly review: propose improvements from the recent run records'
+kernel.expired: '⌛ The task waited for you more than {days} days without a reply and ended on its own: {goal}. All its documents are kept; bring it up again whenever you need it.'
+kernel.revoked_command: revoked by the user with /grants revoke

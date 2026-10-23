@@ -9,6 +9,8 @@ import json
 import re
 from typing import Any
 
+from assistant_kernel.core import i18n
+
 ACTIVE_STATES = ("pm", "supervising", "awaiting_user", "validating", "publishing", "bootstrapping")
 TERMINAL_STATES = ("completed", "cancelled")
 
@@ -24,7 +26,7 @@ CURSOR_RUN = {
 PROJECT_ID = re.compile(r"[a-z][a-z0-9-]{2,39}")
 
 
-CREATION_SECTION = "创建参数"      # contract (prompts/core/pm-bootstrap.md): the YAML block Kernel creates a project from
+CREATION_SECTION = "creation"     # contract (prompts/core/pm-bootstrap.md): the YAML block Kernel creates a project from
 PROJECT_CAPABILITIES = ("routing", "project_management", "shared_context")   # kernel_maintenance: kernel only
 DELIVERIES = ("vault-files", "git-repo")   # git-repo: code delivery (R4a); it turns on the git_delivery capability
 SHARE_LEVELS = ("metrics", "improvements", "full")
@@ -33,21 +35,21 @@ SHARE_LEVELS = ("metrics", "improvements", "full")
 def project_spec(spec: Any) -> dict[str, Any]:
     """Validate and normalise the creation parameters of a new project (ROUND2 R3)."""
     if not isinstance(spec, dict):
-        raise ValueError("创建参数必须是一个 YAML 对象")
+        raise ValueError("the creation parameters must be a YAML object")
     project_id = str(spec.get("project_id") or "").strip()
     if not PROJECT_ID.fullmatch(project_id):
-        raise ValueError("project_id 必须是 3–40 个小写字母、数字或连字符，以字母开头")
+        raise ValueError("project_id is 3–40 lowercase letters, digits or hyphens, starting with a letter")
     display_name, purpose = str(spec.get("display_name") or "").strip(), str(spec.get("purpose") or "").strip()
     if not display_name or not purpose:
-        raise ValueError("缺少 display_name 或 purpose")
+        raise ValueError("display_name or purpose is missing")
     capabilities = [str(c) for c in spec.get("capabilities") or []]
     unknown = sorted(set(capabilities) - set(PROJECT_CAPABILITIES))
     if unknown:
-        raise ValueError(f"未知或不允许的能力 {unknown}；可选：{', '.join(PROJECT_CAPABILITIES)}")
+        raise ValueError(f"unknown or disallowed capabilities {unknown}; choose from {', '.join(PROJECT_CAPABILITIES)}")
     delivery = str(spec.get("delivery") or "vault-files")
     share = str(spec.get("share_with_kernel") or "improvements")
     if delivery not in DELIVERIES or share not in SHARE_LEVELS:
-        raise ValueError(f"delivery 只能是 {DELIVERIES}，share_with_kernel 只能是 {SHARE_LEVELS}")
+        raise ValueError(f"delivery must be one of {DELIVERIES} and share_with_kernel one of {SHARE_LEVELS}")
     if delivery == "git-repo":   # loads the code-delivery skill
         capabilities.append("git_delivery")
     return {"project_id": project_id, "display_name": display_name[:80], "purpose": purpose[:500],
@@ -58,17 +60,17 @@ def project_spec(spec: Any) -> dict[str, Any]:
 
 
 def charter_spec(markdown: str) -> dict[str, Any]:
-    """Creation parameters from a charter draft's "创建参数" section (a YAML block); raises ValueError."""
+    """Creation parameters from a charter draft's creation-parameters section (a YAML block); raises ValueError."""
     import yaml
     from assistant_kernel.core.skills import section_text
     block = section_text(markdown, CREATION_SECTION)
     if not block:
-        raise ValueError(f"章程缺少'{CREATION_SECTION}'一节")
+        raise ValueError(f"the charter has no '{i18n.heading(CREATION_SECTION)}' section")
     fenced = re.search(r"```(?:ya?ml)?\s*\n(.*?)```", block, re.S)
     try:
         data = yaml.safe_load(fenced.group(1) if fenced else block)
     except yaml.YAMLError as exc:
-        raise ValueError(f"'{CREATION_SECTION}'不是合法的 YAML：{exc}") from exc
+        raise ValueError(f"'{i18n.heading(CREATION_SECTION)}' is not valid YAML: {exc}") from exc
     return project_spec(data)
 
 INITIAL_STAGE = {"delivery": "requirements", "bootstrap": "requirements", "evolution": "operate"}
@@ -151,17 +153,17 @@ def review_baseline(task: dict[str, Any]) -> dict[str, str] | None:
 def review_error(task: dict[str, Any]) -> str | None:
     """Full-delivery release eligibility, not the historical validity of a release approval."""
     if not approval_valid(task, "design"):
-        return "需求或设计批准缺失／已失效，请按现有阶段重新确认"
+        return "the requirements or design approval is missing or void; confirm it again in the current stage"
     baseline = review_baseline(task)
     if not baseline:
-        return "审查输入不完整或当前交付尚未通过验证"
+        return "the review input is incomplete or the current delivery has not passed validation"
     review = task["documents"].get("review_report") or {}
     if not review.get("review_baseline"):
-        return "Review 报告缺少审查基线，需重新审查；不能为旧报告自动补签"
+        return "the review report has no review baseline and must be reviewed again; an old report is never signed afterwards"
     if review["review_baseline"] != baseline or review.get("bundle_sha") != baseline["bundle_sha"]:
-        return "审查依据或交付对象已变化，需按当前版本重新审查"
+        return "the review basis or the delivery changed; review the current version again"
     if review.get("verdict") != "pass":
-        return "当前 Review 尚未通过"
+        return "the current review has not passed"
     return None
 
 

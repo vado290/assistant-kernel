@@ -23,8 +23,8 @@ async def test_mainline_with_real_executors(kernel, sim, dispatcher, fake_harnes
     fake_harness.script("supervisor", propose("requirements", "梳理日报工具的需求", "我先让 PM 梳理需求"))
     await settle(dispatcher)
     start_prompt = fake_harness.calls[-1].prompt
-    assert "帮我做个日报工具" in start_prompt and "评估原因：start" in start_prompt
-    assert "- design：现在不可以" in start_prompt                     # Kernel tells Supervisor the gates
+    assert "帮我做个日报工具" in start_prompt and "Reason for this evaluation: start" in start_prompt
+    assert "- design: not possible now" in start_prompt                     # Kernel tells Supervisor the gates
     item = await sim.item("p1", task_id)
     assert item["content"]["message"] == "我先让 PM 梳理需求"
     await kernel.act("p1", item["item_id"], "execute")
@@ -35,7 +35,7 @@ async def test_mainline_with_real_executors(kernel, sim, dispatcher, fake_harnes
                                        "questions": [{"id": "c1", "text": "日报主要给谁看？", "options": ["自己", "团队"],
                                                       "covers": ["q1"]}]})
     await settle(dispatcher)
-    assert "[q1]（必答） 日报给谁看？" in fake_harness.calls[-1].prompt
+    assert "[q1] (required) 日报给谁看？" in fake_harness.calls[-1].prompt
     await kernel.act("p1", (await sim.item("p1", task_id))["item_id"], "submit", {"answers": {"c1": "团队"}})
 
     fake_harness.script("pm", {"outcome": "completed", "summary": "需求完成", "questions": [],
@@ -44,7 +44,7 @@ async def test_mainline_with_real_executors(kernel, sim, dispatcher, fake_harnes
     await settle(dispatcher)
     evaluate_prompt = fake_harness.calls[-1].prompt
     assert "# 需求\n- 给团队看" in evaluate_prompt
-    assert "design：可以（用户执行时将同时批准 requirements）" in evaluate_prompt
+    assert "design: possible (executing it also approves requirements)" in evaluate_prompt
     item = await sim.item("p1", task_id)
     assert item["content"]["approve"] == ["requirements"]
     await kernel.act("p1", item["item_id"], "execute")

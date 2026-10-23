@@ -39,33 +39,33 @@ def container_path(raw: str) -> Path:
         parts = PureWindowsPath(text).parts
         if parts[0].upper().startswith("H:") and len(parts) > 1 and parts[1].lower() == "ai":
             return visible_root().joinpath(*parts[2:])
-        raise ValueError(f"{text} 不在 H:\\AI 下，容器里看不到；需要先在 docker-compose 中挂载该目录")
+        raise ValueError(f"{text} is not under H:\\AI, so the container cannot see it; mount the directory in docker-compose first")
     return Path(text)
 
 
 def check_directory(raw: Any, project_id: str, data_root: Path) -> dict[str, str]:
     """A requested directory as {path, access, purpose, key}; raises ValueError with the reason it is refused."""
     if not isinstance(raw, dict):
-        raise ValueError("目录授权必须写成对象：{path, access, purpose}")
+        raise ValueError("a directory grant is an object: {path, access, purpose}")
     path = container_path(raw.get("path"))
     access, purpose = str(raw.get("access") or "read"), str(raw.get("purpose") or "").strip()
     if access not in ACCESS:
-        raise ValueError(f"access 只能是 {ACCESS}")
+        raise ValueError(f"access must be one of {ACCESS}")
     if not purpose:
-        raise ValueError(f"请写明授权 {path} 的用途")
+        raise ValueError(f"give the purpose of granting {path}")
     root = visible_root().resolve()
     resolved = path.resolve()
     if resolved != root and root not in resolved.parents:
-        raise ValueError(f"{path} 不在 {root} 下，容器里看不到；需要先在 docker-compose 中挂载该目录")
+        raise ValueError(f"{path} is not under {root}, so the container cannot see it; mount the directory in docker-compose first")
     if not resolved.is_dir():
-        raise ValueError(f"目录不存在：{path}")
+        raise ValueError(f"directory does not exist: {path}")
     data = data_root.resolve()
     for platform_dir in ("runtime", "config", "system", "backups", "workspaces"):
         if resolved == data / platform_dir or (data / platform_dir) in resolved.parents:
-            raise ValueError(f"{path} 是平台的运行目录，不能授权给项目")
+            raise ValueError(f"{path} is the platform's runtime directory and cannot be granted to a project")
     vaults = data / "vaults"
     if resolved == data or resolved == vaults or (vaults in resolved.parents and resolved.relative_to(vaults).parts[0] != project_id):
-        raise ValueError(f"{path} 属于其他项目的 vault，不能授权")
+        raise ValueError(f"{path} belongs to another project's vault and cannot be granted")
     key = re.sub(r"[^a-z0-9-]+", "-", resolved.name.lower()).strip("-")[:40] or "dir"
     if key in RESERVED_KEYS:   # the workspace's own roots
         key = f"dir-{key}"
@@ -82,12 +82,14 @@ def policy(directory: dict[str, str]) -> tuple[dict[str, Any], str]:
 
 
 def render(rows: list[dict[str, Any]]) -> str:
+    from assistant_kernel.core.i18n import t
     if not rows:
-        return "本项目没有额外授权的目录（只能访问自己的 vault）。"
-    lines = ["本项目授权的目录："]
+        return t("grants.none")
+    lines = [t("grants.title")]
     for r in rows:
         p = r["policy_json"]
-        lines.append(f"- `{r['resource_key']}`：{p.get('path')}（{'可写' if p.get('access') == 'write' else '只读'}）"
-                     f" — {p.get('description') or ''}")
-    lines.append("撤销：/grants revoke <key>（会要求确认）。新增：在 Supervisor 频道说明目录、读或写、用途。")
+        access = t("card.access_write" if p.get("access") == "write" else "card.access_read")
+        lines.append(t("grants.line", key=r["resource_key"], path=p.get("path"), access=access,
+                       purpose=p.get("description") or ""))
+    lines.append(t("grants.footer"))
     return "\n".join(lines)

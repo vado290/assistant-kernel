@@ -13,10 +13,10 @@ from psycopg.errors import UniqueViolation
 from psycopg.types.json import Jsonb
 
 from assistant_kernel.config import KernelSettings
-from assistant_kernel.core import cards, machine, rules
+from assistant_kernel.core import cards, i18n, machine, rules
 from assistant_kernel.core.db import Database, all_rows, event, lock_project, one
 
-EVOLUTION_GOAL = "周度复盘：根据最近的运行记录提出改进建议"
+EVOLUTION_GOAL = "kernel.evolution_goal"   # interface text key: the weekly review's goal in the project's language
 EVOLUTION_TZ = ZoneInfo("Asia/Shanghai")
 IDLE_DAYS = 7   # a task waiting this long for the user ends on its own
 
@@ -43,7 +43,7 @@ def _page_context(cursor: str | None, project_id: str, kind: str, filters: dict)
             raise ValueError
         return {**context, "as_of": cutoff.isoformat(), "after": [timestamp.isoformat(), ident]}
     except (ValueError, TypeError, KeyError, AttributeError) as exc:
-        raise ValueError("分页游标无效或与项目/筛选条件不符；重新查询第一页。") from exc
+        raise ValueError("the paging cursor is invalid or does not match the project/filters; query the first page again.") from exc
 
 
 def _page_result(rows: list[dict], limit: int, context: dict, id_key: str) -> dict:
@@ -176,7 +176,7 @@ class Kernel:
             if value:
                 credentials.put(vault, str(spec["key"]), value, service=str(spec.get("service") or ""),
                                 purpose=str(spec.get("purpose") or ""), source="user_card")
-                stored[question_id] = f"（已保存为项目凭据 {spec['key']}，用 get_credential 读取）"
+                stored[question_id] = f"(saved as project credential {spec['key']}; read it with get_credential)"
         return stored
 
     async def displayed_cards(self, project_id: str) -> list[dict[str, Any]]:
@@ -205,7 +205,8 @@ class Kernel:
     async def start_evolution(self, project_id: str, *, origin: str = "user",
                               idempotency_key: str | None = None) -> dict[str, Any]:
         """Queue a self-evolution review: the PM reviews the last week, the user decides on its proposals."""
-        return await self.create_task(project_id, goal=EVOLUTION_GOAL, origin=origin, kind="evolution",
+        return await self.create_task(project_id, goal=i18n.t(EVOLUTION_GOAL), origin=origin,
+                                      kind="evolution",
                                       idempotency_key=idempotency_key)
 
     async def schedule_evolution(self, now: datetime | None = None) -> list[str]:
@@ -244,7 +245,8 @@ class Kernel:
                                 (project_id, f"evolution:{project_id}:{week_key}", list(rules.TERMINAL_STATES),
                                  *([local - timedelta(days=7)] * 4)))
                 if due:
-                    await machine.create_task(c, project_id, goal=EVOLUTION_GOAL, origin="schedule", kind="evolution",
+                    await machine.create_task(c, project_id, goal=i18n.t(EVOLUTION_GOAL),
+                                              origin="schedule", kind="evolution",
                                               idempotency_key=f"evolution:{project_id}:{week_key}")
                     queued.append(project_id)
         return queued
@@ -273,8 +275,8 @@ class Kernel:
                     continue   # idle expiry is not evidence that an uncertain publisher has stopped
                 await machine.close(c, task, "cancelled", "expired_no_response")
                 await machine.notify(c, task["project_id"], "supervisor",
-                                     f"⌛ 任务等待你超过 {days} 天没有回应，已自动结束：{task['goal'][:100]}。"
-                                     "已有的文档都保留着，需要时重新提出即可。", task_id=task["task_id"])
+                                     i18n.t("kernel.expired", days=days,
+                                            goal=task["goal"][:100]), task_id=task["task_id"])
                 expired.append(str(task["task_id"]))
         return expired
 
@@ -286,7 +288,8 @@ class Kernel:
     async def revoke_grant(self, project_id: str, key: str) -> bool:
         async with self.db.tx() as c:
             await lock_project(c, project_id)
-            return await machine.revoke_grant(c, project_id, key, reason="用户用 /grants revoke 撤销")
+            return await machine.revoke_grant(c, project_id, key,
+                                              reason=i18n.t("kernel.revoked_command"))
 
     async def iterations(self, project_id: str, *, days: int = 28, artifact: str | None = None,
                          major_only: bool = False, query: str | None = None, limit: int = 30,
@@ -465,7 +468,7 @@ class Kernel:
                 GROUP BY t.task_id, t.goal, r.input->>'stage' ORDER BY min(r.created_at)""", (project_id, since))
         return {"days": days, "tasks": tasks, "card_actions": [a["payload"] for a in actions], "stage_turns": stage_turns,
                 "failures": failures, "event_counts": counts, "user_messages": inbound,
-                "delegations": [(d["name"] or "（未命名）", d["n"]) for d in delegated], "jobs": job_runs}
+                "delegations": [(d["name"] or "(unnamed)", d["n"]) for d in delegated], "jobs": job_runs}
 
     async def operational_baseline(self, project_id: str) -> dict[str, Any] | None:
         async with self.db.tx() as c:

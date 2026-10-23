@@ -1,32 +1,31 @@
-# {display_name} · 项目章程
+# {display_name} · Project charter
 
-> 项目 ID：`{project_id}` · 创建于 {created_at}。PM 和 Supervisor 每一轮都会读本章程；第 1、5、7 节同时用于 kernel 的项目路由。
-> 各节通过任务修改（修改原因记在项目的变更流水里）。背景信息存档在 `knowledge/background.md`，由 Kernel 在需求文档获批时追加。
+> Project ID: `{project_id}` · created {created_at}. The PM and the Supervisor read this charter every turn; sections 1, 5 and 7 are also used for routing by kernel.
+> Sections change through tasks (the reason is recorded in the project's change stream). The background archive is in `knowledge/background.md`; Kernel appends to it when a requirements document is approved.
 
-## 1 项目用途
+## 1 Purpose
 {purpose}
 
-## 2 业务目标与成功标准
-（待补充：做成什么样算成功，尽量可量化）
+## 2 Business goals and success criteria
+(to be written: what counts as success, measurable where possible)
 
-## 3 使用者与使用场景
-- 主要使用者：{users}
+## 3 Users and usage scenarios
+- Main users: {users}
 
-## 4 组织与行业背景
-- 行业：{industry}
-- 组织 / 企业：{organization}
-- 其他说明：{notes}
+## 4 Organisation and industry background
+- Industry: {industry}
+- Organisation / company: {organization}
+- Other notes: {notes}
 
-## 5 范围
-- 负责：（待补充）
-- 不负责：（待补充）
+## 5 Scope
+- In scope: (to be written)
+- Out of scope: (to be written)
 
-## 6 约束
-（待补充：预算、时间、合规、技术等）
-（如已明确，可简写长期交付位置、既有仓库/授权目录、数据保留要求和重要例外；具体结构见地图或已有项目文档。
-没有这类约定无需补齐目录树；本节说明不代表目录已创建或授权已生效。）
+## 6 Constraints
+(to be written: budget, time, compliance, technology, …)
+(Once clear, briefly name long-term delivery locations, existing repositories or granted directories, data retention requirements and important exceptions; the detailed structure lives in the map or the project's documents. Without such agreements no directory tree is needed; this note does not mean a directory exists or access is granted.)
 
-## 7 路由信息
-- 别名：
-- 典型请求：
-- 不负责的请求：
+## 7 Routing
+- Aliases:
+- Typical requests:
+- Requests it does not handle:

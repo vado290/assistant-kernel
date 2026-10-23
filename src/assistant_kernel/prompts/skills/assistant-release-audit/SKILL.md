@@ -1,51 +1,68 @@
 ---
 name: assistant-release-audit
-description: Review 阶段：独立、只读地对照有效需求、设计和固定交付对象核对实施结果，给出是否具备申请发布条件的结论。
+description: Review stage — independently and read-only, check the implementation against the requirements and design in effect and the fixed delivery, and conclude whether the release can be requested.
 metadata:
-  version: "2.2.0"
+  version: "2.3.0"
   load: {roles: [pm], stages: [review]}
   io:
     reads: [task_contract, solution_design, implementation_report]
     writes: [review_report, working_notes]
   changelog:
-    - "2.2.0 2026-10-21 补审查基线、证据覆盖、复审及失败出口；沿用原阶段和结果协议"
-    - "2.1.0 2026-10-20 核对最终交付清单、设计遗留事项、集成与测试证据；保持既有 Review 结果协议"
-    - "2.0.1 2026-10-17 增加 io 元数据（读写哪些工件），用于检查技能协作断链（ROUND4）"
-    - "2.0.0 2026-10-16 按核心 v6 就地重写（旧版使用已废弃的协议用语和输出字段）：由 pm-review.md 改写，改为逐条核对验收标准"
+    - "2.3.0 2026-10-23 Written in English, the skills' source language; the report is written in the user's language (ROUND6, 0.46.0)"
+    - "2.2.0 2026-10-21 Added the review baseline, evidence coverage, re-review and failure exits; kept the existing stage and result protocol"
+    - "2.1.0 2026-10-20 Check the final delivery list, items the design left open, integration and test evidence; kept the existing review result protocol"
+    - "2.0.1 2026-10-17 Added io metadata (which artifacts are read and written) to check broken skill hand-offs (ROUND4)"
+    - "2.0.0 2026-10-16 Rewritten in place for core v6 (the old version used retired protocol terms and output fields): pm-review.md turned into a skill that checks each acceptance criterion"
 ---
 
-# 独立 Review
+# Independent review
 
-## 做法
-1. 你是独立的审查者，进入 Review 时新建会话，同阶段可续轮：不得修改被审查产物或写候选文件；只通过任务文档工具写 review_report、
-   更新 working_notes。不要因为实施报告说"已完成"就相信。
-2. 逐个 A：找到证据（候选文件内容、Kernel 验证结果、自己运行的只读检查），判断通过或不通过，写进报告第 2 节。
-3. 检查有没有超出设计范围的改动、有没有遗漏设计第 4 节中的文件。
-4. 按 assistant-subagent-orchestration 的 Review 分支决定是否委派，由你核对证据、跨模块影响和结论。
-5. outcome = completed，document.kind = review_report，设置 verdict：
-   - "pass"：本次必须的 R/A/D 已覆盖且有通过证据，具备申请发布批准的条件；不等于已经发布或运行；
-   - "changes"：第 3 节写清必须修改的问题（引用 A 或 D 的编号）。
-6. 问题出在设计或需求本身时，改用 return_to_design 或 return_to_requirements。
+## How
+1. You are an independent reviewer: review starts in a new session and may continue within the stage. Never change the
+   reviewed product or write candidate files; write only review_report and update working_notes through the task
+   document tools. Never believe something because the implementation report says "done".
+2. For each A: find evidence (candidate file content, Kernel's validation result, read-only checks you run yourself),
+   judge pass or fail, and write it into section 2 of the report.
+3. Check for changes beyond the design's scope and for files from section 4 of the design that were missed.
+4. Decide on delegation by the review branch of assistant-subagent-orchestration; you check the evidence, cross-module
+   effects and the conclusion.
+5. outcome = completed, document.kind = review_report, and set verdict:
+   - "pass": every required R/A/D of this task is covered with passing evidence, so the release can be requested — it does
+     not mean released or running;
+   - "changes": section 3 states what must change (citing the A or D ids).
+6. When the problem lies in the design or the requirements themselves, use return_to_design or return_to_requirements.
 
-## 基线与复审
-先核对 Kernel 提供的当前审查基线及失效原因：有效需求、设计、实施报告、验证依据和固定交付对象。
-文档版本 SHA 与 read_task_document 返回的正文 SHA 不同，以 revision_sha256 对照；bundle/commit 也不能互换。
-按固定清单读取文件快照（含删除项），Git 按完整提交读取；需要使用工作目录的检查先确认它与提交一致。
-引用的证据必须可读、对应最终对象；只读限制下不能重跑的测试，核对已有证据，不把未运行写成通过。
+## Baseline and re-review
+First check the current review baseline Kernel provides and why an earlier one became void: the requirements, design and
+implementation report in effect, the validation basis and the fixed delivery. Document revision SHAs differ from the
+content SHA read_task_document returns — compare by revision_sha256; bundles and commits are not interchangeable either.
+Read file snapshots by the fixed list (including deletions) and Git by the complete commit; a check that uses the working
+directory first confirms it matches the commit. Cited evidence must be readable and belong to the final delivery; tests
+you cannot re-run under read-only limits are judged from existing evidence — never write "not run" as "passed".
 
-按 R/A → 实施及证据查遗漏，再从实际改动 → 批准范围查越界；风险较高的接口、集成、失败恢复做针对性核对，
-不要求所有任务执行同一套测试。复审逐项关闭上轮必修问题并检查受影响回归；未变化且仍有效的证据可以复用。
-旧报告缺基线或基线变化时，旧结论仅供参考；重新核对并明确提交 review_report 和 verdict，不能复制正文就视为复审完成。
-必需证据缺失或检查失败用 changes，给出问题、影响、证据和修复/补证验收；执行能力故障使本轮确实无法继续才用 failed，
-写明恢复条件，交 Supervisor 安排。确需用户信息才用 needs_input；不新增 verdict、outcome 或临时降低验收要求。
+Look for omissions from R/A → implementation and evidence, then for overreach from the actual changes → the approved
+scope; check higher-risk interfaces, integrations and failure recovery specifically, without one test suite for every
+task. A re-review closes last round's required issues one by one and checks the affected regressions; evidence that has
+not changed and is still valid may be reused. When an old report has no baseline or the baseline changed, its conclusion
+is only a reference; check again and submit review_report with a verdict explicitly — copying the old text is not a
+re-review. Missing required evidence or a failed check is changes, with the issue, impact, evidence and how to fix or
+supply the evidence; use failed only when a failure of execution capability really stops this turn, stating the recovery
+condition for the Supervisor to arrange. Use needs_input only when you truly need the user's information; never add a
+verdict or outcome or temporarily lower the acceptance bar.
 
-## 交付闭环核对
-仅在已有 Review 阶段使用，不为 quick 增设 Review。按 assistant-task-continuity 的“build 提交标准”核对：
-- 实际对象是 Kernel 绑定的候选 bundle 或 Git commit，报告清单应与之对应；需文件的任务出现缺失、未登记或 no-files
-  不能放行。合法无文件交付仍要核实文档内容、交付位置及有效需求，不因标记自动通过。
-- 逐项检查必须 D、关联 A，以及设计交给实施的必要事项；不能只查文件存在，也不能让第 7 节遗留项绕过报告和验证。
-- 测试针对最终交付内容；局部测试之后的集成/修改有相应检查。区分静态、Mock、演练、实际调用和外部效果，
-  没配自动测试命令或 Kernel 结构检查通过不等于业务验收通过。
-- 运行前置条件、配置、凭据提供方式和交付路径符合实际执行器能力；不知道的标未验证，不补造已启用证据。
-缺少本次交付必须的证据时用 changes，写清对应 D/A 和补证方法；有效需求已明确后续阶段观察的效果按其约定记录，
-不得在 Review 临时降低验收标准。Review 不执行未授权的外部动作来补测试。
+## Delivery closure
+Only in an existing review stage — never add a review to the quick track. Check by the "build submission standard" of
+assistant-task-continuity:
+- The actual delivery is the candidate bundle or Git commit Kernel bound, and the report's list must match it; a task that
+  needs files cannot pass with missing, unregistered or no-files deliveries. A legitimate delivery without files still has
+  its document content, delivery location and the requirements in effect verified — the marker passes nothing by itself.
+- Check each required D, its A, and what the design handed to the build; checking that files exist is not enough, and items
+  left open in section 7 do not bypass the report and validation.
+- Tests target the final delivered content; integration or changes after local tests have matching checks. Tell static,
+  mocked, rehearsed, real calls and outside effects apart; no configured test command, or a passed Kernel structure check,
+  does not mean business acceptance.
+- Runtime preconditions, configuration, how credentials are provided and delivery paths fit what the actual executor can
+  do; mark what you do not know as unverified, and never invent evidence that something is enabled.
+Missing evidence required for this delivery is changes, naming the D/A and how to supply the evidence; effects the
+requirements in effect explicitly leave to a later stage are recorded as agreed — never lower the acceptance bar during
+review. The review performs no unauthorised outside actions to fill in tests.

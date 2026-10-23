@@ -53,12 +53,12 @@ async def run_script(vault: Path, job: dict[str, Any], env_extra: dict[str, str]
         except asyncio.TimeoutError:
             os.killpg(process.pid, signal.SIGKILL)
             await process.wait()
-            raise JobFailed(f"超时（{job['timeout_seconds']} 秒）被终止；日志 {log.relative_to(vault)}")
+            raise JobFailed(f"stopped after the timeout ({job['timeout_seconds']} s); log {log.relative_to(vault)}")
     tail = log.read_bytes()[-LOG_TAIL:].decode("utf-8", "replace").strip()
     if code != 0:
-        raise JobFailed(f"退出码 {code}；日志 {log.relative_to(vault)}；末尾输出：{tail[-500:]}")
+        raise JobFailed(f"exit code {code}; log {log.relative_to(vault)}; last output: {tail[-500:]}")
     return {"exit_code": 0, "seconds": round(time.monotonic() - started, 1), "log": str(log.relative_to(vault)),
-            "summary": tail.splitlines()[-1][:300] if tail else "完成"}
+            "summary": tail.splitlines()[-1][:300] if tail else "done"}
 
 
 def load_product_agent(settings, project_id: str, name: str) -> AgentConfig:
@@ -78,19 +78,20 @@ async def run_agent(run: dict[str, Any], ctx, vault: Path, job: dict[str, Any], 
     project_charter = await asyncio.to_thread(charter, settings, run["project_id"])
     planned = datetime.fromisoformat(run["input"]["planned_at"]).astimezone(ZoneInfo(job["timezone"]))
     prompt = "\n\n".join([
-        f"# 项目 {run['project_id']} · 定时作业 {job['id']}（agent {name}）",
-        *(["## 项目章程\n\n" + project_charter] if project_charter else []),
-        "## 你的角色\n\n" + config.role_text,
+        f"# Project {run['project_id']} · scheduled job {job['id']} (agent {name})",
+        *(["## Project charter\n\n" + project_charter] if project_charter else []),
+        "## Your role\n\n" + config.role_text,
         *([config.skills_text] if config.skills_text else []),
-        f"## 本次任务（计划时间 {planned:%Y-%m-%d %H:%M}，{job['timezone']}）\n\n{job['prompt']}",
-        "## 输出要求\n\n你只能读取，不能修改项目文件。完成后，最后一条消息直接写给用户看的结果（简洁、结论先行），不要写 JSON。",
+        f"## This run's task (planned for {planned:%Y-%m-%d %H:%M}, {job['timezone']})\n\n{job['prompt']}",
+        "## Output\n\nYou can only read, not change project files. When done, your last message is the result written "
+        "for the user (concise, conclusion first) — no JSON.",
     ])
     result = await call_model(ctx, run, config, prompt, task_id=None, stage=None, session_id=None,
                               tools=READ_ONLY_TOOLS, sandbox="read-only")
     text = (result.final_text or "").strip()
     log.write_text(text, "utf-8")
     if not text:
-        raise JobFailed("agent 没有给出结果")
+        raise JobFailed("the agent gave no result")
     return {"summary": text, "log": str(log.relative_to(vault)), "usage": result.usage.model_dump()}
 
 
@@ -112,5 +113,5 @@ async def execute_job(run: dict[str, Any], ctx) -> dict[str, Any]:
     output = await asyncio.to_thread(runtime.CONTROL.restart, project_id, job["entry"])
     log.write_text(output, "utf-8")
     if "ERROR" in output.upper() and "STARTED" not in output.upper():
-        raise JobFailed(f"重启服务 {job['entry']} 失败：{output[-300:]}")
-    return {"summary": f"服务 {job['entry']} 已重启", "log": str(log.relative_to(vault))}
+        raise JobFailed(f"restarting service {job['entry']} failed: {output[-300:]}")
+    return {"summary": f"service {job['entry']} restarted", "log": str(log.relative_to(vault))}

@@ -5,7 +5,7 @@ import asyncio
 import logging
 from typing import Any
 
-from assistant_kernel.core import drafts, gitdelivery, grants, iterlog, rules
+from assistant_kernel.core import drafts, gitdelivery, grants, i18n, iterlog, rules
 from assistant_kernel.core.drafts import DOCUMENT_STAGE, STAGE_DOCUMENT
 from assistant_kernel.core.executors.common import (
     BRIEF_HEADING, CANDIDATE_TOOLS, DOMAIN_BRIEF, MVP_TOOLS, PROFILE_HEADING, USER_PROFILE, call_for_json, charter,
@@ -14,22 +14,25 @@ from assistant_kernel.core.executors.common import (
 from assistant_kernel.core.executors.digest import evolution_material
 from assistant_kernel.core.executors.state import render_state, write_state
 
-STAGE_NAMES = {"requirements": "需求分析", "design": "方案设计", "build": "实施与自测", "review": "独立 Review",
-               "operate": "运营", "evolution": "周度复盘"}
+STAGE_NAMES = {"requirements": "requirements", "design": "design", "build": "build and self-test",
+               "review": "independent review", "operate": "operation", "evolution": "weekly review"}
 SUBAGENT_STAGES = {"requirements", "design", "build", "review", "evolution"}
 QUICK_NOTES = {   # process facts for the quick track (R2.3); Kernel states them, skills need not
-    "requirements": "本任务不单独做设计和 Review。需求文档除常规章节外，必须包含'简要方案'一节：要改哪些文件、怎么做、怎么测试；"
-                    "用户批准需求即同时批准这个方案",
-    "build": "按需求文档中的'简要方案'实施并自测；完成后 Kernel 验证，验证通过即可申请发布，没有单独的 Review",
+    "requirements": "this task has no separate design or review. Besides its usual sections the requirements document "
+                    "must contain a 'Brief solution' section: which files change, how, and how it is tested; approving "
+                    "the requirements also approves this solution",
+    "build": "build and self-test following the 'Brief solution' in the requirements document; Kernel validates it "
+             "afterwards, and once validation passes the release can be requested — there is no separate review",
 }
 MAX_SUBAGENTS = 3
 MAX_DELEGATIONS = 10
 BRIEF_STAGES = {"requirements", "design", "evolution"}   # where the archived industry brief is worth its tokens
 RUNTIME_STAGES = {"design", "build", "review"}            # where the runtime manifest contract is needed
 MAP_STAGES = {"design", "build", "review", "evolution"}   # where the project map is worth its tokens
-RESUMED_NOTE = ("（同一会话的续轮：章程、角色要求、技能和文档中与上一轮相同的部分不再重复发送，下面只有变化的部分；"
-                "需要文档原文时调用 read_task_document，需要完整的任务记录时读 {state}。）")
-OUTPUT_REMINDER = "输出要求与上一轮相同：最后一条消息只输出那一个 JSON 对象。"
+RESUMED_NOTE = ("(A resumed turn of the same session: whatever in the charter, role notes, skills and documents is "
+                "unchanged since the last turn is not sent again; below is only what changed. Call read_task_document "
+                "for a document's text, and read {state} for the full task record.)")
+OUTPUT_REMINDER = "The output requirements are the same as last turn: the last message is that one JSON object only."
 
 
 def skill_stage(task: dict[str, Any], stage: str) -> str:
@@ -39,28 +42,29 @@ def skill_stage(task: dict[str, Any], stage: str) -> str:
 
 def render_turn(task: dict[str, Any], run_input: dict[str, Any], inputs: list[dict[str, Any]]) -> str:
     stage = skill_stage(task, run_input["stage"])
-    lines = [f"- 任务目标：{task['goal']}", f"- 当前阶段：{STAGE_NAMES.get(stage, stage)}（{stage}）"]
+    lines = [f"- Task goal: {task['goal']}", f"- Current stage: {STAGE_NAMES.get(stage, stage)} ({stage})"]
     if task.get("reason"):
-        lines.append(f"- 发起原因：{task['reason']}")
+        lines.append(f"- Why it was started: {task['reason']}")
     if task.get("track") == "quick" and stage in QUICK_NOTES:
-        lines.append(f"- 流程：轻量（{QUICK_NOTES[stage]}）")
+        lines.append(f"- Track: quick ({QUICK_NOTES[stage]})")
     if run_input.get("kind") == "instruction":
-        lines.append(f"\n### 本轮指令（用户已确认）\n\n{run_input['instruction']}")
+        lines.append(f"\n### This turn's instruction (confirmed by the user)\n\n{run_input['instruction']}")
         if run_input.get("inferred_intent"):
-            lines.append("\n### Supervisor 的推测（假设，不是需求；按 assistant-project-agent 的规则处理）\n\n" + "\n".join(
-                f"- {i['text']}" + (f"（依据：{i['basis']}）" if i.get("basis") else "") for i in run_input["inferred_intent"]))
+            lines.append("\n### The Supervisor's inference (assumptions, not requirements; handle them by the rules of "
+                         "assistant-project-agent)\n\n" + "\n".join(
+                f"- {i['text']}" + (f" (basis: {i['basis']})" if i.get("basis") else "") for i in run_input["inferred_intent"]))
     elif run_input.get("kind") == "answers":
         asked = {q["id"]: q["text"] for q in run_input.get("questions") or []}
-        answered = "\n".join(f"- {asked.get(qid, qid)}：{value}" for qid, value in run_input["answers"].items())
-        lines.append(f"\n### 用户对你上轮问题的回答\n\n{answered}")
+        answered = "\n".join(f"- {asked.get(qid, qid)}: {value}" for qid, value in run_input["answers"].items())
+        lines.append(f"\n### The user's answers to your last questions\n\n{answered}")
         if run_input.get("pm_questions") and run_input.get("pm_questions") != run_input.get("questions"):
             original = "\n".join(f"- [{q['id']}] {q['text']}" for q in run_input["pm_questions"])
-            lines.append(f"\n（以上问题由 Supervisor 整理自你的原始问题：\n{original}）")
+            lines.append(f"\n(The Supervisor rephrased these questions from your original ones:\n{original})")
     if run_input.get("note"):
-        lines.append(f"\n### 用户附言\n\n{run_input['note']}")
+        lines.append(f"\n### The user's note\n\n{run_input['note']}")
     texts = [m["body"].get("text") for m in inputs if m["body"].get("text")]
     if texts:
-        lines.append("\n### 用户在 PM 频道的补充消息（按时间顺序）\n\n" + "\n".join(f"- {t}" for t in texts))
+        lines.append("\n### The user's additional messages in the PM channel (in order)\n\n" + "\n".join(f"- {t}" for t in texts))
     return "\n".join(lines)
 
 
@@ -104,16 +108,18 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
     map_text = ""
     if matched in MAP_STAGES:   # the project map: where things are (ROUND4 R4.2)
         where, text = await asyncio.to_thread(project_map, settings, run["project_id"])
-        map_text = (f"## 项目地图（{where}；结构或组件有改动时在实施阶段同步更新）\n\n"
-                    + (text or "本项目还没有地图：第一次实施时按 assistant-task-continuity 的\"项目地图\"格式建立。"))
-    workspace_text = (f"{prompt_text('git-delivery')}\n\n- 本任务的工作区：`{workspace}`（分支 `{gitdelivery.branch(task_id)}`，"
-                      f"从 `{code['main']}` 拉出；你的当前目录就是它）\n- 测试命令：`{code['test_command'] or '未配置'}`"
+        map_text = (f"## Project map ({where}; update it in the build stage when the structure or components change)\n\n"
+                    + (text or "This project has no map yet: create it on the first build in the \"project map\" format "
+                               "of assistant-task-continuity."))
+    workspace_text = (f"{prompt_text('git-delivery')}\n\n- This task's workspace: `{workspace}` (branch "
+                      f"`{gitdelivery.branch(task_id)}`, cut from `{code['main']}`; it is your current directory)\n"
+                      f"- Test command: `{code['test_command'] or 'not configured'}`"
                       if workspace else "")
     context = [
-        *([("charter", drafts.text_sha(project_charter), "## 项目章程\n\n" + project_charter)] if project_charter else []),
+        *([("charter", drafts.text_sha(project_charter), "## Project charter\n\n" + project_charter)] if project_charter else []),
         *([("profile", drafts.text_sha(profile), PROFILE_HEADING + profile)] if profile else []),
         *([("brief", drafts.text_sha(brief), BRIEF_HEADING + brief)] if brief else []),
-        ("config", config.config_sha256, "\n\n".join(["## 本项目对你的角色要求\n\n" + config.role_text,
+        ("config", config.config_sha256, "\n\n".join(["## Your role in this project\n\n" + config.role_text,
                                                       *([config.skills_text] if config.skills_text else [])])),
         *([("digest", drafts.text_sha(digest), digest)] if digest else []),
         *([("bootstrap", drafts.text_sha(creation := prompt_text("pm-bootstrap")), creation)]
@@ -127,7 +133,7 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
     output = prompt_text("pm-output")
     seen = {key: fingerprint for key, fingerprint, _ in context + documents} | {"output": drafts.text_sha(output)}
     previous = task["pm_session"].get("seen") if session_id else None
-    prompt = render_prompt(f"# 项目 {run['project_id']} · PM 回合（{STAGE_NAMES.get(matched, matched)}）",
+    prompt = render_prompt(f"# Project {run['project_id']} · PM turn ({STAGE_NAMES.get(matched, matched)})",
                            context, documents, render_turn(task, run_input, inputs), output, seen, previous,
                            state=state_text, state_file=state_file)
     # Outside build the PM only reads: project files change solely through candidates → validate → publish.
@@ -146,7 +152,7 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
             sandbox="danger-full-access" if build else "read-only", candidates=candidates, cwd=workspace)
     if code and build and parsed is not None:   # keep every turn's work as a commit on the task branch
         await asyncio.to_thread(gitdelivery.commit_all, workspace,
-                                f"{task['goal'][:72]}\n\n{str(parsed.get('summary') or '')[:1500]}\n\n任务 {task_id}")
+                                f"{task['goal'][:72]}\n\n{str(parsed.get('summary') or '')[:1500]}\n\nTask {task_id}")
     if parsed is None:
         return {"outcome": "invalid_output", "raw": model_result.final_text[:2000]}
     result = {"outcome": parsed.get("outcome"), "summary": str(parsed.get("summary") or ""),
@@ -183,7 +189,7 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
         if problem:
             # Keep notes and run metadata for recovery, but never submit a review of a drifting workspace.
             result.update(outcome="failed", questions=[],
-                          summary=problem + " 本轮审查结论未采纳，工作笔记仅保留为待复核线索。")
+                          summary=problem + " " + i18n.t("pm.review_not_taken"))
             return result
     if markdown:
         kind = stage_kind
@@ -209,7 +215,7 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
             errors = await kernel.effect_review_errors(run["project_id"], report["effect_reviews"])
             if errors:
                 report["effect_review_error"] = "; ".join(filter(None, [report.get("effect_review_error"),
-                    "记录编号不能唯一匹配或重复：" + ", ".join(errors)]))
+                    "record ids that match no single record or repeat: " + ", ".join(errors)]))
         if kind == "task_contract" and task["kind"] == "bootstrap":   # the charter: Kernel creates the project from it
             try:
                 spec = rules.charter_spec(markdown)
@@ -219,7 +225,7 @@ async def execute_pm(run: dict[str, Any], ctx) -> dict[str, Any]:
             except ValueError as exc:
                 report["spec_error"] = str(exc)
         if kind == "implementation_report" and code:   # bound to the commit; no changes → the no-files marker
-            commit = await asyncio.to_thread(gitdelivery.seal, code, task_id, f"{task['goal'][:72]}\n\n任务 {task_id}")
+            commit = await asyncio.to_thread(gitdelivery.seal, code, task_id, f"{task['goal'][:72]}\n\nTask {task_id}")
             report["bundle_sha"] = commit or f"no-files:{report['sha256']}"
         elif kind == "implementation_report":
             report["bundle_sha"] = await asyncio.to_thread(seal_candidates, settings, run["project_id"],
@@ -244,7 +250,7 @@ async def external_snapshot(ctx, settings, project_id: str, task_id: str) -> Non
     try:
         grants = await ctx.kernel.grants(project_id)
         await asyncio.to_thread(projectgit.snapshot_external, vault, project_id, grants,
-                                f"任务 {task_id[:8]} 开始实施前的快照")
+                                f"Snapshot before task {task_id[:8]} starts building")
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.write_text("done\n", "utf-8")
     except Exception:   # a missing snapshot only makes the release commit less precise; never stop the turn
@@ -255,9 +261,9 @@ def outcome_misfit(parsed: dict[str, Any] | None, stage: str) -> str:
     """A correction for an outcome the state machine would reject in this stage ('' when it fits)."""
     outcome = (parsed or {}).get("outcome")
     if outcome == "ready_for_validation" and stage != "build":
-        return ("你的 outcome 是 ready_for_validation，但它只用于实施阶段（提交候选文件供 Kernel 验证）。"
-                f"当前是 {STAGE_NAMES.get(stage, stage)} 阶段：本阶段工作完成请用 completed，其余内容不变。"
-                "不要做任何新的工作，只重新输出那个 JSON 对象。")
+        return ("Your outcome is ready_for_validation, but that is only for the build stage (candidate files submitted "
+                f"for Kernel validation). This is the {STAGE_NAMES.get(stage, stage)} stage: use completed when this "
+                "stage's work is done, everything else unchanged. Do no new work; only output that JSON object again.")
     return ""
 
 
@@ -284,7 +290,7 @@ def save_free_document(settings, project_id: str, task_id: str, run_id: str, kin
 
 def render_prompt(header: str, context: list[tuple[str, str, str]], documents: list[tuple[str, str, str]],
                   turn: str, output: str, seen: dict[str, str], previous: dict[str, str] | None, *,
-                  state: str = "", state_file: str = "runs/<任务>/state.md") -> str:
+                  state: str = "", state_file: str = "runs/<task>/state.md") -> str:
     """The full prompt for a new session; on a resumed one only what changed since the previous PM turn.
 
     A resumed Codex session already holds the earlier prompts, and the appended prompt is not part of the cached
@@ -292,15 +298,17 @@ def render_prompt(header: str, context: list[tuple[str, str, str]], documents: l
     """
     if previous is None:
         return "\n\n".join([header, *(text for _, _, text in context),
-                            *(["## 任务状态簿（Kernel 记录的事实，优先于你的记忆）\n\n" + state] if state else []),
-                            "## 已生效文档\n\n" + ("\n\n".join(t for _, _, t in documents) or "（暂无已生效文档）"),
-                            "## 本轮上下文\n\n" + turn, output])
+                            *(["## Task ledger (facts recorded by Kernel; they win over your memory)\n\n" + state]
+                              if state else []),
+                            "## Documents in effect\n\n" + ("\n\n".join(t for _, _, t in documents)
+                                                             or "(no documents in effect yet)"),
+                            "## This turn\n\n" + turn, output])
     changed = lambda items: [text for key, fingerprint, text in items if previous.get(key) != fingerprint]  # noqa: E731
     changed_documents = changed(documents)
     return "\n\n".join([
         header, RESUMED_NOTE.format(state=state_file), *changed(context),
-        *(["## 有更新的文档\n\n" + "\n\n".join(changed_documents)] if changed_documents else []),
-        "## 本轮上下文\n\n" + turn,
+        *(["## Updated documents\n\n" + "\n\n".join(changed_documents)] if changed_documents else []),
+        "## This turn\n\n" + turn,
         output if previous.get("output") != seen["output"] else OUTPUT_REMINDER,
     ])
 
@@ -316,7 +324,7 @@ def review_worktree_error(workspace, baseline) -> str | None:
             return None
     except (gitdelivery.GitError, OSError):
         pass
-    return "Review 工作区缺失或与被验证的提交不一致，本轮不能给出通过结论；请保留改动并恢复对应工作区，或回 build 重新提交验证。"
+    return i18n.t("pm.review_workspace")
 
 
 def seal_candidates(settings, project_id: str, task_id: str, report_sha: str) -> str:

@@ -35,4 +35,4 @@ async def test_failed_consultation_tells_the_user(kernel, sim):
     await kernel.receive("p1", role="supervisor", text="现在进展如何？")
     sim.script("supervisor:consult", Fail(), Fail(), Fail())
     await sim.drain()
-    assert (await sim.outbound("p1"))[-1]["body"]["text"].startswith("⚠ Supervisor 暂时无法回答")
+    assert (await sim.outbound("p1"))[-1]["body"]["text"].startswith("⚠ The Supervisor cannot answer")

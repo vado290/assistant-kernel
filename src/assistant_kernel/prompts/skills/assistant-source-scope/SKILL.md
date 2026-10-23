@@ -1,33 +1,40 @@
 ---
 name: assistant-source-scope
-description: 怎样在项目已授权的目录里查找和读取文件：先看全貌再按需深入，只碰当前任务需要的文件；授权范围由用户和 Kernel 决定，agent 不能自行扩大。
+description: How to find and read files in the project's granted directories — overview first, then only what the task needs; the user and Kernel decide the scope, and an agent never widens it.
 metadata:
-  version: "4.2.0"
+  version: "4.3.0"
   load: {roles: [pm]}
   changelog:
-    - "4.2.0 2026-10-18 可用 map_lookup 按关键词查项目地图（ROUND5 R5.2）"
-    - "4.1.0 2026-10-17 地图改为 Kernel 提供的地图文档；变更原因用 list_iterations 查（ROUND4）"
-    - "4.0.0 2026-10-16 按核心 v6 就地重写：删除已不存在的授权申请工具和 Context View 流程，只保留与当前工具一致的访问方法和行为准则"
+    - "4.3.0 2026-10-23 Written in English, the skills' source language; what the user reads follows the user's language (ROUND6, 0.46.0)"
+    - "4.2.0 2026-10-18 map_lookup searches the project map by keyword (ROUND5 R5.2)"
+    - "4.1.0 2026-10-17 The map is the map document Kernel provides; reasons for changes are looked up with list_iterations (ROUND4)"
+    - "4.0.0 2026-10-16 Rewritten in place for core v6: removed the grant-request tools and context-view flow that no longer exist; kept only the access methods and rules that match the current tools"
 ---
 
-# 在授权范围内查找文件
+# Finding files within the grants
 
-## 授权是什么
-用户为项目授权了若干目录（例如项目自己的 vault、某个代码目录）。授权是上限：目录下现有和以后新增的文件都可以读，
-但**技术上能读不等于应该读**。授权由用户通过 Kernel 设置，你不能自行申请或扩大；需要新目录时在 summary 或问题中说明路径和用途，
-由用户决定。
+## What a grant is
+The user grants the project some directories (for example the project's own vault, a code folder). A grant is an upper
+limit: every file there now or later may be read, but **being able to read it does not mean you should**. Grants are set by
+the user through Kernel; you cannot request or widen them yourself — when a new directory is needed, name its path and
+purpose in the summary or a question and let the user decide.
 
-## 怎样查找（由粗到细）
-1. `get_authorized_workspace`：看有哪些授权目录（root）及其概况。
-2. `list_authorized_tree(root_key, relative_path, max_depth)`：按目录逐层浏览，只展开与任务相关的部分。
-3. `read_authorized_file(uri)`：只读必要的文件；大文件先看目录结构和开头，确认相关后再读全文。
-4. 项目自己的文件和文档也可以用 `vault_list`、`vault_read_text` 读取。先看 Kernel 给出的项目地图（或用 `map_lookup` 按关键词查）定位相关组件，
-   再读实际文件；地图只是导航，结论以实际文件为准，发现地图过时在实施时顺手更新。
-   想知道某个文件或组件为什么是现在这样，用 `list_iterations(artifact=...)` 查它的变更原因。
-5. 不要用 shell 递归扫描整个授权目录，既慢又会把无关内容带进上下文。
+## How to look (coarse to fine)
+1. `get_authorized_workspace`: which granted directories (roots) there are, with an overview.
+2. `list_authorized_tree(root_key, relative_path, max_depth)`: browse level by level, expanding only what the task needs.
+3. `read_authorized_file(uri)`: read only the files you need; for a large file look at the structure and the start first,
+   and read it in full once it proves relevant.
+4. The project's own files and documents can also be read with `vault_list` and `vault_read_text`. Use the project map
+   Kernel gives you (or `map_lookup` by keyword) to locate the relevant components first, then read the actual files; the
+   map only guides — the actual files decide, and an outdated map is updated in passing during the build.
+   To learn why a file or component is the way it is, look up its reasons with `list_iterations(artifact=...)`.
+5. Never scan a whole granted directory recursively from a shell: it is slow and drags unrelated content into the context.
 
-## 行为准则
-- 只访问、修改完成当前任务实际需要的文件；发现与任务无关的问题只报告，不顺手修改、清理或重构。
-- 修改只通过候选文件（实施阶段）完成；即使某个目录技术上可写，也不要直接改正式文件。
-- 访问可能涉及敏感信息（密钥、账户、个人信息）或高影响操作时，先在问题中说明路径、原因和打算做什么，得到用户同意再继续。
-- 引用文件时写明路径，必要时写明行号，方便下一位读者核对。
+## Rules
+- Access and change only the files the current task really needs; report problems unrelated to the task, never fix,
+  clean up or refactor them in passing.
+- Changes go only through candidate files (in the build stage); even where a directory is technically writable, never
+  change released files directly.
+- When access may touch sensitive information (keys, accounts, personal data) or a high-impact operation, first state the
+  path, the reason and what you intend in a question, and continue only with the user's consent.
+- Cite files by path, and by line where useful, so the next reader can check.

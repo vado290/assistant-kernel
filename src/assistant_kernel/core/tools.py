@@ -30,11 +30,11 @@ READ_ONLY = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotent
 SCOPED_WRITE = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False)
 DRAFT_WRITE = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False)
 MODEL_CALL = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True)
-HINTS = ((PermissionError, "权限或授权范围拒绝：只能访问本次执行授权的项目和目录。"),
-         (FileNotFoundError, "目标文件、目录或记录不存在，或不在授权范围内。"),
-         (KeyError, "引用了未知的键（root key、组件 id 等）。"),
-         (ValueError, "参数或状态约束不满足：阅读 message 中的具体约束，修正后再重试。"),
-         (TimeoutError, "执行超时：缩小范围后重试。"))
+HINTS = ((PermissionError, "denied by permissions or grant scope: only the project and directories granted to this run are reachable."),
+         (FileNotFoundError, "the file, directory or record does not exist or is outside the granted scope."),
+         (KeyError, "an unknown key was referenced (root key, component id, …)."),
+         (ValueError, "a parameter or state constraint is not met: read the constraint in message, fix it and retry."),
+         (TimeoutError, "timed out: narrow the scope and retry."))
 
 
 @dataclass
@@ -85,7 +85,7 @@ class Scope:
 
 
 def error_payload(exc: BaseException, tool: str) -> str:
-    hint = next((h for kind, h in HINTS if isinstance(exc, kind)), "未分类错误：查看本次调用的工具回执和服务日志。")
+    hint = next((h for kind, h in HINTS if isinstance(exc, kind)), "unclassified error: see this call's tool receipt and the service log.")
     return json.dumps({"ok": False, "tool": tool, "error_type": type(exc).__name__, "message": str(exc),
                        "hint": hint}, ensure_ascii=False, indent=2)
 
@@ -313,7 +313,7 @@ def build_server(scope: Scope) -> MCPServer:
         from assistant_kernel.core import credentials
         item = credentials.get(runtime.ensure(project_id).vault_root, key)
         if item is None:
-            raise FileNotFoundError(f"没有凭据 {key}；用 list_credentials 查看已有的 key")
+            raise FileNotFoundError(f"no credential {key}; list the existing keys with list_credentials")
         return item
 
     @tool(READ_ONLY)

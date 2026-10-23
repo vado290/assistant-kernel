@@ -10,14 +10,13 @@ from typing import Any
 
 from psycopg.types.json import Jsonb
 
-from assistant_kernel.core import cards, drafts, iterlog, rules
+from assistant_kernel.core import cards, drafts, i18n, iterlog, rules
+from assistant_kernel.core.i18n import t
 from assistant_kernel.core.db import all_rows, event, one
 from assistant_kernel.core.skills import SHARED_FILES
 
 MUTEX = {"pm_turn": "pm", "supervisor": "supervisor", "validation": "validation", "publish": "publish",
          "bootstrap": "bootstrap", "triage": "triage"}
-STAGE_NAMES = {"requirements": "需求分析", "design": "方案设计", "build": "实施与自测",
-               "review": "独立 Review", "release": "发布", "operate": "运营"}
 JSON_FIELDS = ("documents", "approvals", "pm_session")
 
 DECISION_ACTIONS = {
@@ -36,8 +35,9 @@ DECISION_ACTIONS = {
 MAX_SHARED_UPDATE = 4000
 MAX_FOLLOWUPS = 5
 SESSION_TURNS = 8          # PM turns one native session may run before a fresh one takes over from the ledger
-EVOLUTION_INSTRUCTION = ("做本项目的周度复盘：依据下面 Kernel 提供的运行记录和项目现有文件，找出最值得改进的地方，"
-                         "提交 improvement_proposal 文档。")
+EVOLUTION_INSTRUCTION = ("Do this project's weekly review: from the run records Kernel provides below and the project's "
+                         "current files, find what is most worth improving and submit an improvement_proposal document.")
+
 
 
 class InvalidResult(ValueError):
@@ -154,9 +154,11 @@ async def close(c, task, state: str, reason: str, published_files: list[str] | N
     await cards.remove_items(c, task["project_id"], lambda i: i["target"] != {"kind": "task", "id": str(task["task_id"])})
     await cards.clear_task_extras(c, task["project_id"], task["task_id"])
     files = ", ".join(f.split("/", 3)[-1] for f in published_files or [])
-    await notify(c, task["project_id"], "pm",
-                 (f"✅ 任务完成：{task['goal'][:100]}" + (f"\n已发布：{files}" if files else ""))
-                 if state == "completed" else f"⏹ 任务已停止：{task['goal'][:100]}", task_id=task["task_id"])
+    pid = task["project_id"]
+    await notify(c, pid, "pm",
+                 (t("mx.task_completed", goal=task["goal"][:100])
+                  + ("\n" + t("mx.published_files", files=files) if files else ""))
+                 if state == "completed" else t("mx.task_stopped", goal=task["goal"][:100]), task_id=task["task_id"])
     if state == "completed":   # PM-channel input no agent has seen (it came during validating, publishing, ...)
         seen = await one(c, """SELECT max(started_at) AS at FROM core.runs WHERE task_id=%s
                                AND run_type='supervisor' AND status='succeeded'""", (task["task_id"],))
@@ -164,9 +166,9 @@ async def close(c, task, state: str, reason: str, published_files: list[str] | N
                   if m["role"] == "pm" and m["message_id"] != task.get("source_message_id") and m["body"].get("text")
                   and (seen["at"] is None or m["created_at"] > seen["at"])]
         if unread:
-            await notify(c, task["project_id"], "pm", "📝 任务结束前你补充的这些内容还没有处理：\n"
+            await notify(c, pid, "pm", t("mx.unread_intro") + "\n"
                          + "\n".join(f"- {m['body']['text'][:200]}" for m in unread[:5])
-                         + "\n需要的话请重新发送，会作为新的请求处理。", task_id=task["task_id"])
+                         + "\n" + t("mx.unread_outro"), task_id=task["task_id"])
     if state == "completed" and rules.approval_valid(task, "release"):
         docs = task["documents"]
         await c.execute(
@@ -222,10 +224,12 @@ async def grant_directory(c, project_id: str, directory: dict[str, str], *, reas
                        VALUES (%s, %s, 'file', %s, 'project', %s, %s, %s)""",
                     (uuid.uuid4(), project_id, directory["key"], Jsonb(body), sha, approval_message_id))
     await insert_iteration(c, project_id, None, kind="grant", source=source, significance="major",
-                           title=f"授权目录 {directory['key']}（{'可写' if directory['access'] == 'write' else '只读'}）",
+                           title=t("mx.grant_title", key=directory["key"],
+                                    access=t("card.access_write" if directory["access"] == "write"
+                                              else "card.access_read")),
                            reason=reason or directory["purpose"],
                            changes=[{"type": "grant", "target": directory["path"], "action": "add",
-                                     "note": f"{directory['access']}：{directory['purpose']}"}],
+                                     "note": f"{directory['access']}: {directory['purpose']}"}],
                            facts={"approval_message_id": _str(approval_message_id)})
 
 
@@ -235,9 +239,9 @@ async def revoke_grant(c, project_id: str, key: str, *, reason: str) -> bool:
                           RETURNING policy_json""", (project_id, key))
     if row:
         await insert_iteration(c, project_id, None, kind="grant", source="user", significance="major",
-                               title=f"撤销目录授权 {key}", reason=reason,
+                               title=t("mx.revoke_title", key=key), reason=reason,
                                changes=[{"type": "grant", "target": str(row["policy_json"].get("path")),
-                                         "action": "remove", "note": "用户撤销"}])
+                                         "action": "remove", "note": t("mx.revoked_by_user")}])
     return row is not None
 
 
@@ -258,7 +262,8 @@ async def record_task(c, task, state: str, reason: str, published_files: list[st
              **({"release_approval_message": task["approvals"]["release"].get("message_id")}
                 if task["approvals"].get("release") else {})}
     kind = {"evolution": "review", "bootstrap": "bootstrap"}.get(task["kind"], "task")
-    outcome = f"{'完成' if state == 'completed' else '停止'}（{reason}）"
+    outcome = t("mx.outcome_completed" if state == "completed" else "mx.outcome_stopped",
+                 reason=reason)
     common = {"source": task["origin"], "source_ref": task.get("source_ref"), "facts": facts, "outcome": outcome}
     if kind == "review":
         await _record_review(c, task, common)
@@ -286,14 +291,16 @@ async def _record_review(c, task, common: dict[str, Any]) -> None:
     proposal = task["documents"].get("improvement_proposal") or {}
     row = await insert_iteration(
         c, task["project_id"], task["task_id"], kind="review", **common,
-        title=f"周度复盘 {_now():%Y-%m-%d}", reason=(summary or {}).get("summary") or task["goal"],
-        followups="；".join(f"{q['source_ref'] or ''} {q['goal']}".strip() for q in queued) or "无后续任务",
+        title=t("mx.review_title", date=f"{_now():%Y-%m-%d}"),
+        reason=(summary or {}).get("summary") or task["goal"],
+        followups="; ".join(f"{q['source_ref'] or ''} {q['goal']}".strip() for q in queued)
+        or t("mx.no_followups"),
         changes=[{"type": "doc", "target": "improvement_proposal", "action": "add",
-                  "note": f"采纳 {len(queued)} 条建议"}] if proposal else [])
+                  "note": t("mx.adopted", count=len(queued))}] if proposal else [])
     resolved, problems = await iterlog.resolve_effect_reviews(c, task["project_id"], proposal.get("effect_reviews"))
     if problems or proposal.get("effect_review_error"):
         await event(c, task["project_id"], "effect_review_invalid", task_id=task["task_id"], references=problems)
-        await notify(c, task["project_id"], "supervisor", "部分效果条目无效、歧义或重复，未写回这些条目；合法且唯一的结论仍按原规则写回，其余保留待核对。")
+        await notify(c, task["project_id"], "supervisor", t("mx.effect_invalid"))
     for iteration_id, review in resolved.items():
         await c.execute("""UPDATE core.iterations SET effect_status=%s, effect_note=%s, effect_reviewed_in=%s
                            WHERE project_id=%s AND iteration_id=%s""",
@@ -391,15 +398,15 @@ async def _pm_result(c, task, run, result) -> None:
     task = await _update(c, task, documents=docs, pm_session=session, turn_count=task["turn_count"] + 1)
     summary = result.get("summary", "")
     if summary:
-        await notify(c, task["project_id"], "pm", f"PM（{STAGE_NAMES.get(task['stage'], task['stage'])}）：{summary}",
-                     task_id=task["task_id"])
+        pid = task["project_id"]
+        await notify(c, pid, "pm", t("mx.pm_summary", stage=i18n.stage_name(task["stage"]),
+                                      summary=summary), task_id=task["task_id"])
     if outcome == "needs_input":
         questions = _checked_questions(result.get("questions"))
         if any(isinstance(q.get("credential"), dict) for q in questions):
             # A credential goes straight to the user (Kernel stores the answer, ROUND5 D8); no relay that could drop
             # the marker.
-            await to_awaiting(c, task, _raw_pm_questions(task, questions, "PM 需要以下信息（凭据会保存到项目凭据库，"
-                                                                            "不会出现在对话记录里）"))
+            await to_awaiting(c, task, _raw_pm_questions(task, questions, t("mx.pm_credentials")))
         else:
             await to_supervising(c, task, "pm_questions", pm_questions=questions, summary=summary)
     elif outcome == "ready_for_validation":
@@ -444,7 +451,7 @@ def _supervisor_item(task, run_input: dict[str, Any], result: dict[str, Any]) ->
     if task["kind"] == "evolution" and result.get("decision") in ("propose_complete", "propose_followups"):
         problem = (task["documents"].get("improvement_proposal") or {}).get("effect_review_error")
         if problem:
-            raise InvalidResult("效果复核需在 operate 补正：" + problem)
+            raise InvalidResult("the effect review must be corrected in operate: " + problem)
     """Turn a Supervisor decision into the task's card item, enforcing Kernel rules."""
     decision = result.get("decision")
     message = result.get("message", "")
@@ -470,7 +477,7 @@ def _supervisor_item(task, run_input: dict[str, Any], result: dict[str, Any]) ->
                 raise InvalidResult(error)
             bundle = rules.validated_bundle(task)
             record = (task["documents"].get("implementation_report") or {}).get("iteration") or {}
-            return _decision(task, "release", message or "是否批准发布？",
+            return _decision(task, "release", message or t("mx.release_q"),
                              bundle_sha=bundle, review_sha=rules.doc_sha(task, "review_report"),
                              record=record.get("title"), major=record.get("significance") == "major")
         if not result.get("instruction"):
@@ -495,11 +502,11 @@ def _supervisor_item(task, run_input: dict[str, Any], result: dict[str, Any]) ->
         followups = _followups(result.get("tasks"))
         if not followups or len(followups) > MAX_FOLLOWUPS:
             raise InvalidResult(f"propose_followups needs 1–{MAX_FOLLOWUPS} task goals")
-        return _decision(task, "followups", message or "是否把以下改进作为新任务排队？", tasks=followups)
+        return _decision(task, "followups", message or t("mx.followups_q"), tasks=followups)
     if decision == "propose_grant":   # the Supervisor executor checked the directory first
         if not result.get("_grant"):
             raise InvalidResult(f"propose_grant needs a valid directory: {result.get('_grant_error') or 'missing'}")
-        return _decision(task, "grant", message or "是否授权这个目录？", directory=result["_grant"])
+        return _decision(task, "grant", message or t("mx.grant_q"), directory=result["_grant"])
     if decision == "propose_project":
         if "project_management" not in (result.get("_capabilities") or ()):
             raise InvalidResult("only a project with the project_management capability can create projects")
@@ -507,14 +514,15 @@ def _supervisor_item(task, run_input: dict[str, Any], result: dict[str, Any]) ->
             goal = str(result.get("goal") or "").strip()
             if not goal:
                 raise InvalidResult("propose_project outside a project-creation task needs a goal")
-            return _decision(task, "project_task", message or "是否开始一个创建项目的任务，先商定项目章程？",
+            return _decision(task, "project_task", message or t("mx.project_task_q"),
                              goal=goal, reason=str(result.get("reason") or "").strip())
         contract = task["documents"].get("task_contract") or {}
         if not contract.get("spec"):
             raise InvalidResult("the charter has no valid creation parameters yet: "
                                 + (contract.get("spec_error") or "no charter document"))
         spec = contract["spec"]
-        return _decision(task, "create_project", message or f"是否按章程创建项目 {spec['project_id']}？",
+        return _decision(task, "create_project",
+                         message or t("mx.create_project_q", project_id=spec["project_id"]),
                          spec=spec, doc_sha=contract["sha256"])
     raise InvalidResult(f"unsupported Supervisor decision {decision!r}")
 
@@ -536,10 +544,11 @@ def _covers(pm_questions: list[dict], result: dict[str, Any]) -> bool:
     return required <= covered | set(result.get("suggested") or {})
 
 
-def _raw_pm_questions(task, pm_questions, message: str = "PM 的原始问题") -> dict[str, Any]:
+def _raw_pm_questions(task, pm_questions, message: str | None = None) -> dict[str, Any]:
     return cards.new_item(target_kind="task", target_id=str(task["task_id"]), kind="questions",
                           origin="kernel", deliver_to="pm",
-                          content={"message": message, "questions": pm_questions, "pm_questions": pm_questions})
+                          content={"message": message or t("mx.pm_raw"), "questions": pm_questions,
+                                   "pm_questions": pm_questions})
 
 
 def _checked_questions(questions) -> list[dict[str, Any]]:
@@ -571,7 +580,7 @@ async def _publish_result(c, task, run, result) -> None:
     elif outcome == "failed":
         await to_supervising(c, task, "publish_failed", error=result.get("error"))
     else:
-        await to_awaiting(c, task, _decision(task, "reconcile", "发布结果不确定，请核对后选择实际结果。"))
+        await to_awaiting(c, task, _decision(task, "reconcile", t("mx.reconcile_unsure")))
 
 
 async def _finish_publish(c, task, result, reason):
@@ -589,17 +598,20 @@ async def _bootstrap_result(c, task, run, result) -> None:
         await to_supervising(c, task, "bootstrap_failed", error=result.get("error"))
         return
     channels, guild = result.get("channels") or {}, result.get("guild_id")
-    links = "\n".join(f"- #{role}：https://discord.com/channels/{guild}/{channels[key]}"
+    links = "\n".join(f"- #{role}: https://discord.com/channels/{guild}/{channels[key]}"
                       for role, key in (("pm", "pm_channel_id"), ("supervisor", "supervisor_channel_id"))
                       if channels.get(key) and guild)
-    await notify(c, task["project_id"], "pm", f"🆕 项目 {result['project_id']} 已创建。\n{links}".rstrip(),
+    await notify(c, task["project_id"], "pm",
+                 (t("mx.project_created", project_id=result["project_id"]) + "\n" + links).rstrip(),
                  task_id=task["task_id"])
     spec = run["input"]["spec"]   # the new project's stream starts with its own creation
     for directory in spec.get("directories") or []:   # checked when the charter was saved, approved with it
-        await grant_directory(c, result["project_id"], directory, reason=f"创建项目时批准：{directory['purpose']}")
+        await grant_directory(c, result["project_id"], directory,
+                              reason=t("mx.created_grant_reason", purpose=directory["purpose"]))
     await insert_iteration(c, result["project_id"], None, kind="bootstrap", source="user",
                            source_ref=f"bootstrap:{task['project_id']}:{str(task['task_id'])[:8]}",
-                           title=f"项目创建：{spec.get('display_name') or result['project_id']}",
+                           title=t("mx.created_title",
+                                    name=spec.get("display_name") or result["project_id"]),
                            reason=task.get("reason") or task["goal"], significance="major",
                            changes=[{"type": "charter", "target": "knowledge/charter.md", "action": "add",
                                      "note": str(spec.get("purpose") or "")[:300]}],
@@ -611,9 +623,9 @@ async def _propose_new_task(c, run, proposal: dict[str, Any], message_id, *, aft
     """A "create a new task?" card item; on approval the task queues behind any active one (activate_next)."""
     if not isinstance(proposal, dict) or not str(proposal.get("goal") or "").strip():
         raise InvalidResult("propose_new_task needs a goal")
-    text = str(proposal.get("message") or "是否创建新任务？")
+    text = str(proposal.get("message") or t("mx.new_task_q"))
     if after:
-        text += f"\n（批准后排在当前任务「{after[:60]}」之后，它结束后自动开始；也可以发送 /cancel 先结束当前任务。）"
+        text += "\n" + t("mx.new_task_after", after=after[:60])
     await cards.add_item(c, run["project_id"], cards.new_item(
         target_kind="consultation", target_id=str(run["run_id"]), kind="decision", origin="supervisor",
         content={"decision": "new_task", "message": text, "actions": list(DECISION_ACTIONS["new_task"]),
@@ -666,14 +678,16 @@ async def _consult_result(c, run, result) -> None:
     if isinstance(shared, dict) and "shared_context" in (result.get("_capabilities") or ()):
         await cards.add_item(c, run["project_id"], cards.new_item(
             target_kind="consultation", target_id=str(run["run_id"]), kind="decision", origin="supervisor",
-            content={"decision": "shared_update", "message": "是否这样修改公共背景？",
+            content={"decision": "shared_update", "message": t("mx.shared_q"),
                      "actions": list(DECISION_ACTIONS["shared_update"]), "data": _shared_update(shared)}))
     if result.get("_grant_error"):
-        await notify(c, run["project_id"], "supervisor", f"⚠ 这个目录不能授权：{result['_grant_error']}", chat=chat)
+        await notify(c, run["project_id"], "supervisor", t("mx.grant_refused",
+                                                            error=result["_grant_error"]), chat=chat)
     if result.get("_grant"):   # a directory the user asked for in the Supervisor channel, checked by the executor
         await cards.add_item(c, run["project_id"], cards.new_item(
             target_kind="consultation", target_id=str(run["run_id"]), kind="decision", origin="supervisor",
-            content={"decision": "grant", "message": "是否授权这个目录？", "actions": list(DECISION_ACTIONS["grant"]),
+            content={"decision": "grant", "message": t("mx.grant_q"),
+                     "actions": list(DECISION_ACTIONS["grant"]),
                      "data": {"directory": result["_grant"]}}))
     upgrade = result.get("upgrade")
     context_task = run["input"].get("context_task_id")
@@ -697,8 +711,8 @@ async def _record_profile(c, run, message, items) -> None:
         return
     await event(c, run["project_id"], "profile_observed", task_id=run.get("task_id"), run_id=run["run_id"],
                 source_run=str(run["run_id"]), user_id=message["user_id"], items=notes)
-    await notify(c, run["project_id"], "supervisor", "📝 已记入用户画像：" + "；".join(notes)[:600]
-                 + "（不对的话直接告诉我，我会更正）", task_id=run.get("task_id"))
+    await notify(c, run["project_id"], "supervisor", t("mx.profile_noted",
+                                                        notes="; ".join(notes)[:600]), task_id=run.get("task_id"))
 
 
 async def _source_user(c, task) -> str | None:
@@ -737,17 +751,18 @@ async def _triage_result(c, run, result) -> None:
         if kind == "delivery" and active and active["kind"] == "delivery":
             # Another message started a task while this one was being triaged: it is a supplement to that task.
             await user_input(c, project_id, message)
-            await notify(c, project_id, "pm", "当前已有进行中的任务，这条消息已作为它的补充交给 PM。", chat=chat)
+            await notify(c, project_id, "pm", t("mx.attached"), chat=chat)
             await event(c, project_id, "triaged", decision="attached", message_id=message["message_id"])
             return
         task = await _task_from_message(c, project_id, message, goal=goal, kind=kind,
                                         reason=str(result.get("reason") or "").strip() or None)
-        await notify(c, project_id, "pm", reply or f"好的，开始处理：{goal[:100]}", chat=chat, task_id=task["task_id"])
+        await notify(c, project_id, "pm", reply or t("mx.starting", goal=goal[:100]), chat=chat,
+                     task_id=task["task_id"])
     elif decision == "route":
         if "routing" not in (result.get("_capabilities") or ()) or not isinstance(result.get("route"), dict):
             raise InvalidResult("route needs the routing capability and a route object")
         handoff = await _route(c, project_id, message, result["route"])
-        await notify(c, project_id, "pm", reply or "这件事更适合由另一个项目处理，已经转交。", chat=chat,
+        await notify(c, project_id, "pm", reply or t("mx.routed"), chat=chat,
                      link_message=str(handoff))
     else:
         raise InvalidResult(f"unsupported triage decision {decision!r}")
@@ -766,7 +781,7 @@ async def _route(c, source: str, message: dict[str, Any], route: dict[str, Any])
               VALUES (%s, 'kernel', %s, 'inbound', 'supervisor', %s) RETURNING *""",
         (target, message["user_id"], Jsonb({"text": handoff, "handoff_from": source,
                                             "source_message_id": str(message["message_id"])})))
-    note = await notify(c, target, "supervisor", f"📨 来自 {source} 的转交：\n{handoff}")
+    note = await notify(c, target, "supervisor", t("mx.handoff", source=source, handoff=handoff))
     await consult(c, target, inbound)
     await event(c, source, "routed", target=target, message_id=message["message_id"])
     return note
@@ -780,10 +795,11 @@ async def _job_result(c, run, result) -> None:
                        WHERE project_id=%s AND job_id=%s""",
                     (str(result.get("summary") or "")[:500], run["project_id"], job_id))
     if job and job["failures"] and spec.get("notify", "supervisor") != "none":
-        await notify(c, run["project_id"], spec.get("notify", "supervisor"), f"✅ 作业 {job_id} 已恢复正常。")
+        await notify(c, run["project_id"], spec.get("notify", "supervisor"), t("mx.job_recovered",
+                                                                                 job=job_id))
     post = spec.get("post_result")
     if spec.get("type") == "agent" and post in ("pm", "supervisor") and result.get("summary"):
-        await notify(c, run["project_id"], post, f"📋 {job_id}：{str(result['summary'])[:1800]}")
+        await notify(c, run["project_id"], post, f"📋 {job_id}: {str(result['summary'])[:1800]}")
 
 
 async def _job_exhausted(c, run) -> None:
@@ -794,8 +810,7 @@ async def _job_exhausted(c, run) -> None:
     await event(c, run["project_id"], "job_failed", run_id=run["run_id"], job_id=job_id, error=reason)
     if spec.get("notify", "supervisor") != "none":
         await notify(c, run["project_id"], spec.get("notify", "supervisor"),
-                     f"⚠ 作业 {job_id} 运行失败（已尝试 {run['attempt']} 次）：{reason}\n"
-                     f"日志在 runs/jobs/{job_id}/；可发送 /jobs run {job_id} 重试，或 /jobs pause {job_id} 暂停。")
+                     t("mx.job_failed", job=job_id, attempts=run["attempt"], reason=reason))
 
 
 async def on_exhausted(c, run: dict[str, Any]) -> None:
@@ -806,9 +821,9 @@ async def on_exhausted(c, run: dict[str, Any]) -> None:
         await event(c, run["project_id"], "side_run_failed", task_id=run["task_id"], run_id=run["run_id"])
         reason = str((run.get("error") or {}).get("message", ""))[:200]
         if run["purpose"] == "consult":   # tell the user instead of failing silently
-            await notify(c, run["project_id"], "supervisor", f"⚠ Supervisor 暂时无法回答这条消息，请稍后再问。（{reason}）")
+            await notify(c, run["project_id"], "supervisor", t("mx.consult_failed", reason=reason))
         elif run["run_type"] == "triage":
-            await notify(c, run["project_id"], "pm", f"⚠ 暂时无法处理这条消息，请稍后再说一次。（{reason}）")
+            await notify(c, run["project_id"], "pm", t("mx.triage_failed", reason=reason))
         return
     task = await load_task(c, run["task_id"])
     if not is_cursor(task, run):
@@ -816,10 +831,11 @@ async def on_exhausted(c, run: dict[str, Any]) -> None:
     if run["run_type"] == "supervisor" and run["input"].get("reason") == "pm_questions":
         await to_awaiting(c, task, _raw_pm_questions(task, run["input"]["pm_questions"]))
     elif run["run_type"] == "publish":
-        await to_awaiting(c, task, _decision(task, "reconcile", "发布执行失败或中断，请核对实际结果。"))
+        await to_awaiting(c, task, _decision(task, "reconcile", t("mx.publish_broken")))
     else:
         await to_awaiting(c, task, _decision(
-            task, "run_failed", f"{run['run_type']} 多次失败：{(run.get('error') or {}).get('message', '')}",
+            task, "run_failed", t("mx.run_failed", run_type=run["run_type"],
+                                   error=(run.get("error") or {}).get("message", "")),
             run_type=run["run_type"], run_input=run["input"]))
 
 
@@ -917,9 +933,10 @@ async def _decision_action(c, task, item, action, values, source_message_id, *, 
             if error or rules.doc_sha(task, "review_report") != data["review_sha"] or rules.validated_bundle(task) != data["bundle_sha"]:
                 # Keep this current card (transaction rollback), including its usable reject button.
                 # StaleItem would incorrectly tell the user that a replacement card already exists.
-                recovery = ("请点‘不同意’，由 Supervisor 重新安排审查。" if task["stage"] == "review" else
-                            "请点‘不同意’并核对发布实际结果；release 阶段不能直接返回 Review。")
-                raise ValueError(f"本次未批准：{error or '发布卡片引用已过期'}。{recovery}")
+                pid = task["project_id"]
+                recovery = t("mx.recovery_review" if task["stage"] == "review" else "mx.recovery_release")
+                raise ValueError(t("mx.release_not_approved", error=error or t("mx.release_ref_stale"),
+                                    recovery=recovery))
         if rules.validated_bundle(task) != data["bundle_sha"] or rules.doc_sha(task, "review_report") != data["review_sha"]:
             raise cards.StaleItem("the reviewed bundle changed after this card was shown")
         approvals = {**task["approvals"], "release": {"bundle_sha": data["bundle_sha"], "review_sha": data["review_sha"],
@@ -1011,8 +1028,8 @@ async def _consultation_action(c, project_id, item, action, source_message_id):
         if action == "approve":   # written to the file by vault_sync, outside this transaction
             await event(c, project_id, "shared_update_approved", item_id=item["item_id"], **data)
             await insert_iteration(c, project_id, None, kind="shared_context", source="supervisor",
-                                   title=f"公共背景：{data['file']} · {data['section']}",
-                                   reason=data["reason"] or "（未说明原因）", significance="major",
+                                   title=t("mx.shared_title", file=data["file"], section=data["section"]),
+                                   reason=data["reason"] or t("mx.no_reason"), significance="major",
                                    changes=[{"type": "shared", "target": f"{data['file']}#{data['section']}",
                                              "action": "modify", "note": data["content"][:400]}],
                                    facts={"approval_message_id": _str(source_message_id)})

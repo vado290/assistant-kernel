@@ -52,7 +52,7 @@ async def test_publish_leaves_a_snapshot_and_a_release_commit(kernel, sim, dispa
     (project_files / "knowledge" / "edited-by-hand.md").write_text("x", "utf-8")
     await _publish(kernel, sim, dispatcher, kernel_settings, None)
     subjects = log(project_files)
-    assert subjects[0].startswith("发布：") and subjects[1].startswith("发布前快照")
+    assert subjects[0].startswith("Release: ") and subjects[1].startswith("Snapshot before release")
 
 
 async def test_push_failures_are_said_once_and_retried_later(kernel, kernel_settings, project_files, monkeypatch):
@@ -70,7 +70,7 @@ async def test_push_failures_are_said_once_and_retried_later(kernel, kernel_sett
     assert attempts == ["project-p1"]
     async with kernel.db.tx() as c:
         told = await (await c.execute("""SELECT count(*) AS n FROM core.messages WHERE project_id='p1'
-                                         AND body->>'text' LIKE '%推送到 GitHub 失败%'""")).fetchone()
+                                         AND body->>'text' LIKE '%Pushing to GitHub failed%'""")).fetchone()
     assert told["n"] == 1
 
 
@@ -82,7 +82,7 @@ def test_map_problems_and_lookup(tmp_path):
     required = projectmap.covered_files(tmp_path, tmp_path / "product")
     assert required == ["product/entries/daily.py"]
     exists = lambda p: (tmp_path / p).exists()  # noqa: E731
-    assert projectmap.problems([], exists, required) == ["product/entries/daily.py 没有登记在地图里"]
+    assert projectmap.problems([], exists, required) == ["product/entries/daily.py is not in the map"]
     entries = projectmap.skeleton(tmp_path, required) + [{"path": "product/gone.py", "purpose": "x"},
                                                          {"path": "product/entries/", "kind": "folder", "purpose": "y"}]
     assert entries[0]["purpose"] == "日报入口：汇总并通知。"
@@ -120,7 +120,7 @@ async def test_a_credential_question_goes_straight_to_the_user_and_into_the_stor
     await kernel.act("p1", item["item_id"], "submit", {"answers": {"q1": "AKIA-123"}})
     assert credentials.get(project_files, "binance_api")["value"] == "AKIA-123"
     run = await kernel.claim("w1")
-    assert run["input"]["answers"]["q1"].startswith("（已保存为项目凭据 binance_api")
+    assert run["input"]["answers"]["q1"].startswith("(saved as project credential binance_api")
     async with kernel.db.tx() as c:
         leaked = await (await c.execute("SELECT count(*) AS n FROM core.messages WHERE body::text LIKE '%AKIA-123%'"))\
             .fetchone()
@@ -130,5 +130,5 @@ async def test_a_credential_question_goes_straight_to_the_user_and_into_the_stor
 async def test_secrets_command(gateway, kernel_settings, project_files):  # noqa: F811
     credentials.put(project_files, "ib_account", "x", service="IB")
     assert "ib_account" in await gateway.secrets_command("p1", [])
-    assert "确认" in await gateway.secrets_command("p1", ["delete", "ib_account"])
-    assert "已删除" in await gateway.secrets_command("p1", ["delete", "ib_account", "确认"])
+    assert "confirm" in await gateway.secrets_command("p1", ["delete", "ib_account"])
+    assert "deleted." in await gateway.secrets_command("p1", ["delete", "ib_account", "确认"])

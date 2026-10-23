@@ -242,7 +242,8 @@ async def prepare(kernel, project_id, release):
         await event(c, project_id, 'skill_update_prepared', update_id=str(ident), plan_sha=digest)
         if plan['problems']:
             await machine.notify(c, project_id, 'supervisor',
-                f"技能采用 {ident} 尚未写入：{'; '.join(plan['problems'])[:600]}。保留原副本；后续任务引用此 update_id 补基线或审查合并，条件未变不要重试。")
+                f"Skill adoption {ident} not written yet: {'; '.join(plan['problems'])[:600]}. The current copies stay; a "
+                "follow-up task cites this update_id to add a baseline or review the merge — do not retry while nothing changed.")
         return row
 
 
@@ -346,17 +347,21 @@ async def _mark(c, row, status, reason='', receipt=None):
         await event(c, row['project_id'], 'skill_update_' + status, update_id=str(row['update_id']), reason=reason[:500])
         if status in ('blocked', 'reconciling', 'rolled_back'):
             await machine.notify(c, row['project_id'], 'supervisor',
-                f"技能采用 {row['update_id']}：{status}。{reason[:500]}。"
-                + ('该项目暂停领取新执行；由维护者核对旧写入已停止、保存后来修改并恢复已知状态，再执行 recover；不要盲目重发。'
-                   if status == 'reconciling' else '保留现有内容；后续任务请引用此 update_id 和恢复条件。'))
+                f"Skill adoption {row['update_id']}: {status}. {reason[:500]}. "
+                + ("The project claims no new runs until a maintainer confirms the old writer stopped, saves later edits, "
+                   "restores a known state and runs recover — do not blindly retry."
+                   if status == 'reconciling' else "The current content stays; follow-up tasks cite this update_id and "
+                   "the recovery conditions."))
     if status == 'applied' and row['status'] != 'applied':
         release = row['plan']['release']
         await machine.insert_iteration(c, row['project_id'], None, kind='imported', source='system',
-            source_ref=f"skill-update:{row['update_id']}", title='技能采用已完成（效果待复核）', reason='已批准策略下的技能更新',
+            source_ref=f"skill-update:{row['update_id']}", title="Skill adoption completed (effect to be reviewed)",
+            reason="skill update under the approved policy",
             changes=[{'type': 'skill', 'target': i['key'], 'action': 'modify', 'version': i['version']} for i in row['plan']['items']],
-            verification='完整目录读回校验通过；不代表模型已读取或业务效果通过',
-            expected_effect=release.get('expected_effect', '采用已批准的新规则并保留项目约定'),
-            measure=release.get('measure', '后续运行的技能/配置指纹与复盘证据'), facts={'update_id': str(row['update_id'])})
+            verification="full directory read back and verified; does not mean a model read it or the business effect passed",
+            expected_effect=release.get('expected_effect', "the approved new rules are adopted and project conventions kept"),
+            measure=release.get('measure', "skill/config fingerprints of later runs and review evidence"),
+            facts={'update_id': str(row['update_id'])})
     return updated
 
 

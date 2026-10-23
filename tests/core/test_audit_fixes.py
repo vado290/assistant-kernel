@@ -101,7 +101,7 @@ async def test_m4_and_l2_input_after_the_last_turn_is_reported_and_records_survi
         await c.execute("UPDATE core.runs SET lease_until=now() - interval '1 second' WHERE run_id=%s", (run["run_id"],))
     await kernel.recover_expired()
     await kernel.act("p1", (await sim.item("p1", task_id))["item_id"], "published")
-    assert any("顺便把标题改成蓝色" in m["body"]["text"] and "还没有处理" in m["body"]["text"]
+    assert any("顺便把标题改成蓝色" in m["body"]["text"] and "not handled yet" in m["body"]["text"]
                for m in await sim.outbound("p1"))
     [row] = await kernel.iterations("p1")
     assert (row["title"], row["complete"]) == ("日报工具", True)       # the PM's record, not the fallback
@@ -124,7 +124,7 @@ async def test_l3_no_cancel_while_publishing(gateway, kernel, sim):  # noqa: F81
     task_id = await start_task(kernel, sim)
     async with kernel.db.tx() as c:
         await c.execute("UPDATE core.tasks SET state='publishing' WHERE task_id=%s", (task_id,))
-    assert "无法中途取消" in await gateway.cancel_active(PM_CH, USER)
+    assert "cannot be cancelled midway" in await gateway.cancel_active(PM_CH, USER)
     assert (await sim.task(task_id))["state"] == "publishing"
 
 
@@ -133,7 +133,7 @@ async def test_m5_only_a_released_manifest_is_registered(kernel, sim, kernel_set
     assert await jobs.sync_runtime(kernel, kernel_settings) == 0
     assert await jobs.sync_runtime(kernel, kernel_settings) == 0
     assert await jobs.list_jobs(kernel, "p1") == [] and control.applied == []
-    assert len([m for m in await sim.outbound("p1") if "被直接修改过" in m["body"]["text"]]) == 1   # said once
+    assert len([m for m in await sim.outbound("p1") if "was changed directly" in m["body"]["text"]]) == 1   # said once
     await release(kernel, vault, MANIFEST)
     assert await jobs.sync_runtime(kernel, kernel_settings) == 1
     assert {r["job_id"] for r in await jobs.list_jobs(kernel, "p1")} == {"daily-report", "listener", "listener-restart"}
@@ -252,7 +252,7 @@ async def test_l8_only_input_after_the_last_decision_is_reported(kernel, sim):
                         (task_id, Jsonb({"text": "看起来不错"})))
         task = await machine.load_task(c, task_id)
         await machine.close(c, task, "completed", "published")
-    assert not any("还没有处理" in m["body"]["text"] for m in await sim.outbound("p1"))
+    assert not any("not handled yet" in m["body"]["text"] for m in await sim.outbound("p1"))
 
 
 async def test_l9_one_stuck_worktree_does_not_block_the_others(kernel, kernel_settings, repo, monkeypatch):  # noqa: F811

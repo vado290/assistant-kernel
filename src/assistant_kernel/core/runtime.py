@@ -37,17 +37,17 @@ def _relative(path: Any, what: str) -> str:
     text = str(path or "").strip()
     pure = PurePosixPath(text)
     if not text or pure.is_absolute() or ".." in pure.parts:
-        raise ManifestError(f"{what} 必须是项目内的相对路径：{text!r}")
+        raise ManifestError(f"{what} must be a relative path inside the project: {text!r}")
     return pure.as_posix()
 
 
 def _schedule(rule: Any, zone: str, what: str) -> dict[str, Any]:
     if not isinstance(rule, dict):
-        raise ManifestError(f"{what} 的 schedule 必须是对象，例如 {{kind: cron, expression: \"0 8 * * *\"}}")
+        raise ManifestError(f"the schedule of {what} must be an object, e.g. {{kind: cron, expression: \"0 8 * * *\"}}")
     try:
         schedule_time.validate_rule(rule, zone)
     except (ValueError, KeyError) as exc:
-        raise ManifestError(f"{what} 的时间规则无效：{exc}") from exc
+        raise ManifestError(f"the schedule of {what} is invalid: {exc}") from exc
     return dict(rule)
 
 
@@ -57,38 +57,38 @@ def parse_manifest(text: str, exists: Callable[[str], bool]) -> dict[str, list[d
     try:
         data = yaml.safe_load(text) or {}
     except yaml.YAMLError as exc:
-        raise ManifestError(f"{MANIFEST} 不是合法的 YAML：{exc}") from exc
+        raise ManifestError(f"{MANIFEST} is not valid YAML: {exc}") from exc
     if not isinstance(data, dict) or data.get("schema_version") != SCHEMA:
-        raise ManifestError(f"{MANIFEST} 必须是对象，且 schema_version: {SCHEMA}")
+        raise ManifestError(f"{MANIFEST} must be an object with schema_version: {SCHEMA}")
     problems: list[str] = []
     services, jobs, seen = [], [], set()
 
     def unique(item_id: Any, what: str) -> str:
         item_id = str(item_id or "")
         if not ID.fullmatch(item_id):
-            raise ManifestError(f"{what} 的 id 必须是 2–40 个小写字母、数字或连字符，以字母开头：{item_id!r}")
+            raise ManifestError(f"the id of a {what} is 2–40 lowercase letters, digits or hyphens, starting with a letter: {item_id!r}")
         if item_id in seen:
-            raise ManifestError(f"id 重复：{item_id}")
+            raise ManifestError(f"duplicate id: {item_id}")
         seen.add(item_id)
         return item_id
 
     for raw in data.get("services") or []:
         try:
             if not isinstance(raw, dict):
-                raise ManifestError("services 中的每一项必须是对象")
-            sid = unique(raw.get("id"), "服务")
+                raise ManifestError("every item of services must be an object")
+            sid = unique(raw.get("id"), "service")
             command = raw.get("command")
             argv = shlex.split(command) if isinstance(command, str) else [str(a) for a in command or []]
             if not argv:
-                raise ManifestError(f"服务 {sid} 缺少 command")
+                raise ManifestError(f"service {sid} has no command")
             if argv[0].endswith((".py", ".sh")) or "/" in argv[0]:
-                _relative(argv[0], f"服务 {sid} 的程序")
+                _relative(argv[0], f"the program of service {sid}")
             zone = str(raw.get("timezone") or DEFAULT_TZ)
             service = {"id": sid, "command": argv, "timezone": zone}
             services.append(service)
             if raw.get("restart_schedule"):
                 jobs.append({"id": f"{sid}-restart", "type": "service_restart", "entry": sid, "args": [],
-                             "schedule": _schedule(raw["restart_schedule"], zone, f"服务 {sid}"), "timezone": zone,
+                             "schedule": _schedule(raw["restart_schedule"], zone, f"service {sid}"), "timezone": zone,
                              "timeout_seconds": 120, "retries": 1, "notify": "supervisor"})
                 seen.add(f"{sid}-restart")
         except ManifestError as exc:
@@ -97,40 +97,40 @@ def parse_manifest(text: str, exists: Callable[[str], bool]) -> dict[str, list[d
     for raw in data.get("jobs") or []:
         try:
             if not isinstance(raw, dict):
-                raise ManifestError("jobs 中的每一项必须是对象")
-            jid = unique(raw.get("id"), "作业")
+                raise ManifestError("every item of jobs must be an object")
+            jid = unique(raw.get("id"), "job")
             kind = str(raw.get("type") or "")
             if kind not in JOB_TYPES:
-                raise ManifestError(f"作业 {jid} 的 type 只能是 {', '.join(JOB_TYPES)}")
+                raise ManifestError(f"the type of job {jid} must be one of {', '.join(JOB_TYPES)}")
             zone = str(raw.get("timezone") or DEFAULT_TZ)
             job = {"id": jid, "type": kind, "args": [str(a) for a in raw.get("args") or []], "timezone": zone,
-                   "schedule": _schedule(raw.get("schedule"), zone, f"作业 {jid}"),
+                   "schedule": _schedule(raw.get("schedule"), zone, f"job {jid}"),
                    "timeout_seconds": int(raw.get("timeout_seconds") or 600), "retries": int(raw.get("retries", 1)),
                    "notify": str(raw.get("notify") or "supervisor")}
             if not 10 <= job["timeout_seconds"] <= MAX_TIMEOUT or not 0 <= job["retries"] <= 5:
-                raise ManifestError(f"作业 {jid}：timeout_seconds 须在 10–{MAX_TIMEOUT} 之间，retries 须在 0–5 之间")
+                raise ManifestError(f"job {jid}: timeout_seconds must be 10–{MAX_TIMEOUT} and retries 0–5")
             if job["notify"] not in NOTIFY:
-                raise ManifestError(f"作业 {jid} 的 notify 只能是 {', '.join(NOTIFY)}")
+                raise ManifestError(f"the notify of job {jid} must be one of {', '.join(NOTIFY)}")
             if kind == "script":
-                job["entry"] = _relative(raw.get("entry"), f"作业 {jid} 的 entry")
+                job["entry"] = _relative(raw.get("entry"), f"the entry of job {jid}")
                 if not exists(job["entry"]):
-                    raise ManifestError(f"作业 {jid} 的脚本不存在：{job['entry']}")
+                    raise ManifestError(f"the script of job {jid} does not exist: {job['entry']}")
             elif kind == "agent":
-                job["entry"] = _relative(raw.get("entry"), f"作业 {jid} 的 entry")
+                job["entry"] = _relative(raw.get("entry"), f"the entry of job {jid}")
                 if not re.fullmatch(r"agents/[a-z][a-z0-9_-]*", job["entry"]):
-                    raise ManifestError(f"作业 {jid} 的 entry 必须是 agents/<名称>")
+                    raise ManifestError(f"the entry of job {jid} must be agents/<name>")
                 if not exists(f"{job['entry']}/config.yaml") or not exists(f"{job['entry']}/role.md"):
-                    raise ManifestError(f"作业 {jid} 的 agent 缺少 {job['entry']}/config.yaml 或 role.md")
+                    raise ManifestError(f"the agent of job {jid} lacks {job['entry']}/config.yaml or role.md")
                 job["prompt"] = str(raw.get("prompt") or "").strip()
                 if not job["prompt"]:
-                    raise ManifestError(f"作业 {jid}（agent）需要 prompt：每次运行交给 agent 的任务")
+                    raise ManifestError(f"job {jid} (agent) needs a prompt: the task given to the agent on each run")
                 job["post_result"] = str(raw.get("post_result") or "pm")
                 if job["post_result"] not in NOTIFY:
-                    raise ManifestError(f"作业 {jid} 的 post_result 只能是 {', '.join(NOTIFY)}")
+                    raise ManifestError(f"the post_result of job {jid} must be one of {', '.join(NOTIFY)}")
             else:
                 job["entry"] = str(raw.get("entry") or "")
                 if job["entry"] not in service_ids:
-                    raise ManifestError(f"作业 {jid} 要重启的服务 {job['entry']!r} 不在 services 中")
+                    raise ManifestError(f"the service {job['entry']!r} that job {jid} restarts is not in services")
             jobs.append(job)
         except (ManifestError, TypeError, ValueError) as exc:
             problems.append(str(exc))
@@ -186,7 +186,7 @@ class SupervisorControl:
         if missing_ok and len(args) == 2 and args[0] == "update" and output == f"ERROR: no such group: {args[1]}":
             return output   # retrying an already removed owned service is a successful retirement
         if done.returncode and args and args[0] != "status":
-            raise RuntimeError(f"supervisorctl {' '.join(args)} 失败：{output[-500:]}")
+            raise RuntimeError(f"supervisorctl {' '.join(args)} failed: {output[-500:]}")
         return output
 
     def needs_update(self, project_id: str, vault: Path, service: dict, home: Path | None = None) -> bool:

@@ -1,39 +1,41 @@
 ---
 name: environment
-description: 技术环境：开发机、容器、数据库、模型服务、渠道、远程主机和部署去向
+description: "Technical environment: development machine, containers, database, model services, channels, remote hosts and deployment targets"
 metadata:
   version: "1"
   load: {roles: [pm, supervisor], stages: [design, build, review, operate], purposes: [consult]}
 ---
 
-# 公共背景 · 技术环境
+# Shared background · Technical environment
 
-## 1 开发机
-- Windows 10 宿主机，命令行为 PowerShell 5.1（也有 Git Bash）；所有项目文件在 `H:\AI` 下。（核实 2026-10-16）
-- PowerShell 5.1 调用 `docker exec` 时会去掉参数里的双引号：多参数的命令写成脚本文件复制进容器执行。（核实 2026-10-16）
+## 1 Development machine
+(to be written: operating system, shell, where the project files live)
 
-## 2 容器与路径
-- Docker 容器 `AI` 运行 Kernel 服务，容器内路径 `/home/v/AI` 对应宿主机 `H:\AI`。（核实 2026-10-16）
-- 容器内由 supervisord 管理：kernel-api（健康检查）、kernel-core-dispatcher（执行调度）、kernel-core-gateway（Discord 网关）、
-  docling-serve（文档解析）。（核实 2026-10-16）
-- 数据目录 `H:\AI\assistant-data`：`vaults/<项目>`（各项目文件）、`runtime`（运行环境、wheel、venv）、`config`、`backups`。（核实 2026-10-16）
+## 2 Containers and paths
+- The Docker container `AI` runs the Kernel services; the container path `/home/v/AI` is the host's workspace folder.
+- supervisord in the container runs kernel-api (health checks and the dashboard), kernel-core-dispatcher (runs),
+  kernel-core-gateway (Discord gateway) and optionally docling-serve (document parsing).
+- The data folder `assistant-data`: `vaults/<project>` (each project's files), `runtime` (environments, wheels, venvs),
+  `config`, `backups`.
 
-## 3 数据库
-- PostgreSQL 在容器 `rag-postgres`，数据库 `rag`；Kernel 的状态在 schema `core`，旧版数据归档在 `archive_core5`。（核实 2026-10-16）
+## 3 Database
+- PostgreSQL holds Kernel's state in the schema `core`.
 
-## 4 模型与工具服务
-- agent 通过 Codex CLI 调用 OpenAI 模型；登录信息由 Kernel 统一同步，不要自行处理。（核实 2026-10-16）
-- 火山方舟提供文本生成、图片 OCR、Embedding，通过 Kernel 工具调用，凭据不进入提示词。（核实 2026-10-16）
+## 4 Model and tool services
+- Agents call the models through the Codex CLI; Kernel keeps the login in step — do not handle it yourself.
+- Further model services (text generation, OCR, embeddings) are called through Kernel tools; their credentials never
+  enter prompts.
 
-## 5 沟通渠道
-- Discord：每个项目有 #pm 和 #supervisor 两个频道；卡片都显示在 #supervisor。（核实 2026-10-16）
+## 5 Channels
+- Discord: each project has the channels #pm and #supervisor; cards appear in #supervisor.
 
-## 6 远程主机
-（待补充：各主机的别名、用途、操作系统；不要写地址以外的登录信息）
+## 6 Remote hosts
+(to be written: each host's alias, purpose and operating system; no login details beyond the address)
 
-## 7 部署去向
-- Kernel 自身：用户在宿主机执行 `assistant-kernel\scripts\deploy.ps1`（先在 test 环境跑测试，再装入 prod 并重启）。（核实 2026-10-16）
-- 其他项目开发完成后部署到哪里、怎么部署：（待补充）
+## 7 Deployment targets
+- Kernel itself: the user runs `assistant-kernel/scripts/deploy.ps1` (tests in the test environment first, then installs
+  into prod and restarts).
+- Where and how other projects are deployed once built: (to be written)
 
-## 8 变更记录
-- 2026-10-16 初稿（R1）
+## 8 Change log
+- first draft (R1)

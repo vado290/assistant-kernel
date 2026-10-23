@@ -38,7 +38,7 @@ def test_agents_read_the_archive_as_the_charters_last_section(kernel_settings, p
     assert text.startswith("# 章程") and skills.section_text(text, vault_sync.ARCHIVE).count("公共：在上海") == 1
     assert "# 背景信息存档\n" not in text                                                # the file's own title is dropped
     found = shared_candidates(kernel_settings, ["p1", "p2"], exclude="p2")             # other projects' public facts
-    assert "p1：在上海" in found
+    assert "p1: 在上海" in found
 
 
 def test_commits_leave_ignored_paths_out_instead_of_failing(tmp_path):
@@ -63,7 +63,7 @@ def test_a_new_installation_gets_the_shared_files_from_the_template(kernel_setti
     added = vault_sync.seed_shared(kernel_settings.data_root)
     assert sorted(added) == ["conventions.md", "organization.md"]
     assert (shared / "environment.md").read_text("utf-8") == "# 我自己的环境\n"       # never overwritten
-    assert "公共背景" in (shared / "organization.md").read_text("utf-8")
+    assert "Shared background" in (shared / "organization.md").read_text("utf-8")
     assert vault_sync.seed_shared(kernel_settings.data_root) == []
 
 
@@ -107,7 +107,7 @@ def test_migration_moves_the_archive_and_makes_the_kernel_project_public(tmp_pat
     assert "背景信息存档" not in rest and rest.rstrip().endswith("- 别名：日报")
     assert entries.count("### ") == 2
     once = migrate.with_entries(None, entries)
-    assert once.startswith("# 背景信息存档") and migrate.with_entries(once, entries) == once   # repeatable
+    assert once.startswith("# Background archive") and migrate.with_entries(once, entries) == once   # repeatable
     vault = tmp_path / "kernel"
     (vault / "knowledge").mkdir(parents=True)
     (vault / "knowledge" / "charter.md").write_text(CHARTER, "utf-8")

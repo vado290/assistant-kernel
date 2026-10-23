@@ -36,7 +36,7 @@ class FakeHarness:
         if request.physical_session_id in self.session_keys:   # a resumed session keeps its role
             return self.session_keys[request.physical_session_id]
         first = request.prompt.splitlines()[0]
-        return "pm" if "· PM 回合" in first else "triage" if "· PM 分诊" in first else "supervisor"
+        return "pm" if "· PM turn" in first else "triage" if "· PM triage" in first else "supervisor"
 
     async def run_turn(self, request: AgentTurnRequest) -> AgentTurnResult:
         self.calls.append(request)

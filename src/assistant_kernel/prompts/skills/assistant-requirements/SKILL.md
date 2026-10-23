@@ -1,88 +1,114 @@
 ---
 name: assistant-requirements
-description: 需求阶段的工作方法：先摸清用户所在组织、行业和项目现状，再分轮用多问题卡片收集和澄清需求、化解矛盾、补充用户没想到的需求，最后提交需求文档并存档背景信息。
+description: How the requirements stage works — first learn the user's organisation, industry and the project's current state, then collect and clarify requirements in rounds of multi-question cards, resolve contradictions and add requirements the user had not thought of, and finally submit the requirements document and archive the background.
 metadata:
-  version: "3.2.4"
+  version: "3.3.0"
   load: {roles: [pm], stages: [requirements]}
   io:
     reads: [charter, user_profile, domain_brief, shared_context, state_ledger, user_answers]
     writes: [task_contract, working_notes]
   changelog:
-    - "3.2.4 2026-10-20 Supervisor 的推测转成本轮的确认式问题（0.45.7）"
-    - "3.2.3 2026-10-20 背景信息存档追加到 knowledge/background.md，不再写进章程文件（0.45.6）"
-    - "3.2.2 2026-10-19 按标题引用章程各节（各项目章程的节号不同）；画像观察在任务未获批结束时也会存档（记忆机制改进，0.45.5）"
-    - "3.2.1 2026-10-17 增加 io 元数据（读写哪些工件），用于检查技能协作断链（ROUND4）"
-    - "3.2.0 2026-10-16 细化轮增加'运行要求'（ROUND3 S3）"
-    - "3.1.0 2026-10-16 先判断是否需要行业调研并派调研子 agent，第 1 轮问题取自候选问题库；按用户画像调整提问；需求文档增加'用户画像观察'（ROUND3 S2）"
-    - "3.0.0 2026-10-16 按核心 v6 就地重写（旧版使用已废弃的协议用语和输出字段）：用户常说不清需求、前后矛盾，需要先定位背景、分轮集中提问，并把背景信息存档复用"
+    - "3.3.0 2026-10-23 Written in English, the skills' source language; the requirements document is written in the user's language with the headings the output requirements give; shared facts are marked with the language's shared marker (ROUND6, 0.46.0)"
+    - "3.2.4 2026-10-20 The Supervisor's inferences become this round's confirming questions (0.45.7)"
+    - "3.2.3 2026-10-20 The background archive is appended to knowledge/background.md, no longer to the charter file (0.45.6)"
+    - "3.2.2 2026-10-19 Charter sections are referred to by heading (section numbers differ between projects); profile observations are archived also when a task ends unapproved (memory improvement, 0.45.5)"
+    - "3.2.1 2026-10-17 Added io metadata (which artifacts are read and written) to check broken skill hand-offs (ROUND4)"
+    - "3.2.0 2026-10-16 The refining round adds 'runtime requirements' (ROUND3 S3)"
+    - "3.1.0 2026-10-16 Decide first whether industry research is needed and send a research subagent; round-1 questions come from the question bank; questions follow the user profile; the requirements document gains 'user-profile observations' (ROUND3 S2)"
+    - "3.0.0 2026-10-16 Rewritten in place for core v6 (the old version used retired protocol terms and output fields): users often cannot say clearly what they need and contradict themselves, so locate the background first, ask in concentrated rounds and archive the background for reuse"
 ---
 
-# 需求发现
+# Requirements discovery
 
-## 目的
-用户往往说不清自己要什么，或者前后说法矛盾。需求阶段的任务是：用最少的轮次把用户的真实需求定位准、范围缩小、
-矛盾消除，并把了解到的组织与行业背景存档，供以后的任务直接使用、不再重复询问。
+## Purpose
+Users often cannot say what they want, or say contradictory things. The requirements stage pins down the user's real
+needs in as few rounds as possible, narrows the scope, removes contradictions, and archives what was learned about the
+organisation and industry so later tasks use it directly instead of asking again.
 
-## 输入与事实优先级
-从高到低：用户在本任务中的原话和回答 → 已批准的工件 → 项目章程（`knowledge/charter.md`，含背景信息存档）→
-公共背景（组织与用户、技术环境）→ 你的调查 → 你的推断。高优先级与低优先级冲突时以高的为准，并在文档中注明。
+## Inputs and fact priority
+From high to low: the user's words and answers in this task → approved artifacts → the project charter
+(`knowledge/charter.md`, with its background archive) → the shared background (organisation and user, technical
+environment) → your investigation → your inference. When a higher and a lower one conflict, the higher wins, noted in the
+document.
 
-## 做法
+## How
 
-### 第 0 步：先查再问（不消耗用户时间）
-读章程（特别是"组织与行业背景"和"背景信息存档"两节）、用户画像、行业速写和 Kernel 注入的公共背景，读相关项目文件。
-指令附有"Supervisor 的推测"时，把每条推测改写成确认式问题，合并进本轮的问题卡片，不要直接写进需求。
-已经知道的不再问；有可能过时的（超过半年，或用户的话与之不符），用确认式问题核对："章程记录你们是 XX 行业，仍然如此吗？"
+### Step 0: look before you ask (costs the user no time)
+Read the charter (especially its organisation-and-industry-background and background-archive sections, found by heading in
+whatever language the charter is written), the user profile, the industry brief and the shared background Kernel injects,
+and the relevant project files. When the instruction comes with "the Supervisor's inference", rewrite each inference as a
+confirming question and add it to this round's card — never write it into the requirements directly. Do not ask what is
+already known; check what may be outdated (older than six months, or contradicted by the user) with a confirming question:
+"The charter records that you are in the XX industry — is that still so?"
 
-**行业调研**：按 assistant-domain-research 的条件判断是否需要调研（没有行业速写、超过 180 天、或本任务的行业、地区、规模不同）。
-需要时，在第 1 轮提问之前派出"行业调研"子 agent（定义见 assistant-subagent-orchestration），由它把结果写进本任务的
-domain_brief；你核对后，从其中的候选问题库挑选第 1 轮问题。调研需要几分钟，值得：问题问准了，往往能省下一两轮来回。
-简单、与行业无关的任务（例如改一个文案）不必调研。
+**Industry research**: decide by the conditions in assistant-domain-research whether research is needed (no industry brief,
+older than 180 days, or this task's industry, region or size differs). When it is, send an industry-research subagent
+(defined in assistant-subagent-orchestration) before the first round of questions; it writes its result into this task's
+domain_brief, and after checking it you pick the first round's questions from its question bank. Research takes a few
+minutes and pays off: well-aimed questions often save a round or two. Simple tasks unrelated to an industry (for example
+changing a piece of copy) need no research.
 
-### 第 1 轮：定位（背景缺失时才问，一轮问完）
-按下表找出缺失项，合并成一张多问题卡片（参照 assistant-user-questions）；有行业速写时，按用户的地区、语言和企业规模
-选用它的候选问题和行业用语，并按 assistant-user-insight 根据用户画像调整问题的数量和措辞：
-- **组织**：所在行业和细分领域、企业规模、业务模式（例如面向企业还是面向个人）、用户本人的岗位和决策权；
-- **项目现状**：现在是怎么做的、最大的痛点、为什么现在要做、谁会用、多久用一次、涉及哪些系统和数据；
-- **目标**：做成什么样算成功（尽量可量化）、时间要求、可投入的资源；
-- **行业约束**：有无合规或监管要求、行业惯例和常用指标。
+### Round 1: locating (only when background is missing, all in one round)
+Find the missing items by this list and combine them into one multi-question card (see assistant-user-questions); with an
+industry brief, use its candidate questions and industry terms for the user's region, language and company size, and adjust
+the number and wording of questions to the user profile by assistant-user-insight:
+- **Organisation**: industry and niche, company size, business model (for example business-to-business or consumer), the
+  user's own role and decision rights;
+- **Current state**: how it is done now, the biggest pain, why now, who will use it, how often, which systems and data are
+  involved;
+- **Goal**: what counts as success (measurable where possible), timing, the resources available;
+- **Industry constraints**: compliance or regulatory requirements, industry practice and common metrics.
 
-### 第 2 轮：细化
-根据第 1 轮的答案，问具体的使用场景、输入数据从哪里来、输出给谁看、频率、与现有系统的衔接、例外情况。
-需要定时或持续运行的（例如每天出日报、持续监控），问清**运行要求**：多久运行一次、几点前要结果、失败了通知谁、错过了要不要补、能否重复运行；写进需求条目和验收标准。
+### Round 2: refining
+From round 1's answers, ask about the concrete usage scenarios, where the input data comes from, who sees the output, the
+frequency, how it connects to existing systems, and exceptions. For things that run on a schedule or continuously (for
+example a daily report, continuous monitoring), clarify the **runtime requirements**: how often it runs, by when the result
+is needed, who is told about failures, whether missed runs are made up, whether it can run repeatedly; write them into the
+requirement items and acceptance criteria.
 
-### 第 3 轮：取舍与补充
-- **补充用户没想到的需求**：结合行业惯例和类似场景，列出 3–6 条候选需求，标 `[建议]`，用一个问题让用户勾选
-  （例如"以下哪些也需要？A 异常提醒 B 历史对比 C 导出 Excel D 都不需要"）。
-- **排优先级**：把需求条目分为必须 / 应该 / 可选，请用户确认。
-- **化解矛盾**：把前后不一致的说法并列给用户选择（见 assistant-user-questions）。
+### Round 3: trade-offs and additions
+- **Add requirements the user had not thought of**: from industry practice and similar situations, list 3–6 candidate
+  requirements marked `[suggested]` in one question for the user to tick (for example "Which of these are also needed?
+  A alerts on anomalies B comparison with history C export to Excel D none").
+- **Prioritise**: sort the requirement items into must / should / could and ask the user to confirm.
+- **Resolve contradictions**: put inconsistent statements side by side for the user to choose (see
+  assistant-user-questions).
 
-轮次可以合并或省略：信息已经足够时直接进入下一步，不要为了走流程而提问。每轮结束时在 summary 中用两三句话
-告诉用户"目前理解为……，还需确认……"。
+Rounds may be merged or skipped: when the information suffices, move on — never ask just to follow the process. At the end
+of each round tell the user in two or three sentences of the summary "so far I understand …, still to confirm …".
 
-### 何时可以提交
-同时满足：每个 R 至少有一个 A；范围中"包含 / 不包含"都写明；没有未关闭的必答问题；所有已发现的矛盾都有用户的决定。
-不满足时继续用 needs_input 提问，或把无法确定的写入"待定事项"并说明默认假设，由用户在批准时确认。
+### When to submit
+All of these hold: every R has at least one A; both "in scope" and "out of scope" are stated; no required question is
+open; every contradiction found has the user's decision. Otherwise keep asking with needs_input, or put what cannot be
+settled under open items with a default assumption for the user to confirm on approval.
 
-## 产出
-- outcome = completed，document.kind = task_contract，章节严格按 assistant-task-continuity。
-- **第 10 节"背景信息存档"必写**：本次收集到的组织、行业、项目事实，每条带来源和日期；其中对其他项目也成立的事实（例如公司情况、
-  部署环境）注明"公共"，kernel 复盘时会据此提议更新公共背景。需求文档获批后，Kernel 会把这一节
-  原样追加到项目的 knowledge/background.md（每轮随章程一起提供），以后所有任务都会读到，所以要写成脱离本任务也能看懂的事实陈述；没有新信息就写"无"。
-- **"用户画像观察"一节必写**：本任务中观察到的、与协作方式有关的用户特点（按 assistant-user-insight 的格式），
-  获批后 Kernel 追加到项目的用户画像（任务没走到获批就结束时也会追加，并注明未获批）；没有新观察就写"无"。
-- 调查类工作（行业资料、竞品、现有系统盘点）可以交给子 agent 并行完成（见 assistant-subagent-orchestration），
-  但向用户提问只能由你来做。
+## Output
+- outcome = completed, document.kind = task_contract, sections strictly by assistant-task-continuity, written in the
+  user's language with the headings the output requirements give.
+- **The background-archive section (section 10) is required**: the organisation, industry and project facts collected this
+  time, each with source and date; mark facts that also hold for other projects (for example the company, the deployment
+  environment) as shared by starting the line with the shared marker (`Shared:` in English; `公共：`, `共有：`,
+  `Gemeinsam:`, `Compartido:` in the other languages) — kernel's review uses them to propose updates to the shared
+  background. Once the requirements document is approved, Kernel appends this section as it is to the project's
+  knowledge/background.md (given every turn with the charter), so every later task reads it — write facts that make sense
+  outside this task; without new information write "None" (or the word for it in the user's language).
+- **The user-profile observations section is required**: traits of the user observed in this task that matter for how we
+  work together (in the format of assistant-user-insight); once approved, Kernel appends them to the project's user profile
+  (also, marked unapproved, when the task ends before approval); without new observations write "None" (or the word for it in the user's language).
+- Investigation work (industry material, competitors, existing systems) can go to subagents in parallel (see
+  assistant-subagent-orchestration), but only you ask the user questions.
 
-## 自检清单
-- [ ] 没有重复询问章程或以前文档里已有的信息
-- [ ] 每轮问题集中、带选项和推荐、说明用途
-- [ ] 每条需求有优先级和来源标记；每个 A 可以被实际验证
-- [ ] 矛盾都已记录用户的决定
-- [ ] 第 10 节写了可复用的背景事实；'用户画像观察'一节写了新的观察或'无'
-- [ ] 需要行业调研时已经调研，问题按用户的地区、语言、规模和画像调整过
+## Self-check
+- [ ] Nothing already in the charter or earlier documents was asked again
+- [ ] Each round's questions are focused, with options, recommendations and their purpose
+- [ ] Every requirement has a priority and source mark; every A can actually be verified
+- [ ] Every contradiction has the user's decision recorded
+- [ ] Section 10 holds reusable background facts; the user-profile observations section holds new observations or "None"
+- [ ] When industry research was needed it was done, and questions were adjusted to the user's region, language, size and
+      profile
 
-## 常见错误
-- 一上来就讨论技术方案：需求阶段只回答"做什么、为什么、做到什么程度"。
-- 把用户的第一句话当成完整需求：用户的第一句话通常只是症状，要追问现状和痛点。
-- 用户答"不确定"后就停住：给出默认假设，写入待定事项，继续推进。
+## Common mistakes
+- Discussing technical solutions right away: the requirements stage answers only what, why and to what extent.
+- Taking the user's first sentence as the complete requirement: it is usually just a symptom — ask about the current state
+  and the pain.
+- Stopping when the user answers "not sure": give a default assumption, put it under open items and keep going.

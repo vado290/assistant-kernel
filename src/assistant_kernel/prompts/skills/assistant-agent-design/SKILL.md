@@ -1,29 +1,31 @@
 ---
 name: assistant-agent-design
-description: 设计产物内部的 agent（由 jobs.yaml 的 agent 作业运行）：目录结构、config.yaml、role.md 和专属技能怎么写；修改本项目 PM/Supervisor 的角色要点时也参考。
+description: Design an agent inside a product (run by an agent job in jobs.yaml) — directory layout, config.yaml, role.md and its own skills; also a reference when changing the role notes of this project's PM or Supervisor.
 metadata:
-  version: "2.0.2"
+  version: "2.1.0"
   load: {roles: [pm], stages: [design, build], on_demand: true}
   changelog:
-    - "2.0.2 2026-10-18 技能改为每个 agent 一个平级目录 agents/<agent>/.agents/skills/（ROUND5 R5.1）"
-    - "2.0.1 2026-10-16 运行声明文件改为项目根目录的 jobs.yaml（vault 的 runtime/ 目录存放 Kernel 内部数据）"
-    - "2.0.0 2026-10-16 按核心 v6 和通用运行时（ROUND3 S3）重写：产物内 agent 由 agent 作业定时运行，只读，结果发到频道"
+    - "2.1.0 2026-10-23 Written in English, the skills' source language; what the user reads follows the user's language (ROUND6, 0.46.0)"
+    - "2.0.2 2026-10-18 Skills moved to one flat folder per agent, agents/<agent>/.agents/skills/ (ROUND5 R5.1)"
+    - "2.0.1 2026-10-16 The runtime manifest is jobs.yaml at the project root (the vault's runtime/ folder holds Kernel's internal data)"
+    - "2.0.0 2026-10-16 Rewritten for core v6 and the general runtime (ROUND3 S3): agents inside a product run on schedule as agent jobs, read-only, with results posted to a channel"
 ---
 
-# 产物内 agent 的设计
+# Designing an agent inside a product
 
-## agent 是什么
-一份执行配置，不是常驻进程：定时到了，Kernel 用它的角色、技能和作业的 prompt 运行一轮模型（只读，不能改项目文件），
-最后一条消息就是结果，按作业的 `post_result` 发到频道。需要写文件的步骤交给脚本作业。
+## What an agent is
+A run configuration, not a resident process: when its time comes, Kernel runs one model turn with its role, its skills
+and the job's prompt (read-only, it cannot change project files); its last message is the result, posted to a channel by
+the job's `post_result`. Steps that write files belong to script jobs.
 
-## 目录与文件
+## Folders and files
 ```
-agents/<名称>/config.yaml     # 模型设置
-agents/<名称>/role.md         # 角色：身份、职责、边界、完成标准（几段即可）
-agents/<名称>/.agents/skills/<技能>/SKILL.md   # 专属技能：放在该 agent 自己的目录里
+agents/<name>/config.yaml     # model settings
+agents/<name>/role.md         # role: identity, responsibilities, limits, what a good result is (a few paragraphs)
+agents/<name>/.agents/skills/<skill>/SKILL.md   # its own skills, in that agent's own folder
 ```
 
-config.yaml 最小写法：
+Minimal config.yaml:
 ```yaml
 schema_version: agent-config.v2
 agent_id: analyst
@@ -36,15 +38,18 @@ harness:
   timeout_seconds: 900
 tools: [get_authorized_workspace, list_authorized_tree, read_authorized_file, vault_read_text]
 ```
-只列它需要的只读工具。
+List only the read-only tools it needs.
 
-## 角色与技能的分工
-- **role.md** 写"我是谁、为谁服务、负责什么、不负责什么、结果怎样算好"。
-- **技能**写"怎么做"：读哪些数据、分析步骤、判断标准、输出格式（例如"三条发现，每条附数据和建议"）。
-- 作业的 **prompt** 只写这一次要做的事（例如"读取本周日报数据"），不重复角色和技能。
+## Role versus skills
+- **role.md** says who I am, whom I serve, what I am and am not responsible for, and what makes a result good.
+- **Skills** say how: which data to read, the analysis steps, the criteria, the output format (for example "three
+  findings, each with its data and a suggestion").
+- The job's **prompt** says only what to do this time (for example "read this week's daily report data"), without
+  repeating the role and skills.
 
-## 检查清单
-- [ ] 用户最终在频道看到的结果格式在技能里写清楚了，长度合适
-- [ ] 数据不足或读取失败时，agent 会如实说明而不是编造
-- [ ] 没有需要写文件的步骤（有的话改成脚本作业）
-- [ ] 技能的 load.roles 包含这个 agent 的名称
+## Checklist
+- [ ] The skill spells out the format of the result the user finally sees in the channel, at a suitable length
+- [ ] With too little data or a failed read, the agent says so honestly instead of inventing
+- [ ] No step needs to write files (if one does, make it a script job)
+- [ ] The skill's load.roles includes this agent's name
+- [ ] When the result should not be in English, the job's prompt says which language to write it in

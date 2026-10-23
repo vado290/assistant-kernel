@@ -8,10 +8,12 @@ from typing import Any
 
 import yaml
 
-RECORD_SECTION = "迭代记录"          # contract: a YAML block in the implementation report
-EFFECT_SECTION = "上期效果复核"       # contract: a YAML list in the weekly review's improvement proposal
+from assistant_kernel.core.i18n import heading
+
+RECORD_SECTION = "iteration_record"   # contract: a YAML block in the implementation report (heading in any language)
+EFFECT_SECTION = "effect_review"      # contract: a YAML list in the weekly review's improvement proposal
 CHANGE_TYPES = ("code", "file", "skill", "charter", "map", "profile", "brief", "jobs", "grant", "shared", "config", "doc")
-EFFECTS = {"effective": "有效", "ineffective": "无效", "pending": "待观察"}
+EFFECTS = ("effective", "ineffective", "pending")
 MAX_TEXT = 1500
 
 # Paths whose change is always significant (auto major), whatever the PM wrote.
@@ -24,12 +26,12 @@ def _yaml_block(markdown: str, title: str) -> Any:
     from assistant_kernel.core.skills import section_text
     block = section_text(markdown, title)
     if not block:
-        raise ValueError(f"缺少'{title}'一节")
+        raise ValueError(f"the '{heading(title)}' section is missing")
     fenced = re.search(r"```(?:ya?ml)?\s*\n(.*?)```", block, re.S)
     try:
         return yaml.safe_load(fenced.group(1) if fenced else block)
     except yaml.YAMLError as exc:
-        raise ValueError(f"'{title}'不是合法的 YAML：{exc}") from exc
+        raise ValueError(f"'{heading(title)}' is not valid YAML: {exc}") from exc
 
 
 def _text(value: Any, limit: int = MAX_TEXT) -> str:
@@ -40,23 +42,23 @@ def parse_record(markdown: str) -> dict[str, Any]:
     """The PM's iteration record from an implementation report; raises ValueError with what is wrong."""
     data = _yaml_block(markdown, RECORD_SECTION)
     if not isinstance(data, dict):
-        raise ValueError(f"'{RECORD_SECTION}'必须是一个 YAML 对象")
+        raise ValueError(f"'{heading(RECORD_SECTION)}' must be a YAML object")
     title, reason = _text(data.get("title"), 200), _text(data.get("reason"))
     if not title or not reason:
-        raise ValueError("迭代记录必须有 title 和 reason")
+        raise ValueError("the iteration record needs a title and a reason")
     changes = []
     for item in data.get("changes") or []:
         if not isinstance(item, dict) or not item.get("target"):
-            raise ValueError("changes 的每一项必须是对象，并写明 target（名称或路径）")
+            raise ValueError("every item of changes must be an object with a target (name or path)")
         kind = str(item.get("type") or "file")
         if kind not in CHANGE_TYPES:
-            raise ValueError(f"changes 的 type 只能是 {', '.join(CHANGE_TYPES)}")
+            raise ValueError(f"the type of a change must be one of {', '.join(CHANGE_TYPES)}")
         changes.append({"type": kind, "target": _text(item["target"], 200),
                         "action": str(item.get("action") or "modify"), "note": _text(item.get("note"), 400),
                         **({"version": _text(item["version"], 40)} if item.get("version") else {})})
     significance = str(data.get("significance") or "minor")
     if significance not in ("major", "minor"):
-        raise ValueError("significance 只能是 major 或 minor")
+        raise ValueError("significance must be major or minor")
     return {"title": title, "reason": reason, "changes": changes, "significance": significance,
             **{key: _text(data.get(key)) for key in ("verification", "expected_effect", "measure", "followups")}}
 
@@ -69,16 +71,17 @@ def parse_effect_reviews(markdown: str, *, strict: bool = True) -> list[dict[str
         if strict: raise
         return []
     if not isinstance(data, list):
-        if strict: raise ValueError("上期效果复核必须是 YAML 列表；没有需复核的记录时写 []")
+        if strict: raise ValueError("the effect review must be a YAML list; write [] when there is nothing to review")
         return []
     reviews = []
     for item in data:
         prefix = str(item.get("iteration") or "").lower() if isinstance(item, dict) else ""
         if not valid_iteration_prefix(prefix) or str(item.get("status")) not in EFFECTS or not _text(item.get("note")):
-            if strict: raise ValueError("效果复核需要合法记录编号（至少 8 位 UUID 前缀）、status 和有证据的 note")
+            if strict: raise ValueError("an effect review needs a valid record id (a UUID prefix of at least 8 characters), "
+                                        "a status and a note with evidence")
             continue
         if strict and any(r["iteration"] == prefix for r in reviews):
-            raise ValueError("同一效果记录不能重复复核")
+            raise ValueError("the same record cannot be reviewed twice")
         reviews.append({"iteration": prefix, "status": item["status"], "note": _text(item["note"], 400)})
     return reviews
 
@@ -99,7 +102,7 @@ async def resolve_effect_reviews(c, project_id, reviews):
         matches = await all_rows(c, "SELECT iteration_id FROM core.iterations WHERE project_id=%s AND iteration_id::text LIKE %s",
                                  (project_id, prefix + "%")) if valid_iteration_prefix(prefix) else []
         if len(matches) != 1 or str(review.get("status")) not in EFFECTS or not str(review.get("note") or "").strip():
-            problems.append(prefix or "（缺少编号）")
+            problems.append(prefix or "(id missing)")
             continue
         ident = matches[0]["iteration_id"]
         if ident in resolved:
@@ -147,27 +150,30 @@ def search_text(row: dict[str, Any]) -> str:
 
 def render(rows: list[dict[str, Any]], *, brief: bool = False) -> str:
     """Rows as compact Markdown; `brief` gives one line per row."""
+    from assistant_kernel.core.i18n import t
     lines = []
     for r in rows:
-        tag = "【重大】" if r["significance"] == "major" else ""
+        tag = t("iter.major") if r["significance"] == "major" else ""
+        source = r["source"] + ((" " + r["source_ref"]) if r.get("source_ref") else "")
         head = (f"- `{str(r['iteration_id'])[:8]}` {r['created_at']:%Y-%m-%d} {tag}{r['title']}"
-                f"（{r['kind']}，来源 {r['source']}{(' ' + r['source_ref']) if r.get('source_ref') else ''}）")
+                + t("iter.origin", kind=r["kind"], source=source))
         if brief:
-            lines.append(f"{head}：{_text(r['reason'], 120)}")
+            lines.append(f"{head}: {_text(r['reason'], 120)}")
             continue
         lines.append(head)
-        lines.append(f"  - 原因：{_text(r['reason'], 400)}")
+        lines.append("  - " + t("iter.reason", text=_text(r["reason"], 400)))
         for change in (r["changes"] or [])[:6]:
-            lines.append(f"  - 改动：{change.get('type')} {change.get('target')} {change.get('action', '')}"
-                         f"{(' ' + change['version']) if change.get('version') else ''}：{_text(change.get('note'), 160)}")
+            what = (f"{change.get('type')} {change.get('target')} {change.get('action', '')}"
+                    f"{(' ' + change['version']) if change.get('version') else ''}: {_text(change.get('note'), 160)}")
+            lines.append("  - " + t("iter.change", text=what))
         if len(r["changes"] or []) > 6:
-            lines.append(f"  - 改动：另有 {len(r['changes']) - 6} 项")
-        for key, label in (("verification", "验证"), ("expected_effect", "预期效果"), ("measure", "衡量"),
-                           ("followups", "遗留")):
+            lines.append("  - " + t("iter.more_changes", count=len(r["changes"]) - 6))
+        for key in ("verification", "expected_effect", "measure", "followups"):
             if r.get(key):
-                lines.append(f"  - {label}：{_text(r[key], 200)}")
+                lines.append("  - " + t(f"iter.{key}", text=_text(r[key], 200)))
         if r.get("effect_status"):
-            lines.append(f"  - 效果复核：{EFFECTS[r['effect_status']]}（{_text(r.get('effect_note'), 160)}）")
+            lines.append("  - " + t("iter.effect", status=t(f"iter.effect_{r['effect_status']}"),
+                                    note=_text(r.get("effect_note"), 160)))
         if not r.get("complete", True):
-            lines.append("  - （PM 的迭代记录缺失或格式有误，本条由平台根据任务信息生成）")
-    return "\n".join(lines) or "（没有记录）"
+            lines.append("  - " + t("iter.generated"))
+    return "\n".join(lines) or t("iter.empty")

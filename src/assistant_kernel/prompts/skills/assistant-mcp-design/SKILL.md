@@ -1,40 +1,63 @@
 ---
 name: assistant-mcp-design
-description: 设计或审查Project MCP Server和原子Tool，包括Transport、生命周期、Manifest、Agent绑定、权限、审批和启动验证；仅在任务涉及MCP时使用。
+description: Design or review project MCP servers and atomic tools — transport, lifecycle, manifest, agent binding, permissions, approvals and start-up verification; use only when the task involves MCP.
 metadata:
-  version: "1.3.0"
+  version: "1.4.0"
   load: {roles: [pm], stages: [design, build], on_demand: true}
   changelog:
-    - "2026-10-16 改为按需读取（只在提示中列出名称和用途）；内容尚未按核心 v6 重写，其中的旧流程用语和输出字段一律以 assistant-project-agent 和输出要求为准"
+    - "1.4.0 2026-10-23 Written in English, the skills' source language (ROUND6, 0.46.0)"
+    - "2026-10-16 Read on demand (only name and purpose listed in the prompt); content not yet rewritten for core v6 — any old process terms and output fields in it give way to assistant-project-agent and the output requirements"
 ---
 
-# MCP设计
+# MCP design
 
-## 任务目标
+## Goal
 
-把需要实时系统、共享数据、凭据或外部副作用的能力实现为结构化、最小权限、可启动验证的MCP Tool，并让Project Agent Config能够按需注入正确Server和Tool。MCP提供能力边界，不承载业务推理流程。
+Implement capabilities that need live systems, shared data, credentials or outside side effects as structured,
+least-privilege MCP tools that can be verified at start-up, so a project's agent configuration can inject the right
+servers and tools as needed. MCP provides capability boundaries; it does not carry business reasoning.
 
-## Tool边界
+## Tool boundaries
 
-Tool保持清楚的原子业务动作：例如查询持仓只返回持仓事实；统计总市值、风险暴露和解释由Skill脚本或Agent完成。原子不等于把一次合理查询拆成大量无意义小Tool；分页、过滤和同一资源的必要字段可以保留。
+A tool stays a clear atomic business action: for example, querying positions returns only position facts; totalling the
+market value, risk exposure and the explanation belong to a skill script or the agent. Atomic does not mean splitting a
+sensible query into many meaningless small tools; paging, filters and the fields a resource needs may stay together.
 
-每个Tool声明：名称、用途、输入Schema、输出Schema、read/write/external/trade效果、幂等性、超时、错误类型、凭据引用和审批要求。联网默认可用；Project文件Grant只授权文件操作，MCP Tool仍须独立核验凭据、账户和交易边界。写入、发布、交易类Tool必须有稳定幂等键、服务端权限校验和真实回执。
+Each tool declares: name, purpose, input schema, output schema, its effect (read/write/external/trade), idempotency,
+timeout, error types, credential references and approval requirements. Network access is available by default; a
+project's file grant only authorises file operations, and an MCP tool still checks its credentials, account and trading
+limits on its own. Write, publish and trade tools need a stable idempotency key, server-side permission checks and real
+receipts.
 
-## Server边界
+## Server boundaries
 
-- Kernel scoped MCP只保留Workspace、Run、Work Mode、candidate、Map和路由等控制面工具。
-- 无状态、启动快、仅供当前Invocation使用的Project MCP选择STDIO；源码位于当前Project，由Kernel受控launcher启动，STDIO不占端口。
-- 长连接、昂贵初始化或多进程共享的领域MCP使用内部Streamable HTTP；Endpoint由Kernel通过 `env://ENV_NAME`等非敏感引用解析，并且只绑定环回或内部网络。
-- 按依赖、信任、生命周期和副作用划分Server，不把全部Project Tool并入Kernel总Server，也不机械地每个Tool一个Server。
+- Kernel's scoped MCP keeps only control-plane tools: workspace, run, work mode, candidates, map and routing.
+- A project MCP that is stateless, starts fast and serves only the current invocation uses STDIO; its source lives in the
+  current project and Kernel's controlled launcher starts it; STDIO takes no port.
+- A domain MCP with long connections, expensive initialisation or sharing between processes uses internal Streamable
+  HTTP; Kernel resolves its endpoint from a non-sensitive reference such as `env://ENV_NAME`, and it binds only to
+  loopback or an internal network.
+- Split servers by dependencies, trust, lifecycle and side effects — never fold every project tool into Kernel's server,
+  and never mechanically one server per tool.
 
-## 文件与配置
+## Files and configuration
 
-Project MCP放在 `mcp/<server-id>/`。必须包含 `mcp-manifest.yaml`和实际server入口；tools、services、tests等只在确有内容时创建，不生成空目录。Agent Config只引用已批准Server并列出enabled tools；不得保存凭据值或任意外部命令。
+A project MCP lives in `mcp/<server-id>/`. It must contain `mcp-manifest.yaml` and the actual server entry point; tools,
+services and tests are created only when they have content — no empty folders. An agent configuration only references
+approved servers and lists the enabled tools; it never stores credential values or arbitrary outside commands.
 
-同一candidate必须包含MCP代码、Manifest和所有受影响Agent Config。新Tool在当前LLM轮次不能改变已经初始化的工具目录；发布后由下一轮Resolver生成新的 `ResolvedExecutionPlan`、固定MCP源码快照并注入。一次Plan内暴露给LLM的Tool名称必须唯一，冲突时拒绝解析或使用预先配置的稳定alias，不能自动猜测。
+One candidate contains the MCP code, the manifest and every affected agent configuration. A new tool cannot change a tool
+catalogue already initialised in the current LLM turn; after the release, the next turn's resolver produces a new
+`ResolvedExecutionPlan`, pins the MCP source snapshot and injects it. Tool names exposed to the LLM within one plan must
+be unique; on a conflict, refuse to resolve or use a stable alias configured beforehand — never guess automatically.
 
-Prompt应向LLM说明每个Server是本地STDIO还是共享HTTP、生命周期和故障语义，但不得暴露凭据或敏感Endpoint。STDIO启动失败与HTTP网络失败必须区分；外部结果不确定时先对账再重试。
+The prompt tells the LLM whether each server is local STDIO or shared HTTP, its lifecycle and failure semantics, but never
+exposes credentials or sensitive endpoints. A STDIO start-up failure and an HTTP network failure must be told apart; when
+an outside result is uncertain, reconcile before retrying.
 
-## 验证
+## Verification
 
-Implementation至少验证导入、initialize、tools/list、正常调用、参数错误、权限拒绝、超时和有界关闭。HTTP服务更新先在临时端口通过健康和Tool目录验证，再切换或重启；失败时保留旧服务。Review核对Manifest、实际tools/list和Agent enabled tools完全一致。
+The implementation verifies at least import, initialize, tools/list, a normal call, a parameter error, a permission denial,
+a timeout and a bounded shutdown. An HTTP service update first passes health and tool-catalogue checks on a temporary port,
+then switches or restarts; on failure the old service stays. The review checks that the manifest, the actual tools/list
+and the agent's enabled tools match exactly.

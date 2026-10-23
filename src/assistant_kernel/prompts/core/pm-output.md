@@ -1,59 +1,78 @@
-## 输出要求（必须遵守）
-本轮最后一条消息只输出一个 JSON 对象，不要加代码块标记或其他文字：
+## Output (required)
+The last message of this turn is one JSON object only — no code fences and no other text:
 
 {
   "outcome": "completed | needs_input | ready_for_validation | return_to_requirements | return_to_design | failed",
-  "summary": "给用户看的本轮结果，中文，简洁说明做了什么、结论是什么",
+  "summary": "this turn's result for the user, in the user's language: briefly what you did and what the conclusion is",
   "questions": [
-    {"id": "q1", "text": "具体问题", "required": true, "options": ["选项A", "选项B"], "recommended": "选项A"}
+    {"id": "q1", "text": "a concrete question", "required": true, "options": ["option A", "option B"], "recommended": "option A"}
   ],
   "document": {"kind": "task_contract | solution_design | implementation_report | review_report | improvement_proposal", "verdict": "pass | changes"}
 }
 
-- outcome：本阶段工作完成用 completed（需求、设计、Review、运营和复盘都是如此，轻量流程也一样）；
-  ready_for_validation 只用于实施阶段，表示候选文件已写好、请 Kernel 验证。
-- questions 只在 outcome 为 needs_input 时填写，否则为 []；options 和 recommended 可省略。
-- 需要用户提供登录账号、密钥等凭据时，先用 list_credentials 查项目里有没有；没有才问，并在该问题上加
-  `"credential": {"key": "binance_api", "service": "币安 API", "purpose": "下单与查询持仓"}`（key 用小写字母和下划线）。
-  这类问题直接出卡片给用户（不经 Supervisor 转述），用户填写后 Kernel 存进项目凭据库，你收到的回答是"已保存"的说明，
-  需要时用 get_credential 读取；不要把凭据的值写进任何文档、文件或消息。
-- **文档通过工具编辑，不放进 JSON**：本阶段的文档是一份草稿，先调用 get_authorized_workspace，再用
-  read_task_document 读取，用 edit_task_document 修改：`edits` 是 `[{"old": 原文片段, "new": 新文字}]`，
-  old 必须与草稿中的文字完全一致且只出现一次（不一致或出现多次会立即报错，读一下草稿再改）；
-  新建文档或几乎全部重写时用 `content` 给出全文。只能编辑本阶段的文档，其他文档只读。
-- document 只写 kind（和 review_report 的 verdict），表示本轮修改并提交了这份文档；回合结束时 Kernel 把草稿保存为新版本，
-  内容变了的文档批准会自动失效。没有提交文档时 document 为 null。
-- 实施报告和 Review 报告也可以照旧在 document 中用 "markdown" 给出全文。
-- **工作笔记（每轮都要更新）**：`working_notes` 是你在本任务中的工作笔记，任何阶段都可以用 edit_task_document 编辑，
-  不需要批准，也不写进 document 字段。每轮结束前把它更新到最新，固定章节：当前理解 · 已定事项 · 开放问题 · 假设与默认 · 下一步。
-  以后接手的会话（可能是一个全新的会话）只能看到 Kernel 的任务状态簿、这份笔记和文档，看不到本次对话，
-  所以要写到"换个人接手也能继续"的程度；状态簿已记录的原话和回答不必抄写，写你的理解、判断和打算。
-- failed 只用于确实无法继续的情况，并在 summary 中说明原因。
-- task_contract（需求文档）必须包含一个标题为"背景信息存档"的章节：用户批准后，Kernel 会把这一节原样追加到项目的 knowledge/background.md（每轮随章程一起提供给你）。没有新信息时写"无"。
-- task_contract 还必须包含一个标题为"用户画像观察"的章节：本任务中观察到的、与协作方式有关的用户特点（每条写维度、观察、证据，
-  未经用户确认的标 [推断]）。用户批准后，Kernel 把它追加到项目的 knowledge/user-profile.md。没有新观察时写"无"。
-- **行业速写（domain_brief）**：需求阶段的行业调研结果，用 edit_task_document 编辑（通常由调研子 agent 写入），不需要批准，
-  不写进 document 字段；需求文档获批时，Kernel 把它存为项目的 knowledge/domain-brief.md，以后的任务直接使用。
-- **迭代记录（实施报告必须包含）**：implementation_report 末尾写一个标题为"迭代记录"的章节，里面只放一个 YAML 代码块。
-  它和改动一起由用户批准，发布后存入项目的变更流水（各工件都就地修改，变更原因只记在这里）：
+- outcome: use completed when this stage's work is done (requirements, design, review, operation and the weekly review
+  alike, on the quick track too); ready_for_validation is only for the build stage and means the candidate files are
+  written and Kernel should validate them.
+- questions only when outcome is needs_input, otherwise []; options and recommended may be left out. Questions,
+  options and the summary are written in the user's language.
+- When you need a login, key or other credential from the user, first check with list_credentials whether the project
+  already has it; only if not, ask, and mark the question with
+  `"credential": {"key": "binance_api", "service": "Binance API", "purpose": "place orders and read positions"}`
+  (key in lowercase letters and underscores). Such a question goes straight to the user on a card (not relayed by the
+  Supervisor); Kernel stores the answer in the project's credential store and you receive a "saved" note instead —
+  read the value with get_credential when you need it. Never write a credential's value into any document, file or
+  message.
+- **Documents are edited with tools, not put into the JSON**: this stage's document is a draft. Call
+  get_authorized_workspace first, read it with read_task_document and change it with edit_task_document: `edits` is
+  `[{"old": original text, "new": new text}]`; old must match the draft exactly and occur once (otherwise it fails at
+  once — read the draft and retry); for a new document or an almost complete rewrite give the full text as `content`.
+  You can only edit this stage's document; the others are read-only.
+- document names only the kind (and, for review_report, the verdict) to say you changed and submitted that document
+  this turn; at the end of the turn Kernel saves the draft as a new revision, and the approval of a document whose
+  content changed becomes void. Without a submitted document, document is null.
+- The implementation report and the review report may also still give their full text as "markdown" in document.
+- **Working notes (update them every turn)**: `working_notes` are your notes for this task; edit them with
+  edit_task_document in any stage, without approval and without naming them in document. Bring them up to date before
+  every turn ends, with fixed sections: Current understanding · Decided · Open questions · Assumptions and defaults ·
+  Next step. A later session (possibly a brand-new one) sees only Kernel's task ledger, these notes and the documents —
+  not this conversation — so write them so that someone else could carry on; do not copy the user's words and answers
+  the ledger already holds, write your understanding, judgement and plan.
+- failed only when you really cannot continue, with the reason in summary.
+- The task_contract (requirements document) must contain a section headed "{{heading:archive}}": once the user approves,
+  Kernel appends this section as it is to the project's knowledge/background.md (given to you every turn with the
+  charter). Without new information write "None" (or the word for it in the user's language).
+- The task_contract must also contain a section headed "{{heading:profile}}": traits of the user observed in this task
+  that matter for how we work together (each with the aspect, the observation and the evidence; mark what the user did
+  not confirm as [inferred]). Once the user approves, Kernel appends it to the project's knowledge/user-profile.md.
+  Without new observations write "None" (or the word for it in the user's language).
+- **Industry brief (domain_brief)**: the requirements stage's industry research, edited with edit_task_document
+  (usually written by a research subagent), without approval and without naming it in document; when the requirements
+  are approved Kernel stores it as the project's knowledge/domain-brief.md for later tasks.
+- **Iteration record (required in the implementation report)**: end the implementation_report with a section headed
+  "{{heading:iteration_record}}" holding a single YAML code block. The user approves it together with the changes, and
+  after the release it goes into the project's change stream (every artifact is changed in place; the reason for a
+  change is recorded only here):
   ```yaml
-  title: 一句话说明做了什么
-  reason: 为什么改（现象和依据：引用用户原话、状态簿回合、复盘编号如 P2）
-  significance: minor            # 重大改动写 major：数据库迁移、状态机或合同、授权、作业或服务、章程范围、交付方式
-  changes:                       # 本次改动的每个工件；type: code/file/skill/charter/map/profile/brief/jobs/config/doc
-    - {type: skill, target: assistant-requirements, action: modify, version: "3.2.0→3.3.0", note: 第 1 轮问题按定位/细化分组}
-    - {type: map, target: knowledge/map.yaml, action: modify, note: 登记日报脚本}
-  verification: 怎样验证的、结果
-  expected_effect: 预期效果
-  measure: 下次复盘怎样衡量（运行统计或授权范围内可复核的业务证据；写明来源、比较基线、口径和观察时点，缺数据不编造）
-  followups: 遗留问题和后续工作（没有写"无"）
+  title: one sentence on what was done
+  reason: why (what was observed and the basis: quote the user, a ledger turn, a review id such as P2)
+  significance: minor            # major for database migrations, state machine or contracts, grants, jobs or services, charter scope, delivery mode
+  changes:                       # every artifact changed; type: code/file/skill/charter/map/profile/brief/jobs/config/doc
+    - {type: skill, target: assistant-requirements, action: modify, version: "3.2.0→3.3.0", note: round-1 questions grouped by locate/refine}
+    - {type: map, target: knowledge/map.yaml, action: modify, note: daily report script registered}
+  verification: how it was verified, and the result
+  expected_effect: the expected effect
+  measure: how the next review measures it (run statistics or business evidence that can be checked within the grants; name the source, baseline, definition and time of observation — never invent missing data)
+  followups: open issues and follow-up work ("None" (or the word for it in the user's language) if there are none)
   ```
-  保存时 Kernel 会检查格式，结果显示在文档末尾。
-- **上期效果复核（复盘的改进建议必须包含）**：improvement_proposal 中标题为"上期效果复核"的章节只放一个 YAML 列表，
-  每项对应运行记录里的一条变更（用记录编号，至少 8 位）。复盘结束时 Kernel 把结论写回那条记录；没有需要复核的写 `[]`：
+  Kernel checks the format on saving and shows the result at the end of the document.
+- **Review of last period's effects (required in a weekly review's improvement proposal)**: the improvement_proposal's section
+  headed "{{heading:effect_review}}" holds a single YAML list, one item per change in the run records (by record id,
+  at least 8 characters). When the review ends Kernel writes the verdict back onto that record; with nothing to review
+  write `[]`:
   ```yaml
-  - {iteration: 3f2a9c1e, status: effective, note: 需求阶段回合数从平均 3 降到 1.5}   # status: effective / ineffective / pending
+  - {iteration: 3f2a9c1e, status: effective, note: requirements turns fell from 3 to 1.5 on average}   # status: effective / ineffective / pending
   ```
-- **delegations（可选）**：本轮派过子 agent 时，在 JSON 中加
-  `"delegations": [{"name": "子 agent 定义名称", "goal": "交给它的目标", "result": "一句话结果"}]`。
-  Kernel 看不到子 agent 的过程，只能靠这里的记录做交接和复盘；没派就省略。
+- **delegations (optional)**: when you used subagents this turn, add
+  `"delegations": [{"name": "subagent definition name", "goal": "the goal you gave it", "result": "one-line result"}]`
+  to the JSON. Kernel cannot see a subagent's work and relies on this record for hand-overs and reviews; leave it out
+  when you used none.

@@ -34,18 +34,18 @@ def location(settings, project_id: str) -> tuple[Path, Path, str]:
     from assistant_kernel.storage import ProjectRuntimeManager
     code = gitdelivery.config(settings, project_id)
     if code:
-        return code["repo"], code["repo"] / code["map_path"], f"代码仓库中的 `{code['map_path']}`"
+        return code["repo"], code["repo"] / code["map_path"], f"`{code['map_path']}` in the code repository"
     vault = ProjectRuntimeManager(settings.data_root).ensure(project_id).vault_root
-    return vault, vault / "knowledge" / "map.yaml", "`knowledge/map.yaml`（通过候选文件修改）"
+    return vault, vault / "knowledge" / "map.yaml", "`knowledge/map.yaml` (changed through candidate files)"
 
 
 def parse(text: str) -> list[dict[str, Any]]:
     try:
         data = yaml.safe_load(text) or {}
     except yaml.YAMLError as exc:   # reported as a map problem, never a crash of the validation run
-        raise ValueError(f"地图不是合法的 YAML：{str(exc)[:200]}") from exc
+        raise ValueError(f"the map is not valid YAML: {str(exc)[:200]}") from exc
     if not isinstance(data, dict) or data.get("schema_version") != SCHEMA or not isinstance(data.get("entries"), list):
-        raise ValueError(f"地图必须是 schema_version: {SCHEMA} 且带 entries 列表")
+        raise ValueError(f"the map must have schema_version: {SCHEMA} and an entries list")
     return [dict(entry) for entry in data["entries"] if isinstance(entry, dict)]
 
 
@@ -72,16 +72,16 @@ def problems(entries: list[dict[str, Any]], exists: Callable[[str], bool], requi
     for number, entry in enumerate(entries, 1):
         path = str(entry.get("path") or "").strip()
         if not path or not str(entry.get("purpose") or "").strip():
-            found.append(f"地图第 {number} 项缺少 path 或 purpose")
+            found.append(f"map entry {number} has no path or purpose")
             continue
         if entry.get("kind") and entry["kind"] not in KINDS:
-            found.append(f"地图 {path}：kind 只能是 {', '.join(KINDS)}")
+            found.append(f"map {path}: kind must be one of {', '.join(KINDS)}")
         if path in seen:
-            found.append(f"地图 {path} 重复")
+            found.append(f"map {path} is listed twice")
         seen.add(path)
         if not path.startswith("grant:") and not exists(path.rstrip("/")):
-            found.append(f"地图 {path} 指向的文件不存在")
-    found += [f"{path} 没有登记在地图里" for path in required if path not in seen]
+            found.append(f"map {path} points to a file that does not exist")
+    found += [f"{path} is not in the map" for path in required if path not in seen]
     return found
 
 
@@ -92,7 +92,7 @@ def render(entries: list[dict[str, Any]], limit: int = RENDER_LIMIT) -> str:
         summary = f"（{entry['summary']}）" if entry.get("summary") else ""
         lines.append(f"- `{entry.get('path')}`{name}：{entry.get('purpose')}{summary}")
     text = "\n".join(lines)
-    return text if len(text) <= limit else text[:limit] + "\n…（地图较长，其余条目用 map_lookup 查询）"
+    return text if len(text) <= limit else text[:limit] + "\n…(the map is long; look up the other entries with map_lookup)"
 
 
 def resolve(root: Path, project_root: Path, path: str) -> tuple[Path, str] | None:
@@ -142,7 +142,7 @@ def skeleton(root: Path, files: list[str]) -> list[dict[str, Any]]:
             doc = ast.get_docstring(ast.parse((root / path).read_text("utf-8"))) or ""
         except (SyntaxError, UnicodeDecodeError, OSError):
             doc = ""
-        purpose = doc.strip().splitlines()[0].strip() if doc.strip() else "（待补充）"
+        purpose = doc.strip().splitlines()[0].strip() if doc.strip() else "(to be written)"
         entries.append({"path": path, "kind": "module", "purpose": purpose[:200]})
     return entries
 

@@ -38,7 +38,7 @@ async def test_pm_question_turn(kernel, sim, dispatcher, fake_harness):
                                                     "questions": [{"id": "c1", "text": "日报给谁看？", "covers": ["q1"]}]})
     await settle(dispatcher)
     prompt = fake_harness.calls[-1].prompt
-    assert "梳理日报需求" in prompt and "做一个日报工具" in prompt and "当前阶段：需求分析" in prompt
+    assert "梳理日报需求" in prompt and "做一个日报工具" in prompt and "Current stage: requirements" in prompt
     assert fake_harness.calls[-1].physical_session_id is None       # first turn of a stage is fresh
     assert fake_harness.calls[-1].sandbox == "read-only"            # requirements never writes the vault
     item = await sim.item("p1", task_id)
@@ -51,7 +51,7 @@ async def test_pm_question_turn(kernel, sim, dispatcher, fake_harness):
     dispatcher.scripts.add("supervisor:evaluate", next_step("design", "开始设计"))
     await settle(dispatcher)
     last = fake_harness.calls[-1]
-    assert "日报给谁看？：团队" in last.prompt
+    assert "日报给谁看？: 团队" in last.prompt
     first_session = next(s for s, key in fake_harness.session_keys.items() if key == "pm")
     assert last.physical_session_id == first_session          # same stage → same native session
     task = await sim.task(task_id)
@@ -95,9 +95,9 @@ async def test_resumed_turn_sends_only_what_changed(kernel, sim, dispatcher, fak
     reply = editing(kernel_settings, {"outcome": "completed", "summary": "需求已整理", "questions": [],
                                       "document": {"kind": "task_contract"}}, content="# 日报需求\n给团队看")
     task_id, fresh, resumed = await ask_then_answer(kernel, sim, dispatcher, fake_harness, reply)
-    assert "这是日报项目的 PM。" in fresh and "## 已生效文档" in fresh and "## 输出要求" in fresh
-    assert "同一会话的续轮" in resumed and "日报给谁看？：团队" in resumed
-    for unchanged in ("这是日报项目的 PM。", "工件约定", "## 输出要求", "## 已生效文档", "## 有更新的文档"):
+    assert "这是日报项目的 PM。" in fresh and "## Documents in effect" in fresh and "## Output (required)" in fresh
+    assert "A resumed turn of the same session" in resumed and "日报给谁看？: 团队" in resumed
+    for unchanged in ("这是日报项目的 PM。", "Artifact conventions", "## Output (required)", "## Documents in effect", "## Updated documents"):
         assert unchanged not in resumed, unchanged
     task = await sim.task(task_id)
     assert task["pm_session"]["seen"]["task_contract"] == task["documents"]["task_contract"]["sha256"]
@@ -111,7 +111,7 @@ async def test_resumed_turn_sends_only_what_changed(kernel, sim, dispatcher, fak
     dispatcher.scripts.add("supervisor:evaluate", next_step("design"))
     await settle(dispatcher)
     third = fake_harness.calls[-1].prompt
-    assert "## 有更新的文档" in third and "2 个测试失败" in third and "给团队看" not in third
+    assert "## Updated documents" in third and "2 个测试失败" in third and "给团队看" not in third
 
 
 async def test_config_change_resends_role_and_skills(kernel, sim, dispatcher, fake_harness, project_files):
@@ -120,8 +120,8 @@ async def test_config_change_resends_role_and_skills(kernel, sim, dispatcher, fa
     _, fresh, resumed = await ask_then_answer(kernel, sim, dispatcher, fake_harness, reply,
                                               between=lambda: role.write_text("这是日报项目的 PM，注意保密。", "utf-8"))
     assert "这是日报项目的 PM。" in fresh
-    assert "同一会话的续轮" in resumed and "这是日报项目的 PM，注意保密。" in resumed and "工件约定" in resumed
-    assert "## 输出要求" not in resumed and "## 已生效文档" not in resumed
+    assert "A resumed turn of the same session" in resumed and "这是日报项目的 PM，注意保密。" in resumed and "Artifact conventions" in resumed
+    assert "## Output (required)" not in resumed and "## Documents in effect" not in resumed
 
 
 async def test_draft_snapshot_creates_a_revision_and_invalidates_the_approval(kernel, sim, dispatcher,
@@ -185,7 +185,7 @@ async def test_non_json_reply_is_fixed_in_the_same_session(kernel, sim, dispatch
     await settle(dispatcher)
     first, fix = fake_harness.calls[-2:]
     assert first.physical_session_id is None and fix.physical_session_id is not None   # the fix resumes the turn
-    assert "不是一个合法的 JSON" in fix.prompt
+    assert "was not a valid JSON object" in fix.prompt
     assert (await sim.task(task_id))["state"] == "awaiting_user"
 
 
@@ -234,7 +234,7 @@ async def test_review_baseline_is_kernel_owned_hashed_and_renewed_with_same_pros
     service = TaskDocumentService(kernel_settings)
     stored = service.read("p1", first["ref"])["payload"]
     assert stored["review_baseline"] == first["review_baseline"] == expected
-    assert "审查基线" in fake_harness.calls[-1].prompt and "candidate-snapshots/b1/bundle.json" in fake_harness.calls[-1].prompt
+    assert "review baseline" in fake_harness.calls[-1].prompt and "candidate-snapshots/b1/bundle.json" in fake_harness.calls[-1].prompt
     first_seen = (await sim.task(task_id))["pm_session"]["seen"]["review_context"]
 
     await kernel.act("p1", (await sim.item("p1", task_id))["item_id"], "reject")
@@ -252,7 +252,7 @@ async def test_review_baseline_is_kernel_owned_hashed_and_renewed_with_same_pros
     assert service.read("p1", first["ref"])["payload"] == stored
     assert second["review_baseline"]["implementation_report"] == "i2"
     assert task["pm_session"]["seen"]["review_context"] != first_seen
-    assert "i2" in fake_harness.calls[-1].prompt and "审查依据或交付对象已变化" in fake_harness.calls[-1].prompt
+    assert "i2" in fake_harness.calls[-1].prompt and "the review basis or the delivery changed" in fake_harness.calls[-1].prompt
 
 
 def test_review_context_is_scoped_and_distinguishes_delivery_types(monkeypatch):
@@ -261,8 +261,8 @@ def test_review_context_is_scoped_and_distinguishes_delivery_types(monkeypatch):
     monkeypatch.setattr(common, "read_document", lambda *args: "body")
     task = reviewed_task()
     task["project_id"] = "p1"
-    for bundle, expected in (("b1", "candidate-snapshots/b1/bundle.json"), ("git:abc123", "Git 提交：abc123"),
-                             ("no-files:i1", "无文件交付")):
+    for bundle, expected in (("b1", "candidate-snapshots/b1/bundle.json"), ("git:abc123", "Review the Git commit abc123"),
+                             ("no-files:i1", "Delivery without files")):
         task["documents"]["implementation_report"]["bundle_sha"] = bundle
         task["documents"]["validation"]["bundle_sha"] = bundle
         sections = dict((key, text) for key, _, text in common.document_sections(None, task))
